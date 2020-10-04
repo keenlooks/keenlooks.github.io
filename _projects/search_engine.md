@@ -1,5 +1,5 @@
 ---
-title: "Cephalometric Landmark Tagging"
+title: "Search Engine"
 collection: projects
 type: "Graduate class project"
 permalink: /projects/search-engine
