@@ -11,30 +11,43 @@ redirect_from:
 
 Education
 ======
-* B.S. in GitHub, GitHub University, 2012
-* M.S. in Jekyll, GitHub University, 2014
-* Ph.D in Version Control Theory, GitHub University, 2018 (expected)
+* B.S. in Computer Science, United States Air Force Academy, 2014
+* M.S. in Information Security, Carnegie Mellon University, 2016
+* (in progress) Ph.D in Electrical and Computer Engineering, Carnegie Mellon University
 
 Work experience
 ======
-* Summer 2015: Research Assistant
-  * Github University
-  * Duties included: Tagging issues
-  * Supervisor: Professor Git
+* Deep Learning Researcher at Department of Defense (DoD) Research Directorate (RD)
+  * Spring 2017 to Fall 2019
+  * Customizes dense neural nets, recurrent neural nets, generative adversarial networks, and reinforcement learning networks to aid in solving Intelligence Community (IC) problems. Attended NeurIPS and other AI related conferences.
+  * Author on technical paper in final stages. The work has been presented at internal conferences and is being pushed into production as a pathfinding use case to justify deep learning analytics.
 
-* Fall 2015: Research Assistant
-  * Github University
-  * Duties included: Merging pull requests
-  * Supervisor: Professor Hub
+* Technical Project Lead at DoD Joint Artificial Intelligence Center
+  * Fall 2018 to Spring 2019
+  * Focused on applying ML algorithms for the Humanitarian Assistance and Disaster Relief National Mission Initiative. This is a particularly demanding job that requires constant mission justification to external non-technical organizations and rapid objective pivoting in a highly uncertain environment.
   
+Top Achievements
+======
+* 2019 National Defense Science and Engineering Graduate (NDSEG) Fellowship Awardee (166 awarded from 2928)
+* Joint Commendation Medal – awarded August 2019
+* 2018 DoD Research Directorate Military Performer of the Year, awarded Research Directorate and Math Research coins
+* 2018 JASON Presenter – Conducted hour-long technical DoD AI presentation for the elite government advisory group
+* 2016 Carnegie Mellon University Information Networking Institute Leadership Annual Award
+* Undergraduate Cyber Training Top Graduate, Honor Graduate, and Major General Robert E. Sadler Award
+* Honored by Alaska State Legislature (my home state) for 'exemplary service with dignity and honor' (2014)
+* USAFA Instructor Letter (rare award given upon instructor agreement that this cadet should come back to teach)
+* Honor Lists (7 x Dean’s and 4 x Commandant’s) / Dean’s: academic honor / Commandant’s: military honor
+* 2010 Graduation High School Valedictorian in class size of 290
+
+
 Skills
 ======
-* Skill 1
-* Skill 2
-  * Sub-skill 2.1
-  * Sub-skill 2.2
-  * Sub-skill 2.3
-* Skill 3
+* Data Analysis/Security
+  * Introduction to Statistical Data Mining, Graduate Artificial Intelligence, Introduction to Machine Learning, Machine Learning Large Datasets, Search Engines, Cryptography, Secure Software Systems, Network Security
+* Systems
+  * Software Reverse Engineering, Distributed Systems, Embedded Systems, Languages and Machines
+* Languages
+  * Python, Java, LaTeX, C, Go, ARM, x86, Octave, Perl, C#, Objective C, SQL
 
 Publications
 ======
