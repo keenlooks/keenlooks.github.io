@@ -4,6 +4,7 @@ collection: talks
 permalink: /talks/2020-12-07-adversarial-training-with-a-surrogate
 date: 2020-12-07
 venue: "Neurips 2020 NewInML Workshop"
+excerpt: "Explored surrogate neural network capability to aid adversarial training for hard to differentiate perturbations"
 type: "Presentation"
 citation: "Keane Lucas, Alec Jasen and Lujo Bauer. Adversarial Training with a Surrogate. NeurIPS NewInML Workshop. December 2020"
 ---
