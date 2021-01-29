@@ -7,6 +7,8 @@ redirect_from:
   - /resume
 ---
 
+Downloadable PDF available [here](https://1drv.ms/b/s!AsI93fxP22mfg6gOBMvrgKLIUTHNgA?e=5k5St2)! (password: 'no_automated_download')
+
 {% include base_path %}
 
 Education
