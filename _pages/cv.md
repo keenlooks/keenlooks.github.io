@@ -7,7 +7,7 @@ redirect_from:
   - /resume
 ---
 
-Downloadable PDF available [here](https://1drv.ms/b/s!AsI93fxP22mfg6gN3ZyUvxWzES4ngw?e=leFI9F)! (password: 'no_automated_download')
+Downloadable PDF available <a href="https://1drv.ms/b/s!AsI93fxP22mfg6gN3ZyUvxWzES4ngw?e=leFI9F" target="_blank">here</a>! (password: 'no_automated_download')
 
 {% include base_path %}
 
