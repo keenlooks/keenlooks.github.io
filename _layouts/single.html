@@ -14,6 +14,8 @@ layout: default
   {% endunless %}
 {% endif %}
 
+{% capture now %}{{'now' | date: '%s' | plus: 0 %}}{% endcapture %}
+
 <div id="main" role="main">
   {% include sidebar.html %}
 
@@ -36,6 +38,8 @@ layout: default
         
         {% if page.collection == 'teaching' %}
           <p> {{ page.type }}, <i>{{ page.venue }}</i>, {{ page.date | default: "1900-01-01" | date: "%Y" }} </p>
+        {% elsif page.venue and page.date > now %}
+          <p>To appear in <i>{{ page.venue }}</i>, {{ page.date | default: "1900-01-01" | date: "%Y" }} </p>
         {% elsif page.venue and page.date %}
           <p>Published in <i>{{ page.venue }}</i>, {{ page.date | default: "1900-01-01" | date: "%Y" }} </p>
         {% elsif page.date %}
