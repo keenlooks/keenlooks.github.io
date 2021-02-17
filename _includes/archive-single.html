@@ -41,7 +41,6 @@
       {% endif %}
       {% if post.note %} {{post.note}}.{% endif %}
       {% if post.bibtex %} <a href="{{base_path}}{{post.bibtex}}">BibTeX</a>".{% endif %}
-
     
     {% if post.read_time %}
     <p class="page__meta"><i class="fa fa-clock-o" aria-hidden="true"></i> {% include read-time.html %}</p>
@@ -69,7 +68,8 @@
     <!-- {% if post.citation and post.paperurl %}
       <p>Recommended citation: {{ post.citation }} <a href="{{ post.paperurl }}"><u>{{ post.paperurl }}</u></a></p>
     {% elsif post.citation %}
-      <p>Recommended citation: {{ post.citation }} </p> -->
+      <p>Recommended citation: {{ post.citation }} </p> 
+    {% endif %}-->
     {% if post.paperurl %}
       <p>Download <a href=" {{ post.paperurl }} "><u>here</u></a></p>
     {% endif %}
