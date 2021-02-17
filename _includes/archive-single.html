@@ -32,6 +32,7 @@
       {% else %}
         <a href="{{ base_path }}{{ post.url }}" rel="permalink">{{ title }}</a>
       {% endif %}
+    </h2>
       {% if post.authors_short %} {{post.authors_short}}. 
       {% elsif post.authors %} {{post.authors}}. 
       {% endif %}
@@ -39,8 +40,6 @@
       {% elsif post.venue %} <i>{{post.venue}}.</i>
       {% endif %}
       {% if post.note %} {{post.note}}.{% endif %}
-    </h2>
-    
     
     {% if post.read_time %}
     <p class="page__meta"><i class="fa fa-clock-o" aria-hidden="true"></i> {% include read-time.html %}</p>
