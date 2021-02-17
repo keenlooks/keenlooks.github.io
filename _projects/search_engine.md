@@ -3,7 +3,7 @@ title: "Search Engine"
 collection: projects
 type: "Graduate class project"
 permalink: /projects/search-engine
-venue: "Carnegie Mellon University"
+venue: "CMU Course Project"
 date: 2016-01-01
 location: "Pittsburgh, Pennsylvania"
 ---

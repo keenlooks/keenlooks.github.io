@@ -3,7 +3,7 @@ title: "Cephalometric Landmark Tagging"
 collection: projects
 type: "Hobby"
 permalink: /projects/cephalometric-landmarks
-venue: "Free time project"
+venue: "Independent work"
 date: 2017-05-01
 location: "Wasilla, Alaska"
 ---

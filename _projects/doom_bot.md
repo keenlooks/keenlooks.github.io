@@ -3,7 +3,7 @@ title: "Doom Bot"
 collection: projects
 type: "Hobby"
 permalink: /projects/doom-bot
-venue: "Free time project"
+venue: "Independent work"
 date: 2016-06-01
 location: "Biloxi, MS"
 ---

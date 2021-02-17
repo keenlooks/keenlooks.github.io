@@ -36,8 +36,8 @@
       {% if post.authors_short %} {{post.authors_short}}. 
       {% elsif post.authors %} {{post.authors}}. 
       {% endif %}
-      {% if post.venue_short %} <i>{{post.venue_short}}.</i> 
-      {% elsif post.venue %} <i>{{post.venue}}.</i>
+      {% if post.venue_short %} <u>{{post.venue_short}}.</u> 
+      {% elsif post.venue %} In <i>{{post.venue}}.</i>
       {% endif %}
       {% if post.note %} {{post.note}}.{% endif %}
     
