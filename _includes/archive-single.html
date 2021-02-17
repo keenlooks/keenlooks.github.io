@@ -40,7 +40,7 @@
       {% elsif post.venue %} In <i>{{post.venue}}.</i>
       {% endif %}
       {% if post.note %} {{post.note}}.{% endif %}
-      {% if post.bibtex %} <a href=" {{ base_url }}{{ post.bibtex }} "><u>BibTeX</u></a>{% endif %}
+      {% if post.bibtex %} [<a href=" {{ base_url }}{{ post.bibtex }} "><u>BibTeX</u></a>]{% endif %}
     
     {% if post.read_time %}
     <p class="page__meta"><i class="fa fa-clock-o" aria-hidden="true"></i> {% include read-time.html %}</p>

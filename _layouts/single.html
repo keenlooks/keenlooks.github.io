@@ -40,7 +40,7 @@ layout: default
         {% if page.venue %} In <i>{{page.venue}}.</i>{% endif %}
         {% if page.note %} {{page.note}}.{% endif %}
         {% if page.bibtex %}
-          <a href=" {{ base_url }}{{ page.bibtex }} ">BibTeX</a>
+          [<a href=" {{ base_url }}{{ page.bibtex }} ">BibTeX</a>]
         {% endif %}</p>
 
         <!-- {% if page.date %}{% capture pagedate %}{{page.date | date: '%s' | plus: 0 %}}{% endcapture %}{% endif %}
