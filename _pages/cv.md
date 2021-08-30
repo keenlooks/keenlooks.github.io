@@ -15,6 +15,7 @@ Education
 ======
 * B.S. in Computer Science, United States Air Force Academy, 2014
 * M.S. in Information Security, Carnegie Mellon University, 2016
+* (in progress) M.S. in Machine Learning, Carnegie Mellon University
 * (in progress) Ph.D in Electrical and Computer Engineering, Carnegie Mellon University
 
 Highlighted Experience
