@@ -20,6 +20,10 @@ Education
 
 Highlighted Experience
 ======
+* Summer Intern at Massachusetts Institute of Technology Lincoln Laboratory
+  * Summer 2021
+  * Worked with Dr Ross Allen on an intrinsic augmentation to cooperative reinforcement learning that incentivizes accommodative behavior in agents, resulting in demonstrated zero-shot coordination. Paper to appear at AAMAS 2022.
+
 * Deep Learning Researcher at Department of Defense (DoD) Research Directorate (RD)
   * Spring 2017 to Fall 2019
   * Customizes dense neural nets, recurrent neural nets, generative adversarial networks, and reinforcement learning networks to aid in solving Intelligence Community (IC) problems. Attended NeurIPS and other AI related conferences.
@@ -27,7 +31,7 @@ Highlighted Experience
 
 * Machine Learning Researcher at Center for Communications Research La Jolla
   * Summer 2018
-  * Co-wrote 2 technical papers submitted for publication. Executed 100+ hours of experimentation with top university mathematicians to solve NSA’s hardest problems. Implemented experimental ML process derived from research
+  * Co-wrote 2 technical papers submitted for publication. Executed 100+ hours of experimentation with top university mathematicians to solve DoD’s hardest problems. Implemented experimental ML process derived from research
 
 * Technical Project Lead at DoD Joint Artificial Intelligence Center
   * Fall 2018 to Spring 2019
