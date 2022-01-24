@@ -14,4 +14,6 @@ Originally from the [Matanuska Valley](https://www.frontiersman.com/news/trio-of
 
 My overall goal is to advance in the field of machine learning by continuing to learn the skills and expertise to become a reliable researcher focused on positive societal impact via effective work in industry and government.
 
+https://1drv.ms/b/s!AsI93fxP22mfhJAdmovF-Fuc1KvDEg?e=MX6RtB
+
 ![](images/holdinghands_northernlights.jpg)
