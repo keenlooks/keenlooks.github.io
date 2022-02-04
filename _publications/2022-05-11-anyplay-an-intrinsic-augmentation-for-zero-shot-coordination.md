@@ -2,6 +2,9 @@
 title: "Any-Play: an Intrinsic Augmentation for Zero-Shot Coordination"
 collection: publications
 permalink: /publications/2022-05-11-anyplay-an-intrinsic-augmentation-for-zero-shot-coordination
+redirect_from: 
+  - /anyplay/
+  - /anyplay.html
 date: 2022-05-11
 venue_short: "AAMAS'22"
 venue: "International Conference on Autonomous Agents and Multi-Agent Systems 2022"
