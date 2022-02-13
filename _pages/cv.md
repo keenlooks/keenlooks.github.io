@@ -5,6 +5,8 @@ permalink: /cv/
 author_profile: true
 redirect_from:
   - /resume
+  - /Resume
+  - /CV
 ---
 
 <a href="https://1drv.ms/b/s!AsI93fxP22mfg6gN3ZyUvxWzES4ngw?e=leFI9F" target="_blank">Downloadable PDF available here!</a> (password: 'no_automated_download')
