@@ -4,6 +4,11 @@ collection: publications
 permalink: /publications/2022-05-11-anyplay-an-intrinsic-augmentation-for-zero-shot-coordination
 redirect_from: 
   - /anyplay/
+  - /AnyPlay/
+  - /Anyplay/
+  - /any-play/
+  - /Any-Play/
+  - /Any-play/
   - /anyplay.html
 date: 2022-05-11
 venue_short: "AAMAS'22"
