@@ -10,8 +10,8 @@ venue_short: "ESORICS'22"
 venue: "27th European Symposium on Research in Computer Security"
 type: "Publication"
 excerpt: ""
-authors_short: "C. Fung, S. Srinarasi, K. Lucas, H. B. Phee, L. Bauer"
-authors: "Clement Fung, Shreya Srinarasi, Keane Lucas, Hay Bryan Phee, and Lujo Bauer"
+authors_short: "C. Fung, S. Srinarasi, <u>K. Lucas</u>, H. B. Phee, L. Bauer"
+authors: "Clement Fung, Shreya Srinarasi, <u>Keane Lucas</u>, Hay Bryan Phee, and Lujo Bauer"
 citation: "Clement Fung, Shreya Srinarasi, Keane Lucas, Hay Bryan Phee, Lujo Bauer. Perspectives from a Comprehensive Evaluation of Reconstruction-based Anomaly Detection in Industrial Control Systems. In Proc. ESORICS'22."
 paperurl: '/files/esorics2022-ics-anomaly-detection.pdf'
 bibtex: /files/esorics2022-ics-anomaly-detection.bib
