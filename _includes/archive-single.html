@@ -60,11 +60,11 @@
         {% endif %} -->
 
     {% if post.excerpt and site.read_more != 'enabled' %}
-    {{ post.excerpt | markdownify }}
+    <br>{{ post.excerpt | markdownify }}
     {% elsif post.excerpt and site.read_more == 'enabled' and post.paperurl %}
-    {{ post.excerpt | markdownify | remove: '<p>' | remove: '</p>' }}<strong><a href="{{ base_path }}{{ post.url }}" rel="permalink"> Get details</a></strong> or <strong><a href=" {{ post.paperurl }} ">download paper</a></strong>
+    <br>{{ post.excerpt | markdownify | remove: '<p>' | remove: '</p>' }}<strong><a href="{{ base_path }}{{ post.url }}" rel="permalink"> Get details</a></strong> or <strong><a href=" {{ post.paperurl }} ">download paper</a></strong>
     {% elsif post.excerpt and site.read_more == 'enabled' %}
-    {{ post.excerpt | markdownify | remove: '<p>' | remove: '</p>' }}<strong><a href="{{ base_path }}{{ post.url }}" rel="permalink"> Get details</a></strong>
+    <br>{{ post.excerpt | markdownify | remove: '<p>' | remove: '</p>' }}<strong><a href="{{ base_path }}{{ post.url }}" rel="permalink"> Get details</a></strong>
     {% endif %}
     <!-- {% if post.excerpt and site.read_more != 'enabled' %}
     <p class="archive__item-excerpt" itemprop="description">{{ post.excerpt | markdownify }}</p>
