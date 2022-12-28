@@ -15,8 +15,8 @@ venue_short: "AAMAS'22"
 venue: "International Conference on Autonomous Agents and Multi-Agent Systems 2022"
 type: "Publication"
 excerpt: ""
-authors_short: "K. Lucas, R. Allen"
-authors: "Keane Lucas, Ross E. Allen"
+authors_short: "<u>K. Lucas</u>, R. Allen"
+authors: "<u>Keane Lucas</u>, Ross E. Allen"
 citation: "Keane Lucas, Ross E. Allen. Any-Play: an Intrinsic Augmentation for Zero-Shot Coordination. AAMAS'22."
 paperurl: '/files/anyplay.pdf'
 bibtex: /files/anyplay.bib

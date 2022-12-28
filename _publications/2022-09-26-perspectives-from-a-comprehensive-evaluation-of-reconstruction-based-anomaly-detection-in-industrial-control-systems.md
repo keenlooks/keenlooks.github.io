@@ -5,7 +5,7 @@ permalink: /publications/2022-09-26-perspectives-from-a-comprehensive-evaluation
 redirect_from: 
   - /perspectives/
   - /ics-anomaly/
-date: 2021-06-07
+date: 2022-09-26
 venue_short: "ESORICS'22"
 venue: "27th European Symposium on Research in Computer Security"
 type: "Publication"
