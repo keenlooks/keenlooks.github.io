@@ -9,7 +9,7 @@ redirect_from:
   - /CV
 ---
 
-<a href="https://1drv.ms/b/s!AsI93fxP22mfg6gN3ZyUvxWzES4ngw?e=leFI9F" target="_blank">Downloadable PDF available here!</a> (password: 'no_automated_download')
+[Downloadable PDF available here!](https://1drv.ms/b/s!AsI93fxP22mfg6gN3ZyUvxWzES4ngw?e=hiVZGa) (password: 'no_automated_download')
 
 {% include base_path %}
 
@@ -22,9 +22,13 @@ Education
 
 Highlighted Experience
 ======
+* Student Researcher at Google AI
+  * Summer 2022
+  *	Worked with Dr Nicholas Carlini on the challenges of evaluating randomized machine learning defenses. [Pre-print of paper available here](https://arxiv.org/abs/2302.13464).
+
 * Summer Intern at Massachusetts Institute of Technology Lincoln Laboratory
   * Summer 2021
-  * Worked with Dr Ross Allen on an intrinsic augmentation to cooperative reinforcement learning that incentivizes accommodative behavior in agents, resulting in demonstrated zero-shot coordination. Paper to appear at AAMAS 2022.
+  * Worked with Dr Ross Allen on an intrinsic augmentation to cooperative reinforcement learning that incentivizes accommodative behavior in agents, resulting in demonstrated zero-shot coordination. [Paper published at AAMAS 2022 (click for more details)](https://keanelucas.com/anyplay/).
 
 * Deep Learning Researcher at Department of Defense (DoD) Research Directorate (RD)
   * Spring 2017 to Fall 2019
@@ -74,7 +78,7 @@ Skills
 * Languages
   * Python, Java, LaTeX, C, Go, ARM, x86, Octave, Perl, C#, Objective C, SQL
   
-Service and leadership
+Service and Leadership
 ======
 * Deputy Flight Commander, 7th Intelligence Squadron, US Air Force
   * Spring 2017 to Fall 2019
