@@ -43,6 +43,12 @@ Highlighted Experience
   * Fall 2018 to Spring 2019
   * Focused on applying ML algorithms for the Humanitarian Assistance and Disaster Relief National Mission Initiative. This is a particularly demanding job that requires constant mission justification to external non-technical organizations and rapid objective pivoting in a highly uncertain environment.
 
+Publications
+======
+  <ul>{% for post in site.publications %}
+    {% include archive-single-cv.html %}
+  {% endfor %}</ul>
+
 Presentations
 ======
   <ul>{% for post in site.talks %}
