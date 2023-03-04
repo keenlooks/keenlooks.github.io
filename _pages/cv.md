@@ -9,7 +9,7 @@ redirect_from:
   - /CV
 ---
 
-[Downloadable PDF available here!](https://1drv.ms/b/s!AsI93fxP22mfg6gN3ZyUvxWzES4ngw?e=OK5gfL) (password: 'no_automated_download')
+[Downloadable PDF available here!](https://drive.google.com/file/d/1ptOLPkCVdnmy4BcWU_E8hQVN1ZCfNeCb/view?usp=sharing)
 
 {% include base_path %}
 
