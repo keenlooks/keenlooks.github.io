@@ -9,6 +9,7 @@ redirect_from:
   - /greedy-block/
   - /robustness-proxies/
   - /robustnessproxies/
+  - /advtrain/
 date: 2024-10-15
 venue_short: "CCS '24"
 venue: "2024 ACM SIGSAC Conference on Computer and Communications Security"
