@@ -1,7 +1,7 @@
 <!-- Add this to your _includes/footer.html or _layouts/default.html -->
 <div id="chat-widget" class="chat-widget-container closed">
     <div class="chat-header" onclick="toggleChat()">
-      <span class="chat-title">Claude-powered Chat</span>
+      <span class="chat-title">Ask Claaaaude</span>
       <button class="minimize-button">−</button>
     </div>
     <div class="chat-content">
@@ -156,111 +156,102 @@
   </style>
   
   <script>
-    // Wrap in IIFE to avoid global scope pollution
-    (function() {
-        const WORKER_URL = 'https://flat-bread-e3e2.keenlooks-cloudflare.workers.dev/';
-        let isLoading = false;
-    
-        // Make functions available globally
-        window.toggleChat = function() {
-            const widget = document.getElementById('chat-widget');
-            const isOpen = widget.classList.contains('open');
-            widget.classList.toggle('closed');
-            widget.classList.toggle('open');
-            const button = widget.querySelector('.minimize-button');
-            button.textContent = isOpen ? '+' : '−';
-        };
-    
-        window.sendMessage = async function() {
-            const userInput = document.getElementById('user-input');
-            const sendButton = document.getElementById('send-button');
-            const messagesDiv = document.getElementById('chat-messages');
-            
-            if (isLoading || !userInput.value.trim()) return;
-            
-            isLoading = true;
-            sendButton.disabled = true;
-            userInput.disabled = true;
-            
-            const userMessage = document.createElement('div');
-            userMessage.className = 'message user-message';
-            userMessage.textContent = userInput.value;
-            messagesDiv.appendChild(userMessage);
-            
-            try {
-                console.log('Sending request to:', WORKER_URL); // Debug log
-                const response = await fetch(WORKER_URL, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        messages: [{
-                            role: 'user',
-                            content: userInput.value
-                        }]
-                    })
-                });
-    
-                console.log('Response status:', response.status); // Debug log
-                const data = await response.json();
-                console.log('Response data:', data); // Debug log
-                
-                if (!response.ok) {
-                    throw new Error(data.error || 'Failed to get response');
-                }
-    
-                const claudeMessage = document.createElement('div');
-                claudeMessage.className = 'message claude-message';
-                claudeMessage.textContent = data.content[0].text;
-                messagesDiv.appendChild(claudeMessage);
-                
-                // Save chat state after new message
-                saveChatState();
-                
-            } catch (error) {
-                console.error('Detailed error:', error);
-                const errorMessage = document.createElement('div');
-                errorMessage.className = 'message error-message';
-                errorMessage.textContent = 'Error: ' + error.message;
-                messagesDiv.appendChild(errorMessage);
-            } finally {
-                isLoading = false;
-                sendButton.disabled = false;
-                userInput.disabled = false;
-                userInput.value = '';
-                messagesDiv.scrollTop = messagesDiv.scrollHeight;
-            }
-        };
-    
-        function saveChatState() {
-            const messages = document.getElementById('chat-messages').innerHTML;
-            localStorage.setItem('chatMessages', messages);
-        }
-    
-        function loadChatState() {
-            const messages = localStorage.getItem('chatMessages');
-            if (messages) {
-                document.getElementById('chat-messages').innerHTML = messages;
-            }
-        }
-    
-        // Initialize when DOM is ready
-        document.addEventListener('DOMContentLoaded', function() {
-            loadChatState();
-            
-            // Start with chat closed
-            const widget = document.getElementById('chat-widget');
-            widget.classList.add('closed');
-            
-            // Add enter key handler
-            const userInput = document.getElementById('user-input');
-            userInput.addEventListener('keypress', function(e) {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    window.sendMessage();
-                }
-            });
-        });
-    })();
-    </script>
+  const WORKER_URL = 'https://flat-bread-e3e2.keenlooks-cloudflare.workers.dev/';
+  let isLoading = false;
+  
+  function toggleChat() {
+      const widget = document.getElementById('chat-widget');
+      const isOpen = widget.classList.contains('open');
+      widget.classList.toggle('closed');
+      widget.classList.toggle('open');
+      const button = widget.querySelector('.minimize-button');
+      button.textContent = isOpen ? '−' : '+';
+  }
+  
+  // Save chat state in localStorage
+  function saveChatState() {
+      const messages = document.getElementById('chat-messages').innerHTML;
+      localStorage.setItem('chatMessages', messages);
+  }
+  
+  // Load chat state from localStorage
+  function loadChatState() {
+      const messages = localStorage.getItem('chatMessages');
+      if (messages) {
+          document.getElementById('chat-messages').innerHTML = messages;
+      }
+  }
+  
+  async function sendMessage() {
+      const userInput = document.getElementById('user-input');
+      const sendButton = document.getElementById('send-button');
+      const messagesDiv = document.getElementById('chat-messages');
+      
+      if (isLoading || !userInput.value.trim()) return;
+      
+      isLoading = true;
+      sendButton.disabled = true;
+      userInput.disabled = true;
+      
+      const userMessage = document.createElement('div');
+      userMessage.className = 'message user-message';
+      userMessage.textContent = userInput.value;
+      messagesDiv.appendChild(userMessage);
+      
+      try {
+          const response = await fetch(WORKER_URL, {
+              method: 'POST',
+              headers: {
+                  'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                  messages: [{
+                      role: 'user',
+                      content: userInput.value
+                  }]
+              })
+          });
+  
+          const data = await response.json();
+          
+          if (!response.ok) {
+              throw new Error(data.error || 'Failed to get response');
+          }
+  
+          const claudeMessage = document.createElement('div');
+          claudeMessage.className = 'message claude-message';
+          claudeMessage.textContent = data.content[0].text;
+          messagesDiv.appendChild(claudeMessage);
+          
+          // Save chat state after new message
+          saveChatState();
+          
+      } catch (error) {
+          console.error('Error:', error);
+          const errorMessage = document.createElement('div');
+          errorMessage.className = 'message error-message';
+          errorMessage.textContent = 'Error: ' + error.message;
+          messagesDiv.appendChild(errorMessage);
+      } finally {
+          isLoading = false;
+          sendButton.disabled = false;
+          userInput.disabled = false;
+          userInput.value = '';
+          messagesDiv.scrollTop = messagesDiv.scrollHeight;
+      }
+  }
+  
+  document.getElementById('user-input').addEventListener('keypress', function(e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          sendMessage();
+      }
+  });
+  
+  // Load chat state when page loads
+  document.addEventListener('DOMContentLoaded', function() {
+      loadChatState();
+      // Start with chat closed
+      document.getElementById('chat-widget').classList.add('closed');
+  });
+  </script>
