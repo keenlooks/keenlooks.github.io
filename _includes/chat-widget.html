@@ -1,6 +1,6 @@
 <!-- Add this to your _includes/footer.html or _layouts/default.html -->
 <div id="chat-widget" class="chat-widget-container closed">
-    <div class="chat-header" onclick="toggleChat()">
+    <div class="chat-header">
       <span class="chat-title">Ask Claude</span>
       <button class="minimize-button">+</button>
     </div>
@@ -8,7 +8,7 @@
       <div id="chat-messages"></div>
       <div class="chat-input">
         <textarea id="user-input" placeholder="Type your message..."></textarea>
-        <button onclick="sendMessage()" id="send-button">Send</button>
+        <button id="send-button">Send</button>
       </div>
     </div>
 </div>
@@ -156,107 +156,110 @@
     </style>
 
 <script>
-// Wrap everything in an IIFE to avoid global scope issues while keeping required functions global
-(function() {
-    const WORKER_URL = 'https://flat-bread-e3e2.keenlooks-cloudflare.workers.dev/';
-    let isLoading = false;
+const WORKER_URL = 'https://flat-bread-e3e2.keenlooks-cloudflare.workers.dev/';
+let isLoading = false;
 
-    // Make these functions global
-    window.toggleChat = function() {
-        const widget = document.getElementById('chat-widget');
-        const isOpen = widget.classList.contains('open');
-        widget.classList.toggle('closed');
-        widget.classList.toggle('open');
-        const button = widget.querySelector('.minimize-button');
-        button.textContent = isOpen ? '+' : '−';  // Fixed the symbols
-    };
+function toggleChat() {
+    const widget = document.getElementById('chat-widget');
+    const isOpen = widget.classList.contains('open');
+    widget.classList.toggle('closed');
+    widget.classList.toggle('open');
+    const button = widget.querySelector('.minimize-button');
+    button.textContent = isOpen ? '+' : '−';
+}
 
-    window.sendMessage = async function() {
-        const userInput = document.getElementById('user-input');
-        const sendButton = document.getElementById('send-button');
-        const messagesDiv = document.getElementById('chat-messages');
-        
-        if (isLoading || !userInput.value.trim()) return;
-        
-        isLoading = true;
-        sendButton.disabled = true;
-        userInput.disabled = true;
-        
-        try {
-            // Add user message
-            const userMessage = document.createElement('div');
-            userMessage.className = 'message user-message';
-            userMessage.textContent = userInput.value;
-            messagesDiv.appendChild(userMessage);
-            
-            console.log('Sending request to Claude...'); // Debug log
-            const response = await fetch(WORKER_URL, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    messages: [{
-                        role: 'user',
-                        content: userInput.value
-                    }]
-                })
-            });
-
-            const data = await response.json();
-            console.log('Response from Claude:', data); // Debug log
-            
-            if (!response.ok) {
-                throw new Error(data.error || 'Failed to get response');
-            }
-
-            const claudeMessage = document.createElement('div');
-            claudeMessage.className = 'message claude-message';
-            claudeMessage.textContent = data.content[0].text;
-            messagesDiv.appendChild(claudeMessage);
-            
-            // Save chat state
-            const messages = document.getElementById('chat-messages').innerHTML;
-            localStorage.setItem('chatMessages', messages);
-            
-        } catch (error) {
-            console.error('Error:', error);
-            const errorMessage = document.createElement('div');
-            errorMessage.className = 'message error-message';
-            errorMessage.textContent = 'Error: ' + error.message;
-            messagesDiv.appendChild(errorMessage);
-        } finally {
-            isLoading = false;
-            sendButton.disabled = false;
-            userInput.disabled = false;
-            userInput.value = '';
-            messagesDiv.scrollTop = messagesDiv.scrollHeight;
-        }
-    };
-
-    // Initialize on page load
-    function init() {
-        // Load saved messages
-        const savedMessages = localStorage.getItem('chatMessages');
-        if (savedMessages) {
-            document.getElementById('chat-messages').innerHTML = savedMessages;
-        }
-
-        // Add enter key handler
-        const userInput = document.getElementById('user-input');
-        userInput.addEventListener('keypress', function(e) {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                window.sendMessage();
-            }
+async function sendMessage() {
+    const userInput = document.getElementById('user-input');
+    const sendButton = document.getElementById('send-button');
+    const messagesDiv = document.getElementById('chat-messages');
+    
+    if (isLoading || !userInput.value.trim()) return;
+    
+    isLoading = true;
+    sendButton.disabled = true;
+    userInput.disabled = true;
+    
+    const userMessage = document.createElement('div');
+    userMessage.className = 'message user-message';
+    userMessage.textContent = userInput.value;
+    messagesDiv.appendChild(userMessage);
+    
+    try {
+        console.log('Sending request...');
+        const response = await fetch(WORKER_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                messages: [{
+                    role: 'user',
+                    content: userInput.value
+                }]
+            })
         });
-    }
 
-    // Run initialization
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
-    } else {
-        init();
+        const data = await response.json();
+        console.log('Response:', data);
+        
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to get response');
+        }
+
+        const claudeMessage = document.createElement('div');
+        claudeMessage.className = 'message claude-message';
+        claudeMessage.textContent = data.content[0].text;
+        messagesDiv.appendChild(claudeMessage);
+        
+        // Save chat state after new message
+        saveChatState();
+        
+    } catch (error) {
+        console.error('Error:', error);
+        const errorMessage = document.createElement('div');
+        errorMessage.className = 'message error-message';
+        errorMessage.textContent = 'Error: ' + error.message;
+        messagesDiv.appendChild(errorMessage);
+    } finally {
+        isLoading = false;
+        sendButton.disabled = false;
+        userInput.disabled = false;
+        userInput.value = '';
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
     }
-})();
+}
+
+function saveChatState() {
+    const messages = document.getElementById('chat-messages').innerHTML;
+    localStorage.setItem('chatMessages', messages);
+}
+
+function loadChatState() {
+    const messages = localStorage.getItem('chatMessages');
+    if (messages) {
+        document.getElementById('chat-messages').innerHTML = messages;
+    }
+}
+
+// Initialize everything when the DOM is ready
+document.addEventListener('DOMContentLoaded', function() {
+    // Load saved messages
+    loadChatState();
+    
+    // Add click handlers
+    const header = document.querySelector('.chat-header');
+    header.addEventListener('click', toggleChat);
+    
+    const sendButton = document.getElementById('send-button');
+    sendButton.addEventListener('click', sendMessage);
+    
+    const userInput = document.getElementById('user-input');
+    userInput.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendMessage();
+        }
+    });
+});
 </script>
+
