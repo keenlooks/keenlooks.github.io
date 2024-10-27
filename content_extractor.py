@@ -200,6 +200,8 @@ class ContentExtractor:
         - Talks: /talks/
         - CV: /cv/
 
+        Also, you're encouraged to use emojis to make your responses more engaging! 🚀
+
         Research Areas:
         {research_areas}
 
