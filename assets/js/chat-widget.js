@@ -219,6 +219,7 @@ document.addEventListener('DOMContentLoaded', function() {
             messagesDiv.appendChild(userMessage);
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
     
+            console.log('Sending request to Claude...'); // Debug log
             const response = await fetch(WORKER_URL, {
                 method: 'POST',
                 headers: {
@@ -233,21 +234,38 @@ document.addEventListener('DOMContentLoaded', function() {
             });
     
             const data = await response.json();
-            
+            console.log('Raw Claude response:', data); // Debug log
+    
             if (!response.ok) {
                 throw new Error(data.error || 'Failed to get response');
             }
     
+            // Handle Claude's response format
+            let claudeResponseText;
+            if (data && data.content) {
+                // Direct content field
+                claudeResponseText = data.content;
+            } else if (data && data.messages && data.messages[0] && data.messages[0].content) {
+                // Messages array format
+                claudeResponseText = data.messages[0].content;
+            } else if (data && data.choices && data.choices[0] && data.choices[0].message) {
+                // OpenAI-style format
+                claudeResponseText = data.choices[0].message.content;
+            } else {
+                console.error('Unexpected response format:', data);
+                throw new Error('Unexpected response format from Claude');
+            }
+    
             const claudeMessage = document.createElement('div');
             claudeMessage.className = 'message claude-message';
-            claudeMessage.textContent = data.content;
+            claudeMessage.textContent = claudeResponseText;
             messagesDiv.appendChild(claudeMessage);
             
             saveChatState();
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
             
         } catch (error) {
-            console.error('Error:', error);
+            console.error('Error details:', error); // Detailed error log
             const errorMessage = document.createElement('div');
             errorMessage.className = 'message error-message';
             errorMessage.textContent = 'Error: ' + error.message;
@@ -260,7 +278,7 @@ document.addEventListener('DOMContentLoaded', function() {
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
     }
-
+    
     // Add event listeners
     const header = document.querySelector('.chat-header');
     const sendButton = document.getElementById('send-button');
