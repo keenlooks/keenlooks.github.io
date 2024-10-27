@@ -164,15 +164,29 @@ class ContentExtractor:
             for talk in self.content["talks"]
         ])
 
+        # Define research areas directly
+        research_areas = """
+        - Machine learning for malware detection
+          * Adversarial ML
+          * Robust ML classifiers
+          * Raw binary analysis
+        - Cooperative multi-agent reinforcement learning
+          * Zero-shot coordination
+          * Multi-agent systems
+        - Robust machine learning
+          * Adversarial defenses
+          * Certified robustness
+        - ML-based anomaly detection
+          * Industrial control systems
+          * Security applications
+        """
+
         # Build the system prompt
         system_prompt = f"""You are a helpful assistant embedded on Keane Lucas's academic website (keanelucas.com). 
         You have detailed knowledge of his research, publications, and background.
 
         Research Areas:
-        - Machine learning for malware detection
-        - Cooperative multi-agent reinforcement learning
-        - Robust machine learning
-        - ML-based anomaly detection
+        {research_areas}
 
         Publications:
         {publications}
