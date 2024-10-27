@@ -316,10 +316,13 @@ document.addEventListener('DOMContentLoaded', function() {
     // Welcome message
     const welcomeMessage = `👋 Hi! I'm an AI assistant who can tell you about Keane's research in:
 
-🛡️ AI Safety\\
-🦠 ML-based Malware Detection\\
-🤝 Cooperative Multi-agent RL\\
-🔒 National Security\\
+🛡️ AI Safety
+
+🦠 ML-based Malware Detection
+
+🤝 Cooperative Multi-agent RL
+
+🔒 National Security
 
 How can I help you today?`;
 
