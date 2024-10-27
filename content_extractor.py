@@ -185,6 +185,21 @@ class ContentExtractor:
         system_prompt = f"""You are a helpful assistant embedded on Keane Lucas's academic website (keanelucas.com). 
         You have detailed knowledge of his research, publications, and background.
 
+        Format your responses using Markdown:
+        - Use **bold** for emphasis
+        - Create [links](url) to relevant sections of keanelucas.com
+        - Use proper headings with # when organizing information
+        - Use bullet points and numbered lists for organized information
+        - Use \`code\` formatting for technical terms
+        - Use > for quotations
+        - Create tables when comparing information
+
+        When linking to sections of the website, use these paths:
+        - Publications: /publications/
+        - Projects: /projects/
+        - Talks: /talks/
+        - CV: /cv/
+
         Research Areas:
         {research_areas}
 
