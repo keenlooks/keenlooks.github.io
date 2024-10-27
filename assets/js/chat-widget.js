@@ -9,11 +9,31 @@ document.addEventListener('DOMContentLoaded', function() {
     const chatWidgetHTML = `
         <div id="chat-widget" class="chat-widget-container closed">
             <div class="chat-header">
+                <div class="chat-header-buttons">
+                    <button class="fullscreen-button" title="Toggle fullscreen">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+                        </svg>
+                    </button>
+                    <button class="reset-button" title="Reset chat">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                            <path d="M3 3v5h5"/>
+                        </svg>
+                    </button>
+                </div>
                 <span class="chat-title">Ask About My Research</span>
                 <button class="minimize-button">+</button>
             </div>
             <div class="chat-content">
                 <div id="chat-messages"></div>
+                <div id="suggestion-chips" class="suggestion-chips">
+                    <button class="suggestion-chip">🔍 Tell me about recent work</button>
+                    <button class="suggestion-chip">💡 Research interests</button>
+                    <button class="suggestion-chip">📚 Get BibTeX entries</button>
+                    <button class="suggestion-chip">🎓 Academic background</button>
+                    <button class="suggestion-chip">👥 How can I collaborate?</button>
+                </div>
                 <div class="chat-input">
                     <textarea id="user-input" placeholder="Ask me about Keane's research..."></textarea>
                     <button id="send-button">Send</button>
@@ -22,10 +42,7 @@ document.addEventListener('DOMContentLoaded', function() {
         </div>
     `;
 
-    // Inject the chat widget HTML into the body
-    document.body.insertAdjacentHTML('beforeend', chatWidgetHTML);
-
-    // Add the styles
+    // Add styles to document
     const styles = `
         .chat-widget-container {
             position: fixed;
@@ -37,17 +54,31 @@ document.addEventListener('DOMContentLoaded', function() {
             border-radius: 8px;
             box-shadow: 0 4px 12px rgba(0,0,0,0.15);
             z-index: 9999;
-            transition: height 0.3s ease;
+            transition: all 0.3s ease;
             display: flex;
             flex-direction: column;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
         }
 
         .chat-widget-container.closed {
             height: 48px;
+            overflow: hidden;
         }
 
         .chat-widget-container.open {
             height: 600px;
+        }
+
+        .chat-widget-container.fullscreen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            width: 100%;
+            height: 100% !important;
+            border-radius: 0;
+            z-index: 10000;
         }
 
         .chat-header {
@@ -62,18 +93,34 @@ document.addEventListener('DOMContentLoaded', function() {
             z-index: 10000;
         }
 
+        .chat-header-buttons {
+            display: flex;
+            gap: 8px;
+        }
+
         .chat-title {
             color: #e0e0e0;
             font-weight: 500;
+            flex-grow: 1;
+            text-align: center;
         }
 
-        .minimize-button {
+        .minimize-button,
+        .fullscreen-button,
+        .reset-button {
             background: none;
             border: none;
             color: #e0e0e0;
-            font-size: 18px;
             cursor: pointer;
-            padding: 0 4px;
+            padding: 4px;
+            opacity: 0.7;
+            transition: opacity 0.2s;
+        }
+
+        .minimize-button:hover,
+        .fullscreen-button:hover,
+        .reset-button:hover {
+            opacity: 1;
         }
 
         .chat-content {
@@ -88,6 +135,36 @@ document.addEventListener('DOMContentLoaded', function() {
             overflow-y: auto;
             padding: 16px;
             color: #e0e0e0;
+        }
+
+        .suggestion-chips {
+            padding: 12px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            border-bottom: 1px solid #2d2d2d;
+            background: #1a1a1a;
+        }
+
+        .suggestion-chips:empty {
+            display: none;
+            padding: 0;
+        }
+
+        .suggestion-chip {
+            background: #2d2d2d;
+            border: none;
+            color: #e0e0e0;
+            padding: 8px 12px;
+            border-radius: 16px;
+            cursor: pointer;
+            transition: background 0.2s;
+            font-size: 14px;
+            white-space: nowrap;
+        }
+
+        .suggestion-chip:hover {
+            background: #3d3d3d;
         }
 
         .chat-input {
@@ -109,6 +186,8 @@ document.addEventListener('DOMContentLoaded', function() {
             min-height: 38px;
             max-height: 120px;
             font-family: inherit;
+            font-size: 14px;
+            line-height: 1.5;
         }
 
         #send-button {
@@ -120,6 +199,7 @@ document.addEventListener('DOMContentLoaded', function() {
             cursor: pointer;
             transition: background 0.2s;
             white-space: nowrap;
+            font-family: inherit;
         }
 
         #send-button:hover {
@@ -128,6 +208,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         #send-button:disabled {
             background: #2d2d2d;
+            cursor: not-allowed;
         }
 
         .message {
@@ -136,6 +217,7 @@ document.addEventListener('DOMContentLoaded', function() {
             border-radius: 4px;
             max-width: 85%;
             word-wrap: break-word;
+            line-height: 1.5;
         }
 
         .user-message {
@@ -224,6 +306,23 @@ document.addEventListener('DOMContentLoaded', function() {
     styleSheet.textContent = styles;
     document.head.appendChild(styleSheet);
 
+    // Inject the chat widget HTML into the body
+    document.body.insertAdjacentHTML('beforeend', chatWidgetHTML);
+
+    // Constants and state
+    const WORKER_URL = 'https://flat-bread-e3e2.keenlooks-cloudflare.workers.dev/';
+    let isLoading = false;
+
+    // Welcome message
+    const welcomeMessage = `👋 Hi! I'm an AI assistant who can tell you about Keane's research in:
+
+🛡️ AI Safety
+🦠 ML-based Malware Detection
+🤝 Cooperative Multi-agent RL
+🔒 National Security
+
+How can I help you today?`;
+
     // Set up marked options
     markedScript.onload = function() {
         marked.use({
@@ -232,9 +331,13 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     };
 
-    // Initialize chat functionality
-    const WORKER_URL = 'https://flat-bread-e3e2.keenlooks-cloudflare.workers.dev/';
-    let isLoading = false;
+    function showWelcomeMessage() {
+        const messagesDiv = document.getElementById('chat-messages');
+        const welcomeDiv = document.createElement('div');
+        welcomeDiv.className = 'message claude-message';
+        welcomeDiv.textContent = welcomeMessage;
+        messagesDiv.appendChild(welcomeDiv);
+    }
 
     function saveChatState() {
         const messagesDiv = document.getElementById('chat-messages');
@@ -246,39 +349,56 @@ document.addEventListener('DOMContentLoaded', function() {
     function loadChatState() {
         const messagesDiv = document.getElementById('chat-messages');
         const savedMessages = localStorage.getItem('claudeChatHistory');
-        if (messagesDiv && savedMessages) {
-            messagesDiv.innerHTML = savedMessages;
+        if (messagesDiv) {
+            if (savedMessages) {
+                messagesDiv.innerHTML = savedMessages;
+                document.getElementById('suggestion-chips').style.display = 'none';
+            } else {
+                showWelcomeMessage();
+            }
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
     }
 
-    // Add event listeners
-    const header = document.querySelector('.chat-header');
-    const sendButton = document.getElementById('send-button');
-    const userInput = document.getElementById('user-input');
-
-    header.addEventListener('click', function() {
+    function toggleFullscreen() {
         const widget = document.getElementById('chat-widget');
-        const minimizeButton = widget.querySelector('.minimize-button');
-        const isOpen = widget.classList.contains('open');
-        
-        widget.classList.toggle('open');
-        widget.classList.toggle('closed');
-        minimizeButton.textContent = isOpen ? '+' : '−';
-    });
+        widget.classList.toggle('fullscreen');
+    }
 
-    async function sendMessage() {
-        if (isLoading || !userInput.value.trim()) return;
-        
+    function resetChat() {
         const messagesDiv = document.getElementById('chat-messages');
+        const suggestionsDiv = document.getElementById('suggestion-chips');
+        
+        // Clear messages and show welcome message
+        messagesDiv.innerHTML = '';
+        showWelcomeMessage();
+        
+        // Show suggestions
+        suggestionsDiv.style.display = 'flex';
+        
+        // Clear localStorage
+        localStorage.removeItem('claudeChatHistory');
+    }
+
+    async function sendMessage(text = null) {
+        const userInput = document.getElementById('user-input');
+        const sendButton = document.getElementById('send-button');
+        const messagesDiv = document.getElementById('chat-messages');
+        
+        const messageText = text || userInput.value.trim();
+        if (isLoading || !messageText) return;
+        
         isLoading = true;
         sendButton.disabled = true;
-        userInput.disabled = true;
+        if (!text) userInput.disabled = true;
         
         try {
+            // Hide suggestions
+            document.getElementById('suggestion-chips').style.display = 'none';
+
             const userMessage = document.createElement('div');
             userMessage.className = 'message user-message';
-            userMessage.textContent = userInput.value;
+            userMessage.textContent = messageText;
             messagesDiv.appendChild(userMessage);
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
 
@@ -290,7 +410,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 body: JSON.stringify({
                     messages: [{
                         role: 'user',
-                        content: userInput.value
+                        content: messageText
                     }]
                 })
             });
@@ -334,13 +454,58 @@ document.addEventListener('DOMContentLoaded', function() {
         } finally {
             isLoading = false;
             sendButton.disabled = false;
-            userInput.disabled = false;
-            userInput.value = '';
+            if (!text) {
+                userInput.disabled = false;
+                userInput.value = '';
+            }
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
     }
 
-    sendButton.addEventListener('click', sendMessage);
+    // Add event listeners
+    const header = document.querySelector('.chat-header');
+    const fullscreenButton = document.querySelector('.fullscreen-button');
+    const resetButton = document.querySelector('.reset-button');
+    const sendButton = document.getElementById('send-button');
+    const userInput = document.getElementById('user-input');
+    const suggestionChips = document.querySelectorAll('.suggestion-chip');
+
+    // Prevent parent click when clicking buttons
+    fullscreenButton.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleFullscreen();
+    });
+
+    resetButton.addEventListener('click', (e) => {
+        e.stopPropagation();
+        resetChat();
+    });
+
+    // Handle suggestion chip clicks
+    suggestionChips.forEach(chip => {
+        chip.addEventListener('click', () => {
+            sendMessage(chip.textContent);
+        });
+    });
+
+    header.addEventListener('click', function() {
+        const widget = document.getElementById('chat-widget');
+        const minimizeButton = widget.querySelector('.minimize-button');
+        const isOpen = widget.classList.contains('open');
+        
+        widget.classList.toggle('open');
+        widget.classList.toggle('closed');
+        minimizeButton.textContent = isOpen ? '+' : '−';
+    });
+
+    // Prevent chat from minimizing when clicking inside
+    document.getElementById('chat-widget').addEventListener('click', (e) => {
+        if (!e.target.closest('.chat-header')) {
+            e.stopPropagation();
+        }
+    });
+
+    sendButton.addEventListener('click', () => sendMessage());
     userInput.addEventListener('keypress', function(e) {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
@@ -348,6 +513,13 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Load saved chat history
+    // Load chat state and show welcome message if needed
     loadChatState();
+
+    // Prevent link clicks from minimizing chat
+    document.addEventListener('click', (e) => {
+        if (e.target.tagName === 'A' && e.target.closest('.chat-widget-container')) {
+            e.stopPropagation();
+        }
+    });
 });
