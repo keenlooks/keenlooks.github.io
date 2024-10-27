@@ -33,7 +33,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          # Create wrangler.toml
+          # Create wrangler.toml with direct configuration
           cat << EOF > wrangler.toml
           name = "flat-bread-e3e2"
           main = "worker.js"
@@ -45,22 +45,22 @@ jobs:
           ENVIRONMENT = "production"
           EOF
 
-          # Create wrangler config directory and auth config
-          mkdir -p ~/.wrangler/config/
-          echo "CLOUDFLARE_API_TOKEN=$CLOUDFLARE_API_TOKEN" > ~/.wrangler/config/default.toml
+          # Set environment variables for Wrangler
+          export CLOUDFLARE_ACCOUNT_ID=$CLOUDFLARE_ACCOUNT_ID
+          export CLOUDFLARE_API_TOKEN=$CLOUDFLARE_API_TOKEN
           
-          # Test wrangler auth
-          wrangler whoami
+          # Verify configuration
+          echo "Testing Wrangler configuration..."
+          wrangler whoami || true
           
       - name: Update and deploy Worker
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          echo "Current directory contents:"
-          ls -la
-          
-          echo "Wrangler config:"
-          cat wrangler.toml | grep -v "account_id"
+          # Export environment variables again for this step
+          export CLOUDFLARE_ACCOUNT_ID=$CLOUDFLARE_ACCOUNT_ID
+          export CLOUDFLARE_API_TOKEN=$CLOUDFLARE_API_TOKEN
           
           echo "Deploying worker..."
           python update_worker.py

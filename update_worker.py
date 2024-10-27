@@ -111,31 +111,44 @@ def update_worker(prompt):
         print("Successfully wrote worker.js")
         
         print("Deploying with wrangler...")
-        # Run wrangler with environment variables passed through
+        # Pass through all environment variables
         env = os.environ.copy()
-        result = subprocess.run(
-            ['wrangler', 'deploy'],
-            env=env,
-            text=True,
-            capture_output=True
-        )
         
-        print("Deployment output:")
-        print(result.stdout)
-        
-        if result.stderr:
-            print("Deployment errors:")
-            print(result.stderr)
-        
-        if result.returncode != 0:
-            raise subprocess.CalledProcessError(result.returncode, ['wrangler', 'deploy'])
+        # Try deployment
+        try:
+            result = subprocess.run(
+                ['wrangler', 'deploy', 'worker.js'],
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False  # Don't raise exception immediately
+            )
             
-        print("Deploy successful!")
-        return True
-        
+            print("Deployment output:")
+            if result.stdout:
+                print(result.stdout)
+            
+            if result.stderr:
+                print("Stderr output:")
+                print(result.stderr)
+            
+            # Check return code
+            if result.returncode != 0:
+                print(f"Deployment failed with code: {result.returncode}")
+                raise subprocess.CalledProcessError(result.returncode, ['wrangler', 'deploy'])
+                
+            print("Deploy successful!")
+            return True
+            
+        except subprocess.CalledProcessError as e:
+            print(f"Deployment failed: {str(e)}")
+            print(f"Output: {e.output if hasattr(e, 'output') else 'No output'}")
+            raise
+            
     except Exception as e:
         print(f"Error during deployment: {str(e)}")
         raise
+
 
 if __name__ == "__main__":
     try:
