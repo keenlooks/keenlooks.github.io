@@ -314,13 +314,13 @@ document.addEventListener('DOMContentLoaded', function() {
     let isLoading = false;
 
     // Welcome message
-    const welcomeMessage = `👋 Hi! I'm an AI assistant who can tell you about Keane's research in:\n
-
-🛡️ AI Safety\n
-🦠 ML-based Malware Detection\n
-🤝 Cooperative Multi-agent RL\n
-🔒 National Security\n
-
+    const welcomeMessage = `👋 Hi! I'm an AI assistant who can tell you about Keane's research in:  
+  
+🛡️ AI Safety  
+🦠 ML-based Malware Detection  
+🤝 Cooperative Multi-agent RL  
+🔒 National Security  
+  
 How can I help you today?`;
 
     // Set up marked options
