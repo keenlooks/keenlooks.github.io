@@ -24,7 +24,9 @@ jobs:
         run: python content_extractor.py
         
       - name: Install Wrangler
-        run: npm install -g wrangler
+        run: |
+          npm install -g wrangler
+          wrangler --version
 
       - name: Configure Wrangler
         env:
@@ -38,24 +40,27 @@ jobs:
           compatibility_date = "2024-03-26"
           account_id = "$CLOUDFLARE_ACCOUNT_ID"
           workers_dev = true
+
+          [vars]
+          ENVIRONMENT = "production"
           EOF
 
-          # Create wrangler config directory
+          # Create wrangler config directory and auth config
           mkdir -p ~/.wrangler/config/
-
-          # Create auth config
           echo "CLOUDFLARE_API_TOKEN=$CLOUDFLARE_API_TOKEN" > ~/.wrangler/config/default.toml
-
-          # Debug output (without sensitive info)
-          echo "Created wrangler.toml:"
-          cat wrangler.toml | grep -v "account_id"
-          echo "Wrangler config directory created at: ~/.wrangler/config/"
+          
+          # Test wrangler auth
+          wrangler whoami
           
       - name: Update and deploy Worker
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
-          # Verify files exist
+          echo "Current directory contents:"
           ls -la
-          ls -la ~/.wrangler/config/
+          
+          echo "Wrangler config:"
+          cat wrangler.toml | grep -v "account_id"
+          
+          echo "Deploying worker..."
           python update_worker.py

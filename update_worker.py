@@ -3,6 +3,7 @@ import json
 import subprocess
 import os
 from pathlib import Path
+import sys
 
 def generate_system_prompt(context_file='claude_context.json'):
     """Generate the system prompt for Claude using the extracted context"""
@@ -37,8 +38,9 @@ def generate_system_prompt(context_file='claude_context.json'):
 
 def update_worker(prompt):
     """Update the Cloudflare Worker with the new system prompt"""
-    # Save the worker code
-    worker_template = f'''
+    print("Starting worker update...")
+    
+    worker_code = f'''
     export default {{
       async fetch(request, env) {{
         const corsHeaders = {{
@@ -102,24 +104,44 @@ def update_worker(prompt):
     }};
     '''
     
-    # Save the worker code
-    with open('worker.js', 'w') as f:
-        f.write(worker_template)
-    
-    # Deploy using wrangler
     try:
-        print("Deploying worker...")
+        print("Writing worker.js...")
+        with open('worker.js', 'w') as f:
+            f.write(worker_code)
+        print("Successfully wrote worker.js")
+        
+        print("Deploying with wrangler...")
+        # Run wrangler with environment variables passed through
+        env = os.environ.copy()
         result = subprocess.run(
             ['wrangler', 'deploy'],
-            capture_output=True,
+            env=env,
             text=True,
-            check=True
+            capture_output=True
         )
-        print("Deploy output:", result.stdout)
-    except subprocess.CalledProcessError as e:
-        print("Deploy error:", e.stderr)
+        
+        print("Deployment output:")
+        print(result.stdout)
+        
+        if result.stderr:
+            print("Deployment errors:")
+            print(result.stderr)
+        
+        if result.returncode != 0:
+            raise subprocess.CalledProcessError(result.returncode, ['wrangler', 'deploy'])
+            
+        print("Deploy successful!")
+        return True
+        
+    except Exception as e:
+        print(f"Error during deployment: {str(e)}")
         raise
 
 if __name__ == "__main__":
-    system_prompt = generate_system_prompt()
-    update_worker(system_prompt)
+    try:
+        print("Starting update process...")
+        system_prompt = generate_system_prompt()
+        update_worker(system_prompt)
+    except Exception as e:
+        print(f"Fatal error: {e}")
+        sys.exit(1)
