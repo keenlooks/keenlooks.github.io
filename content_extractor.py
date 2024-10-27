@@ -27,126 +27,201 @@ class ContentExtractor:
 
     def extract_markdown_content(self):
         """Extract content from markdown files in the repository"""
-        markdown_files = list(self.repo_path.glob('**/*.md')) + list(self.repo_path.glob('**/*.markdown'))
+        # Process publications
+        pub_paths = [
+            self.repo_path / '_publications',
+            self.repo_path / '_posts',
+            self.repo_path / 'publications'
+        ]
         
-        for md_file in markdown_files:
-            try:
-                post = frontmatter.load(md_file)
-                content = post.content
-                metadata = post.metadata
+        for pub_path in pub_paths:
+            if pub_path.exists():
+                for md_file in pub_path.glob('*.md'):
+                    try:
+                        post = frontmatter.load(md_file)
+                        content = post.content
+                        metadata = post.metadata
+                        
+                        full_text = f"Title: {metadata.get('title', '')}\n\n"
+                        
+                        # Add publication metadata
+                        for key in ['abstract', 'venue', 'date', 'authors', 'citation']:
+                            if metadata.get(key):
+                                full_text += f"{key.title()}: {metadata[key]}\n\n"
+                        
+                        # Add main content
+                        full_text += content
+                        
+                        self.content["publications"].append({
+                            "title": metadata.get("title", ""),
+                            "content": full_text,
+                            "venue": metadata.get("venue", ""),
+                            "date": metadata.get("date", ""),
+                            "citation": metadata.get("citation", ""),
+                            "permalink": metadata.get("permalink", ""),
+                            "authors": metadata.get("authors", ""),
+                            "abstract": metadata.get("abstract", "")
+                        })
+                        print(f"Processed publication: {metadata.get('title', '')}")
+                    except Exception as e:
+                        print(f"Error processing publication {md_file}: {e}")
 
-                # Determine content type based on file path or metadata
-                if 'projects' in str(md_file):
+        # Process projects
+        projects_path = self.repo_path / '_projects'
+        if projects_path.exists():
+            for md_file in projects_path.glob('*.md'):
+                try:
+                    post = frontmatter.load(md_file)
                     self.content["projects"].append({
-                        "title": metadata.get("title", ""),
-                        "content": content,
-                        "permalink": metadata.get("permalink", ""),
-                        "metadata": metadata
+                        "title": post.metadata.get("title", ""),
+                        "content": post.content,
+                        "metadata": post.metadata
                     })
-                elif 'publications' in str(md_file):
-                    self.content["publications"].append({
-                        "title": metadata.get("title", ""),
-                        "content": content,
-                        "permalink": metadata.get("permalink", ""),
-                        "metadata": metadata
-                    })
-                elif 'talks' in str(md_file):
-                    self.content["talks"].append({
-                        "title": metadata.get("title", ""),
-                        "content": content,
-                        "date": metadata.get("date", ""),
-                        "metadata": metadata
-                    })
+                    print(f"Processed project: {post.metadata.get('title', '')}")
+                except Exception as e:
+                    print(f"Error processing project {md_file}: {e}")
 
-            except Exception as e:
-                print(f"Error processing {md_file}: {e}")
+        # Process talks
+        talks_path = self.repo_path / '_talks'
+        if talks_path.exists():
+            for md_file in talks_path.glob('*.md'):
+                try:
+                    post = frontmatter.load(md_file)
+                    self.content["talks"].append({
+                        "title": post.metadata.get("title", ""),
+                        "content": post.content,
+                        "date": post.metadata.get("date", ""),
+                        "metadata": post.metadata
+                    })
+                    print(f"Processed talk: {post.metadata.get('title', '')}")
+                except Exception as e:
+                    print(f"Error processing talk {md_file}: {e}")
 
     def extract_pdf_content(self):
         """Extract content from PDFs in the repository"""
-        pdf_files = list(self.repo_path.glob('**/*.pdf'))
+        pdf_paths = [
+            self.repo_path / 'files',
+            self.repo_path / 'papers',
+            self.repo_path / 'publications'
+        ]
         
-        for pdf_path in pdf_files:
-            try:
-                with open(pdf_path, 'rb') as file:
-                    pdf_reader = PyPDF2.PdfReader(file)
-                    text = ""
-                    for page in pdf_reader.pages:
-                        text += page.extract_text() + "\n"
-                    
-                    # Clean and normalize the text
-                    text = re.sub(r'\s+', ' ', text).strip()
-                    
-                    self.content["pdf_content"][pdf_path.name] = {
-                        "title": pdf_path.stem,
-                        "content": text,
-                        "path": str(pdf_path.relative_to(self.repo_path))
-                    }
-            except Exception as e:
-                print(f"Error processing PDF {pdf_path}: {e}")
+        for pdf_path in pdf_paths:
+            if pdf_path.exists():
+                for pdf_file in pdf_path.glob('**/*.pdf'):
+                    try:
+                        with open(pdf_file, 'rb') as file:
+                            pdf_reader = PyPDF2.PdfReader(file)
+                            text = ""
+                            for page in pdf_reader.pages:
+                                text += page.extract_text() + "\n"
+                            
+                            # Clean and normalize the text
+                            text = re.sub(r'\s+', ' ', text).strip()
+                            
+                            self.content["pdf_content"][pdf_file.name] = {
+                                "title": pdf_file.stem,
+                                "content": text,
+                                "path": str(pdf_file.relative_to(self.repo_path))
+                            }
+                            print(f"Processed PDF: {pdf_file.name}")
+                    except Exception as e:
+                        print(f"Error processing PDF {pdf_file}: {e}")
 
     def extract_config_data(self):
         """Extract data from _config.yml"""
         config_path = self.repo_path / '_config.yml'
         if config_path.exists():
-            with open(config_path, 'r', encoding='utf-8') as file:
-                config = yaml.safe_load(file)
-                self.content["personal"]["config"] = config
+            try:
+                with open(config_path, 'r', encoding='utf-8') as file:
+                    config = yaml.safe_load(file)
+                    self.content["personal"]["config"] = config
+                    print("Processed _config.yml")
+            except Exception as e:
+                print(f"Error processing _config.yml: {e}")
 
-    def clean_text(self, text):
-        """Clean and normalize text content"""
-        text = re.sub(r'\s+', ' ', text).strip()
-        text = re.sub(r'\[.*?\]', '', text)  # Remove markdown links
-        text = re.sub(r'\(.*?\)', '', text)  # Remove markdown link targets
-        return text
+    def generate_system_prompt(self):
+        """Generate a comprehensive system prompt"""
+        # Format publications with full details
+        publications = "\n\n".join([
+            f"Title: {pub['title']}\n" + \
+            (f"Authors: {pub['authors']}\n" if pub.get('authors') else "") + \
+            (f"Venue: {pub['venue']}\n" if pub.get('venue') else "") + \
+            (f"Date: {pub['date']}\n" if pub.get('date') else "") + \
+            (f"Abstract: {pub['abstract']}\n" if pub.get('abstract') else "") + \
+            f"Content: {pub['content']}"
+            for pub in self.content["publications"]
+        ])
 
-    def generate_claude_context(self):
-        """Generate a context document for Claude"""
-        context = {
-            "personal_info": self.content["personal"],
-            "research_summary": [],
-            "publications": [{
-                "title": pub["title"],
-                "summary": self.clean_text(pub["content"])[:500]  # First 500 chars
-            } for pub in self.content["publications"]],
-            "projects": [{
-                "title": proj["title"],
-                "summary": self.clean_text(proj["content"])[:500]
-            } for proj in self.content["projects"]],
-            "talks": [{
-                "title": talk["title"],
-                "summary": self.clean_text(talk["content"])[:500]
-            } for talk in self.content["talks"]],
-            "pdf_summaries": [{
-                "title": data["title"],
-                "summary": self.clean_text(data["content"])[:1000]  # First 1000 chars
-            } for data in self.content["pdf_content"].values()]
-        }
-        
-        return context
+        # Format projects
+        projects = "\n\n".join([
+            f"Project: {proj['title']}\n{proj['content']}"
+            for proj in self.content["projects"]
+        ])
+
+        # Format talks
+        talks = "\n\n".join([
+            f"Talk: {talk['title']}\nDate: {talk.get('date', 'N/A')}\n{talk['content']}"
+            for talk in self.content["talks"]
+        ])
+
+        # Build the system prompt
+        system_prompt = f"""You are a helpful assistant embedded on Keane Lucas's academic website (keanelucas.com). 
+        You have detailed knowledge of his research, publications, and background.
+
+        Research Areas:
+        - Machine learning for malware detection
+        - Cooperative multi-agent reinforcement learning
+        - Robust machine learning
+        - ML-based anomaly detection
+
+        Publications:
+        {publications}
+
+        Projects:
+        {projects}
+
+        Talks:
+        {talks}
+
+        PDF Content:
+        {chr(10).join(f'Document: {doc["title"]}\nSummary: {doc["content"][:1000]}...' for doc in self.content["pdf_content"].values())}
+
+        Background:
+        {json.dumps(self.content["personal"].get("config", {}), indent=2)}
+
+        Instructions:
+        1. Answer questions specifically about Keane's research, publications, projects, and background
+        2. Use the provided full publication details to give comprehensive answers
+        3. If asked about something not covered in the context, politely explain that you can only discuss Keane's academic work and research
+        4. When discussing papers, use their actual titles and provide detailed information
+        5. Always maintain a professional, academic tone appropriate for a research website
+        6. When citing papers or discussing research, include relevant details such as venues, dates, and collaborators if available
+
+        Remember: You are representing an academic website. Keep responses focused on research, publications, and professional topics."""
+
+        return system_prompt
 
     def save_context(self, output_path='claude_context.json'):
         """Save the extracted context to a JSON file"""
+        print("Starting content extraction...")
         self.extract_markdown_content()
         self.extract_pdf_content()
         self.extract_config_data()
         
-        context = self.generate_claude_context()
+        print("Generating system prompt...")
+        context = self.generate_system_prompt()
         
+        print(f"Saving context to {output_path}...")
         with open(output_path, 'w', encoding='utf-8') as f:
-            json.dump(context, f, indent=2, ensure_ascii=False)
+            json.dump({"system_prompt": context}, f, indent=2, ensure_ascii=False)
         
-        # Also generate a formatted text version for easy review
-        with open('claude_context.txt', 'w', encoding='utf-8') as f:
-            f.write("=== CLAUDE CONTEXT DOCUMENT ===\n\n")
-            f.write("Personal Information:\n")
-            f.write("-" * 50 + "\n")
-            f.write(json.dumps(context["personal_info"], indent=2))
-            f.write("\n\nPublications:\n")
-            f.write("-" * 50 + "\n")
-            for pub in context["publications"]:
-                f.write(f"\nTitle: {pub['title']}\n")
-                f.write(f"Summary: {pub['summary']}\n")
-            # ... similar sections for other content types
+        # Also save a readable version
+        text_path = 'claude_context.txt'
+        print(f"Saving readable version to {text_path}...")
+        with open(text_path, 'w', encoding='utf-8') as f:
+            f.write(context)
+        
+        print("Content extraction complete!")
 
 if __name__ == "__main__":
     extractor = ContentExtractor()

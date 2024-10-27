@@ -188,9 +188,12 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     async function sendMessage() {
+        const userInput = document.getElementById('user-input');
+        const sendButton = document.getElementById('send-button');
+        const messagesDiv = document.getElementById('chat-messages');
+        
         if (isLoading || !userInput.value.trim()) return;
         
-        const messagesDiv = document.getElementById('chat-messages');
         isLoading = true;
         sendButton.disabled = true;
         userInput.disabled = true;
@@ -200,7 +203,7 @@ document.addEventListener('DOMContentLoaded', function() {
             userMessage.className = 'message user-message';
             userMessage.textContent = userInput.value;
             messagesDiv.appendChild(userMessage);
-
+    
             const response = await fetch(WORKER_URL, {
                 method: 'POST',
                 headers: {
@@ -213,19 +216,23 @@ document.addEventListener('DOMContentLoaded', function() {
                     }]
                 })
             });
-
+    
             const data = await response.json();
+            console.log('API Response:', data); // Debug log
             
             if (!response.ok) {
                 throw new Error(data.error || 'Failed to get response');
             }
-
+    
             const claudeMessage = document.createElement('div');
             claudeMessage.className = 'message claude-message';
-            claudeMessage.textContent = data.content[0].text;
+            // Update to use correct response format
+            claudeMessage.textContent = data.content;
             messagesDiv.appendChild(claudeMessage);
             
-            localStorage.setItem('chatMessages', messagesDiv.innerHTML);
+            // Save chat state after new message
+            saveChatState();
+            
         } catch (error) {
             console.error('Error:', error);
             const errorMessage = document.createElement('div');
