@@ -213,56 +213,33 @@ document.addEventListener('DOMContentLoaded', function() {
         userInput.disabled = true;
         
         try {
-            const userMessage = document.createElement('div');
-            userMessage.className = 'message user-message';
-            userMessage.textContent = userInput.value;
-            messagesDiv.appendChild(userMessage);
-            messagesDiv.scrollTop = messagesDiv.scrollHeight;
-    
-            console.log('Sending request to Claude...'); // Debug log
-            const response = await fetch(WORKER_URL, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    messages: [{
-                        role: 'user',
-                        content: userInput.value
-                    }]
-                })
-            });
-    
             const data = await response.json();
-            console.log('Raw Claude response:', data); // Debug log
-    
-            if (!response.ok) {
-                throw new Error(data.error || 'Failed to get response');
-            }
-    
-            // Handle Claude's response format
-            let claudeResponseText;
-            if (data && data.content) {
-                // Direct content field
-                claudeResponseText = data.content;
-            } else if (data && data.messages && data.messages[0] && data.messages[0].content) {
-                // Messages array format
-                claudeResponseText = data.messages[0].content;
-            } else if (data && data.choices && data.choices[0] && data.choices[0].message) {
-                // OpenAI-style format
-                claudeResponseText = data.choices[0].message.content;
-            } else {
-                console.error('Unexpected response format:', data);
-                throw new Error('Unexpected response format from Claude');
-            }
-    
-            const claudeMessage = document.createElement('div');
-            claudeMessage.className = 'message claude-message';
-            claudeMessage.textContent = claudeResponseText;
-            messagesDiv.appendChild(claudeMessage);
-            
-            saveChatState();
-            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        console.log('Claude response:', data);
+
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to get response');
+        }
+
+        // Extract text from Claude's new response format
+        let claudeResponseText = '';
+        if (data.content && Array.isArray(data.content)) {
+            // Combine all text content from the response
+            claudeResponseText = data.content
+                .filter(item => item.type === 'text')
+                .map(item => item.text)
+                .join('\n');
+        } else {
+            console.error('Unexpected response format:', data);
+            throw new Error('Unexpected response format from Claude');
+        }
+
+        const claudeMessage = document.createElement('div');
+        claudeMessage.className = 'message claude-message';
+        claudeMessage.textContent = claudeResponseText;
+        messagesDiv.appendChild(claudeMessage);
+        
+        saveChatState();
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
             
         } catch (error) {
             console.error('Error details:', error); // Detailed error log
@@ -278,7 +255,7 @@ document.addEventListener('DOMContentLoaded', function() {
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
     }
-    
+
     // Add event listeners
     const header = document.querySelector('.chat-header');
     const sendButton = document.getElementById('send-button');
