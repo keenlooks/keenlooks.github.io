@@ -11,7 +11,7 @@ from pathlib import Path
 import re
 
 class ContentExtractor:
-    def __init__(self, repo_path, website_url="https://keanelucas.com"):
+    def __init__(self):
         # In GitHub Actions, the repository is checked out to the workspace directory
         self.repo_path = Path(os.getenv('GITHUB_WORKSPACE', '.'))
         self.website_url = "https://keanelucas.com"
