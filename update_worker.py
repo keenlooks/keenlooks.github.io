@@ -35,14 +35,6 @@ def update_worker(prompt):
           const body = await request.json();
           
           const systemPrompt = {json.dumps(prompt)};
-          
-          const messages = [
-            {{
-              role: "system",
-              content: systemPrompt
-            }},
-            ...body.messages
-          ];
 
           const response = await fetch('https://api.anthropic.com/v1/messages', {{
             method: 'POST',
@@ -54,7 +46,8 @@ def update_worker(prompt):
             body: JSON.stringify({{
               model: 'claude-3-haiku-20240307',
               max_tokens: 1024,
-              messages: messages
+              system: systemPrompt,
+              messages: body.messages
             }})
           }});
 
