@@ -110,7 +110,7 @@ def update_worker(prompt):
     try:
         print("Deploying worker...")
         result = subprocess.run(
-            ['wrangler', 'deploy', '--verbose'],
+            ['wrangler', 'deploy'],
             capture_output=True,
             text=True,
             check=True
