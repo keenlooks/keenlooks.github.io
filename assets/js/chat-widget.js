@@ -29,9 +29,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 <div id="chat-messages"></div>
                 <div id="suggestion-chips" class="suggestion-chips">
                     <button class="suggestion-chip">🔍 Tell me about recent work</button>
-                    <button class="suggestion-chip">💡 Research interests</button>
+                    <button class="suggestion-chip">✍️ Write a 50-word bio</button>
                     <button class="suggestion-chip">📚 Get BibTeX entries</button>
-                    <button class="suggestion-chip">🎓 Academic background</button>
+                    <button class="suggestion-chip">💻 Code availability</button>
                     <button class="suggestion-chip">👥 How can I collaborate?</button>
                 </div>
                 <div class="chat-input">
@@ -313,15 +313,13 @@ document.addEventListener('DOMContentLoaded', function() {
     const WORKER_URL = 'https://flat-bread-e3e2.keenlooks-cloudflare.workers.dev/';
     let isLoading = false;
 
-    // Welcome message
-    const welcomeMessage = `👋 Hi! I'm an AI assistant who can tell you about Keane's research in:  
-  
-🛡️ AI Safety  
-🦠 ML-based Malware Detection  
-🤝 Cooperative Multi-agent RL  
-🔒 National Security  
-  
-How can I help you today?`;
+    // Welcome message with explicit <br> tags
+    const welcomeMessage = `👋 Hi! I'm an AI assistant who can tell you about Keane's research in:<br><br>
+    🛡️ AI Safety<br>
+    🦠 ML-based Malware Detection<br>
+    🤝 Cooperative Multi-agent RL<br>
+    🔒 National Security<br><br>
+    How can I help you today?`;
 
     // Set up marked options
     markedScript.onload = function() {
@@ -335,9 +333,10 @@ How can I help you today?`;
         const messagesDiv = document.getElementById('chat-messages');
         const welcomeDiv = document.createElement('div');
         welcomeDiv.className = 'message claude-message';
-        welcomeDiv.textContent = welcomeMessage;
+        welcomeDiv.innerHTML = welcomeMessage;  // Use innerHTML to interpret <br> tags
         messagesDiv.appendChild(welcomeDiv);
     }
+
 
     function saveChatState() {
         const messagesDiv = document.getElementById('chat-messages');
