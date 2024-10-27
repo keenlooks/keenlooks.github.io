@@ -27,14 +27,127 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Add the styles
     const styles = `
-        /* Previous styles remain the same */
-        
-        /* Add styles for markdown content */
+        .chat-widget-container {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            width: 400px;
+            background: #1a1a1a;
+            border: 1px solid #2d2d2d;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            z-index: 9999;
+            transition: height 0.3s ease;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .chat-widget-container.closed {
+            height: 48px;
+        }
+
+        .chat-widget-container.open {
+            height: 600px;
+        }
+
+        .chat-header {
+            padding: 12px 16px;
+            background: #2d2d2d;
+            border-radius: 8px 8px 0 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            user-select: none;
+            z-index: 10000;
+        }
+
+        .chat-title {
+            color: #e0e0e0;
+            font-weight: 500;
+        }
+
+        .minimize-button {
+            background: none;
+            border: none;
+            color: #e0e0e0;
+            font-size: 18px;
+            cursor: pointer;
+            padding: 0 4px;
+        }
+
+        .chat-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        #chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+            color: #e0e0e0;
+        }
+
+        .chat-input {
+            padding: 12px;
+            border-top: 1px solid #2d2d2d;
+            display: flex;
+            gap: 8px;
+            background: #1a1a1a;
+        }
+
+        #user-input {
+            flex: 1;
+            padding: 8px 12px;
+            border: 1px solid #2d2d2d;
+            border-radius: 4px;
+            background: #2d2d2d;
+            color: #e0e0e0;
+            resize: none;
+            min-height: 38px;
+            max-height: 120px;
+            font-family: inherit;
+        }
+
+        #send-button {
+            padding: 8px 16px;
+            background: #4a9eff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.2s;
+            white-space: nowrap;
+        }
+
+        #send-button:hover {
+            background: #357abd;
+        }
+
+        #send-button:disabled {
+            background: #2d2d2d;
+        }
+
+        .message {
+            margin-bottom: 12px;
+            padding: 10px;
+            border-radius: 4px;
+            max-width: 85%;
+            word-wrap: break-word;
+        }
+
+        .user-message {
+            background: #2d2d2d;
+            margin-left: auto;
+            color: #e0e0e0;
+        }
+
         .claude-message {
             background: #1e3a5f;
             margin-right: auto;
             color: #e0e0e0;
-            line-height: 1.5;
         }
 
         .claude-message a {
@@ -49,7 +162,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         .claude-message p {
-            margin: 0 0 1em 0;
+            margin: 0 0 0.5em 0;
         }
 
         .claude-message p:last-child {
@@ -59,6 +172,10 @@ document.addEventListener('DOMContentLoaded', function() {
         .claude-message ul, .claude-message ol {
             margin: 0.5em 0;
             padding-left: 1.5em;
+        }
+
+        .claude-message li {
+            margin-bottom: 0.25em;
         }
 
         .claude-message code {
@@ -81,32 +198,24 @@ document.addEventListener('DOMContentLoaded', function() {
             padding: 0;
         }
 
-        .claude-message blockquote {
-            border-left: 3px solid #4a9eff;
-            margin: 0.5em 0;
-            padding-left: 1em;
-            color: #cccccc;
+        .error-message {
+            background: #5f1e1e;
+            color: #e0e0e0;
+            text-align: center;
+            margin: 10px auto;
         }
 
-        .claude-message h1, .claude-message h2, .claude-message h3, 
-        .claude-message h4, .claude-message h5, .claude-message h6 {
-            margin: 0.5em 0;
-            color: #ffffff;
-        }
-
-        .claude-message table {
-            border-collapse: collapse;
-            margin: 0.5em 0;
-            width: 100%;
-        }
-
-        .claude-message th, .claude-message td {
-            border: 1px solid #2d2d2d;
-            padding: 0.4em 0.8em;
-        }
-
-        .claude-message th {
-            background: #2d2d2d;
+        @media (max-width: 768px) {
+            .chat-widget-container {
+                bottom: 0;
+                right: 0;
+                width: 100%;
+                border-radius: 8px 8px 0 0;
+            }
+            
+            .chat-widget-container.open {
+                height: 80vh;
+            }
         }
     `;
 
@@ -115,11 +224,18 @@ document.addEventListener('DOMContentLoaded', function() {
     styleSheet.textContent = styles;
     document.head.appendChild(styleSheet);
 
-    // Constants and state
+    // Set up marked options
+    markedScript.onload = function() {
+        marked.use({
+            breaks: true,
+            gfm: true
+        });
+    };
+
+    // Initialize chat functionality
     const WORKER_URL = 'https://flat-bread-e3e2.keenlooks-cloudflare.workers.dev/';
     let isLoading = false;
 
-    // Chat state management functions
     function saveChatState() {
         const messagesDiv = document.getElementById('chat-messages');
         if (messagesDiv) {
@@ -136,8 +252,12 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
-    // Toggle chat function
-    function toggleChat() {
+    // Add event listeners
+    const header = document.querySelector('.chat-header');
+    const sendButton = document.getElementById('send-button');
+    const userInput = document.getElementById('user-input');
+
+    header.addEventListener('click', function() {
         const widget = document.getElementById('chat-widget');
         const minimizeButton = widget.querySelector('.minimize-button');
         const isOpen = widget.classList.contains('open');
@@ -145,15 +265,12 @@ document.addEventListener('DOMContentLoaded', function() {
         widget.classList.toggle('open');
         widget.classList.toggle('closed');
         minimizeButton.textContent = isOpen ? '+' : '−';
-    }
+    });
 
     async function sendMessage() {
-        const userInput = document.getElementById('user-input');
-        const sendButton = document.getElementById('send-button');
-        const messagesDiv = document.getElementById('chat-messages');
-        
         if (isLoading || !userInput.value.trim()) return;
         
+        const messagesDiv = document.getElementById('chat-messages');
         isLoading = true;
         sendButton.disabled = true;
         userInput.disabled = true;
@@ -184,7 +301,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 throw new Error(data.error || 'Failed to get response');
             }
 
-            // Extract text from Claude's response format
             let claudeResponseText = '';
             if (data.content && Array.isArray(data.content)) {
                 claudeResponseText = data.content
@@ -197,24 +313,15 @@ document.addEventListener('DOMContentLoaded', function() {
 
             const claudeMessage = document.createElement('div');
             claudeMessage.className = 'message claude-message';
-            
-            // Render markdown with security options
-            claudeMessage.innerHTML = marked.parse(claudeResponseText, {
-                breaks: true,
-                gfm: true,
-                sanitize: true,
-                headerIds: false,
-                mangle: false
-            });
+            claudeMessage.innerHTML = marked.parse(claudeResponseText);
 
-            // Make all links open in new tab
+            // Make links safe and open in new tab
             claudeMessage.querySelectorAll('a').forEach(link => {
                 link.setAttribute('target', '_blank');
                 link.setAttribute('rel', 'noopener noreferrer');
             });
 
             messagesDiv.appendChild(claudeMessage);
-            
             saveChatState();
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
             
@@ -232,13 +339,7 @@ document.addEventListener('DOMContentLoaded', function() {
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
     }
-    
-    // Add event listeners
-    const header = document.querySelector('.chat-header');
-    const sendButton = document.getElementById('send-button');
-    const userInput = document.getElementById('user-input');
 
-    header.addEventListener('click', toggleChat);
     sendButton.addEventListener('click', sendMessage);
     userInput.addEventListener('keypress', function(e) {
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -249,7 +350,4 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Load saved chat history
     loadChatState();
-
-    // Save chat state before page unload
-    window.addEventListener('beforeunload', saveChatState);
 });
