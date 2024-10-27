@@ -34,7 +34,7 @@ def update_worker(prompt):
         try {{
           const body = await request.json();
           
-          const systemPrompt = {json.dumps(prompt)};
+          const systemPrompt = {{"type":"text", "text":json.dumps(prompt), "cache_control": {{"type": "ephemeral"}}}};
 
           const response = await fetch('https://api.anthropic.com/v1/messages', {{
             method: 'POST',
