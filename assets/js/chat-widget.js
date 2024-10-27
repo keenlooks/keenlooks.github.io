@@ -4,13 +4,13 @@ document.addEventListener('DOMContentLoaded', function() {
     const chatWidgetHTML = `
         <div id="chat-widget" class="chat-widget-container closed">
             <div class="chat-header">
-                <span class="chat-title">Ask Claude</span>
+                <span class="chat-title">Ask About My Research</span>
                 <button class="minimize-button">+</button>
             </div>
             <div class="chat-content">
                 <div id="chat-messages"></div>
                 <div class="chat-input">
-                    <textarea id="user-input" placeholder="Type your message..."></textarea>
+                    <textarea id="user-input" placeholder="Ask me about Keane's research..."></textarea>
                     <button id="send-button">Send</button>
                 </div>
             </div>
@@ -168,16 +168,29 @@ document.addEventListener('DOMContentLoaded', function() {
     styleSheet.textContent = styles;
     document.head.appendChild(styleSheet);
 
-    // Constants
+    // Constants and state
     const WORKER_URL = 'https://flat-bread-e3e2.keenlooks-cloudflare.workers.dev/';
     let isLoading = false;
 
-    // Add event listeners
-    const header = document.querySelector('.chat-header');
-    const sendButton = document.getElementById('send-button');
-    const userInput = document.getElementById('user-input');
+    // Chat state management functions
+    function saveChatState() {
+        const messagesDiv = document.getElementById('chat-messages');
+        if (messagesDiv) {
+            localStorage.setItem('claudeChatHistory', messagesDiv.innerHTML);
+        }
+    }
 
-    header.addEventListener('click', function() {
+    function loadChatState() {
+        const messagesDiv = document.getElementById('chat-messages');
+        const savedMessages = localStorage.getItem('claudeChatHistory');
+        if (messagesDiv && savedMessages) {
+            messagesDiv.innerHTML = savedMessages;
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+    }
+
+    // Toggle chat function
+    function toggleChat() {
         const widget = document.getElementById('chat-widget');
         const minimizeButton = widget.querySelector('.minimize-button');
         const isOpen = widget.classList.contains('open');
@@ -185,8 +198,9 @@ document.addEventListener('DOMContentLoaded', function() {
         widget.classList.toggle('open');
         widget.classList.toggle('closed');
         minimizeButton.textContent = isOpen ? '+' : '−';
-    });
+    }
 
+    // Message sending function
     async function sendMessage() {
         const userInput = document.getElementById('user-input');
         const sendButton = document.getElementById('send-button');
@@ -203,6 +217,7 @@ document.addEventListener('DOMContentLoaded', function() {
             userMessage.className = 'message user-message';
             userMessage.textContent = userInput.value;
             messagesDiv.appendChild(userMessage);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
     
             const response = await fetch(WORKER_URL, {
                 method: 'POST',
@@ -218,7 +233,6 @@ document.addEventListener('DOMContentLoaded', function() {
             });
     
             const data = await response.json();
-            console.log('API Response:', data); // Debug log
             
             if (!response.ok) {
                 throw new Error(data.error || 'Failed to get response');
@@ -226,12 +240,11 @@ document.addEventListener('DOMContentLoaded', function() {
     
             const claudeMessage = document.createElement('div');
             claudeMessage.className = 'message claude-message';
-            // Update to use correct response format
             claudeMessage.textContent = data.content;
             messagesDiv.appendChild(claudeMessage);
             
-            // Save chat state after new message
             saveChatState();
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
             
         } catch (error) {
             console.error('Error:', error);
@@ -248,6 +261,12 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    // Add event listeners
+    const header = document.querySelector('.chat-header');
+    const sendButton = document.getElementById('send-button');
+    const userInput = document.getElementById('user-input');
+
+    header.addEventListener('click', toggleChat);
     sendButton.addEventListener('click', sendMessage);
     userInput.addEventListener('keypress', function(e) {
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -256,9 +275,9 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Load saved messages
-    const savedMessages = localStorage.getItem('chatMessages');
-    if (savedMessages) {
-        document.getElementById('chat-messages').innerHTML = savedMessages;
-    }
+    // Load saved chat history
+    loadChatState();
+
+    // Save chat state before page unload
+    window.addEventListener('beforeunload', saveChatState);
 });
