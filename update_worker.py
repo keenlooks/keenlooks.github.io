@@ -37,8 +37,7 @@ def generate_system_prompt(context_file='claude_context.json'):
 
 def update_worker(prompt):
     """Update the Cloudflare Worker with the new system prompt"""
-    worker_name = os.getenv('CLOUDFLARE_WORKER_NAME', 'claude-chat')
-    
+    # Save the worker code
     worker_template = f'''
     export default {{
       async fetch(request, env) {{
@@ -65,12 +64,11 @@ def update_worker(prompt):
             ...body.messages
           ];
 
-          // Use the ANTHROPIC_API_KEY from Worker environment
           const response = await fetch('https://api.anthropic.com/v1/messages', {{
             method: 'POST',
             headers: {{
               'Content-Type': 'application/json',
-              'x-api-key': env.ANTHROPIC_API_KEY,  // This comes from Worker environment
+              'x-api-key': env.ANTHROPIC_API_KEY,
               'anthropic-version': '2023-06-01'
             }},
             body: JSON.stringify({{
@@ -104,25 +102,16 @@ def update_worker(prompt):
     }};
     '''
     
-    # Create wrangler.toml
-    wrangler_config = f"""
-    name = "{worker_name}"
-    main = "worker.js"
-    compatibility_date = "2024-03-26"
-    """
-    
-    with open('wrangler.toml', 'w') as f:
-        f.write(wrangler_config)
-    
     # Save the worker code
     with open('worker.js', 'w') as f:
         f.write(worker_template)
     
     # Deploy using wrangler
     try:
+        print("Deploying worker...")
         result = subprocess.run(
-            ['wrangler', 'deploy'], 
-            capture_output=True, 
+            ['wrangler', 'deploy', '--verbose'],
+            capture_output=True,
             text=True,
             check=True
         )
