@@ -1,0 +1,40 @@
+# .github/workflows/update-claude-context.yml
+name: Update Claude Context and Worker
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  update-context:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      
+      - name: Setup Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.x'
+          
+      - name: Install dependencies
+        run: |
+          pip install beautifulsoup4 PyPDF2 python-frontmatter pyyaml requests
+
+      - name: Generate context
+        run: python content_extractor.py
+        
+      - name: Install Wrangler
+        run: npm install -g wrangler
+        
+      - name: Configure Wrangler
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          echo "account_id = \"$CLOUDFLARE_ACCOUNT_ID\"" > wrangler.toml
+          
+      - name: Update and deploy Worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: python update_worker.py
