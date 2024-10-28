@@ -28,7 +28,7 @@ document.addEventListener('DOMContentLoaded', function() {
             <div class="chat-content">
                 <div id="chat-messages"></div>
                 <div id="suggestion-chips" class="suggestion-chips">
-                    <button class="suggestion-chip">🔍 Tell me about recent work</button>
+                    <button class="suggestion-chip">🔍 Recent work summary</button>
                     <button class="suggestion-chip">✍️ Write a 50-word bio</button>
                     <button class="suggestion-chip">📚 Get BibTeX entries</button>
                     <button class="suggestion-chip">💻 Code availability</button>
