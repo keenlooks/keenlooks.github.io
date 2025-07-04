@@ -2,7 +2,7 @@ name: Update Claude Context and Worker
 
 on:
   push:
-    branches: [ main ]
+    branches: [ master ]
   workflow_dispatch:
 
 jobs:
