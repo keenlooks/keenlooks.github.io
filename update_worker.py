@@ -42,9 +42,10 @@ def update_worker(prompt):
               'Content-Type': 'application/json',
               'x-api-key': env.ANTHROPIC_API_KEY,
               'anthropic-version': '2023-06-01',
+              'anthropic-beta': 'prompt-caching-2024-07-31'
             }},
             body: JSON.stringify({{
-              model: 'claude-sonnet-4-20250514',
+              model: 'claude-3-5-sonnet-latest',
               max_tokens: 1024,
               system: systemPrompt,
               messages: body.messages
