@@ -18,6 +18,9 @@ def update_worker(prompt):
     """Update the Cloudflare Worker with the new system prompt"""
     print("Starting worker update...")
     
+    # JSON encode the prompt here in Python, not in JavaScript
+    encoded_prompt = json.dumps(prompt)
+    
     worker_code = f'''
     export default {{
       async fetch(request, env) {{
@@ -34,7 +37,7 @@ def update_worker(prompt):
         try {{
           const body = await request.json();
           
-          const systemPrompt = {{"type":"text", "text":json.dumps(prompt), "cache_control": {{"type": "ephemeral"}}}};
+          const systemPrompt = {{"type":"text", "text":{encoded_prompt}, "cache_control": {{"type": "ephemeral"}}}};
 
           const response = await fetch('https://api.anthropic.com/v1/messages', {{
             method: 'POST',
@@ -45,7 +48,7 @@ def update_worker(prompt):
               'anthropic-beta': 'prompt-caching-2024-07-31'
             }},
             body: JSON.stringify({{
-              model: 'claude-3-5-sonnet-latest',
+              model: 'claude-sonnet-4-20250514',
               max_tokens: 1024,
               system: systemPrompt,
               messages: body.messages
