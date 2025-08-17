@@ -287,6 +287,42 @@ document.addEventListener('DOMContentLoaded', function() {
             margin: 10px auto;
         }
 
+        .loading-message {
+            background: #1e3a5f;
+            margin-right: auto;
+            color: #e0e0e0;
+            text-align: left;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .loading-dots {
+            display: inline-flex;
+            gap: 2px;
+        }
+
+        .loading-dots span {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background-color: #4a9eff;
+            animation: loading-bounce 1.4s infinite ease-in-out both;
+        }
+
+        .loading-dots span:nth-child(1) { animation-delay: -0.32s; }
+        .loading-dots span:nth-child(2) { animation-delay: -0.16s; }
+        .loading-dots span:nth-child(3) { animation-delay: 0s; }
+
+        @keyframes loading-bounce {
+            0%, 80%, 100% {
+                transform: scale(0);
+            }
+            40% {
+                transform: scale(1);
+            }
+        }
+
         @media (max-width: 768px) {
             .chat-widget-container {
                 bottom: 0;
@@ -401,6 +437,20 @@ document.addEventListener('DOMContentLoaded', function() {
             messagesDiv.appendChild(userMessage);
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
 
+            // Show loading indicator
+            const loadingMessage = document.createElement('div');
+            loadingMessage.className = 'message loading-message';
+            loadingMessage.innerHTML = `
+                <span>Thinking</span>
+                <div class="loading-dots">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </div>
+            `;
+            messagesDiv.appendChild(loadingMessage);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
             const response = await fetch(WORKER_URL, {
                 method: 'POST',
                 headers: {
@@ -440,12 +490,21 @@ document.addEventListener('DOMContentLoaded', function() {
                 link.setAttribute('rel', 'noopener noreferrer');
             });
 
+            // Remove loading indicator
+            messagesDiv.removeChild(loadingMessage);
+            
             messagesDiv.appendChild(claudeMessage);
             saveChatState();
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
             
         } catch (error) {
             console.error('Error:', error);
+            
+            // Remove loading indicator if it exists
+            if (loadingMessage && loadingMessage.parentNode) {
+                messagesDiv.removeChild(loadingMessage);
+            }
+            
             const errorMessage = document.createElement('div');
             errorMessage.className = 'message error-message';
             errorMessage.textContent = 'Error: ' + error.message;
