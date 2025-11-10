@@ -82,9 +82,9 @@ analytics:
 author:
   name             : "Keane Lucas"
   avatar           : "https://github.com/keenlooks.png"
-  bio              : "CMU PhD Researcher"
+  bio              : "Anthropic Frontier Red Team"
   location         : #"Location"
-  employer         :
+  employer         : "Anthropic"
   pubmed           : #"https://www.ncbi.nlm.nih.gov/pubmed/?term=john+snow"
   googlescholar    : "https://scholar.google.com/citations?hl=en&user=vJEa5voAAAAJ"
   email            : "keenlooks@gmail.com"
