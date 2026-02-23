@@ -12,6 +12,8 @@ Over the past few months, we've thrown Claude into the digital trenches of multi
 
 Drawing on these results, I'll break down the technical challenges we conquered, from building specialized tooling harnesses to keeping Claude coherent during 16+ hour competitions. This presentation will demonstrate how competitive environments reveal both the impressive capabilities and amusing limitations of today's AI systems when operating in adversarial scenarios. Join me to see what happens when an assistant trained to be helpful gets dropped into the dynamic world of CTFs and defense competitions—and what this teaches us about AI's true potential in cybersecurity.
 
+This talk was the first featured talk in the [DEF CON 33 Hackers' Almanack](https://media.defcon.org/DEF%20CON%2033/DEF%20CON%2033%20Hackers'%20Almanack.pdf) (Feb 2026).
+
 Check out the [slides](/files/defcon33-claude-climbing-ctf-scoreboard-slides.pdf) and [video](https://www.youtube.com/watch?v=sbkeEwhWIks)!
 
 <iframe width="560" height="315" src="https://www.youtube.com/embed/sbkeEwhWIks" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>

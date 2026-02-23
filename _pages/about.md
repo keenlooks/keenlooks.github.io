@@ -11,7 +11,7 @@ redirect_from:
 <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
   <div style="display: flex; align-items: center; gap: 10px;">
     <span style="background: rgba(255, 255, 255, 0.2); padding: 4px 8px; border-radius: 12px; font-size: 0.8em; font-weight: bold;">NEW!</span>
-    <span style="font-weight: 500;">🎤 DEF CON 33 Talk: <a href="/talks/2025-08-09-claude-climbing-a-ctf-scoreboard-near-you" style="color: #fff; text-decoration: underline;">"Claude--Climbing a CTF Scoreboard Near You"</a></span>
+    <span style="font-weight: 500;">📖 Featured in the <a href="https://media.defcon.org/DEF%20CON%2033/DEF%20CON%2033%20Hackers'%20Almanack.pdf" style="color: #fff; text-decoration: underline;">DEF CON 33 Hackers' Almanack</a> &nbsp;|&nbsp; 🔍 <a href="https://red.anthropic.com/2026/zero-days/" style="color: #fff; text-decoration: underline;">LLM-discovered 0-days</a></span>
   </div>
 </div>
 
@@ -26,11 +26,17 @@ Originally from [Alaska](https://www.frontiersman.com/news/trio-of-valley-studen
 
 My most recent contributions are on [Anthropic's Frontier Red Team blog](https://red.anthropic.com/), where we regularly post about our work measuring, projecting, and improving frontier LLM capabilities:
 
+- **[LLM-discovered 0-days](https://red.anthropic.com/2026/zero-days/)** - Claude found 500+ high-severity vulnerabilities in open-source projects
+- **[AI Models on Realistic Cyber Ranges](https://red.anthropic.com/2026/cyber-toolkits-update/)** - Claude succeeds at multistage network attacks using only standard tools
+- **[AI to Defend Critical Infrastructure](https://red.anthropic.com/2026/critical-infrastructure-defense/)** - Partnership with PNNL exploring AI-accelerated defense
 - **[AI for Cyber Defenders](https://red.anthropic.com/2025/ai-for-cyber-defenders/)** - Building defensive cybersecurity capabilities
 - **[Claude in Cyber Competitions](https://red.anthropic.com/2025/cyber-competitions/)** - Evaluating Claude's performance in CTF competitions (the subject of my [DEF CON talk](/talks/2025-08-09-claude-climbing-a-ctf-scoreboard-near-you))
 - **[Cyber Toolkits](https://red.anthropic.com/2025/cyber-toolkits/)** - An awesome collaboration with [Brian Singer](https://www.brianhacks.com/) on [measuring LLMs' network attack capabilities](https://engineering.cmu.edu/news-events/news/2025/07/24-when-llms-autonomously-attack.html).
 
 **Recent Media Coverage:**
+- DEF CON 33 Hackers' Almanack: [First featured talk](https://media.defcon.org/DEF%20CON%2033/DEF%20CON%2033%20Hackers'%20Almanack.pdf) (Feb 2026)
+- Axios: [Claude Opus 4.6 uncovers 500 zero-day flaws](https://www.axios.com/2026/02/05/anthropic-claude-opus-46-software-hunting) (Feb 2026)
+- Axios: [PNNL makes key AI cyber defense breakthrough](https://www.axios.com/2026/01/13/pacific-northwest-national-lab-ai-cyber-defense) (Jan 2026)
 - Fortune: [Inside Anthropic's 'Red Team'](https://fortune.com/2025/09/04/anthropic-red-team-pushes-ai-models-into-the-danger-zone-and-burnishes-companys-reputation-for-safety/) (Sept 2025)
 - Axios: [Claude AI takes on human hackers](https://www.axios.com/2025/08/05/anthropic-claude-ai-hacker-competitions-def-con) (Aug 2025)
 
