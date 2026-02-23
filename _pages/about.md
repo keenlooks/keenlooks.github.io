@@ -11,7 +11,7 @@ redirect_from:
 <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
   <div style="display: flex; align-items: center; gap: 10px;">
     <span style="background: rgba(255, 255, 255, 0.2); padding: 4px 8px; border-radius: 12px; font-size: 0.8em; font-weight: bold;">NEW!</span>
-    <span style="font-weight: 500;">📖 <a href="https://keanelucas.com/talks/2025-08-09-claude-climbing-a-ctf-scoreboard-near-you" style="color: #fff; text-decoration: underline;">Talk</a> featured in the <a href="https://media.defcon.org/DEF%20CON%2033/DEF%20CON%2033%20Hackers'%20Almanack.pdf" style="color: #fff; text-decoration: underline;">DEF CON 33 Hackers' Almanac</a> &nbsp;|&nbsp; 🔍 <a href="https://red.anthropic.com/2026/zero-days/" style="color: #fff; text-decoration: underline;">LLM-discovered 0-days</a></span>
+    <span style="font-weight: 500;">📖 <a href="https://keanelucas.com/talks/2025-08-09-claude-climbing-a-ctf-scoreboard-near-you" style="color: #fff; text-decoration: underline;">Talk</a> featured in <a href="https://media.defcon.org/DEF%20CON%2033/DEF%20CON%2033%20Hackers'%20Almanack.pdf" style="color: #fff; text-decoration: underline;">DEF CON 33 Hackers' Almanac</a> &nbsp;|&nbsp; 🔍 <a href="https://red.anthropic.com/2026/zero-days/" style="color: #fff; text-decoration: underline;">LLM-discovered 0-days</a></span>
   </div>
 </div>
 
