@@ -89,6 +89,17 @@
   }
 }
 
+/* Mobile/tablet: keep the avatar compact so it doesn't crowd the profile text.
+   (The 125% width above is meant for the narrow desktop sidebar column.) */
+@media screen and (max-width: 57.75em) {
+  .sidebar img { width: 100%; }
+  .author__avatar {
+    width: 85px;
+    padding-right: 5px;
+  }
+  .author__avatar img { max-width: 85px; }
+}
+
 .author__content {
   display: table-cell;
   vertical-align: top;
