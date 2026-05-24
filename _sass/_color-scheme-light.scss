@@ -173,3 +173,10 @@ html[data-theme="light"] { @include light-scheme; }
 
 #theme-toggle:focus-visible,
 #life-link:focus-visible { outline: 2px solid $primary-color; outline-offset: 2px; }
+
+/* On small screens the chat widget becomes a full-width bar pinned to the
+   bottom (≈48px tall), which would cover these buttons — so lift them above it. */
+@media screen and (max-width: 768px) {
+  #theme-toggle,
+  #life-link { bottom: 4rem; }
+}

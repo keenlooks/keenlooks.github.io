@@ -177,4 +177,4 @@ html[data-theme="light"] .life-panel {
 .life-credit { margin: 0; font-size: 0.85em; opacity: 0.8; }
 </style>
 
-<script defer src="{{ '/assets/js/life-page.js' | relative_url }}"></script>
+<script defer src="{{ '/assets/js/life-page.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>

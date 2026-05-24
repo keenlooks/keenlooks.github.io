@@ -41,7 +41,7 @@
 <script src='https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.4/latest.js?config=TeX-MML-AM_CHTML' async></script>
 
 <!-- Conway's Game of Life: subtle animated background (deferred; non-blocking) -->
-<script defer src="{{ base_path }}/assets/js/gol-bg.js"></script>
+<script defer src="{{ base_path }}/assets/js/gol-bg.js?v={{ site.time | date: '%s' }}"></script>
 
 <!-- Light/dark theme toggle (defaults to OS setting; visitor choice saved in localStorage) -->
 <script>
@@ -65,6 +65,8 @@
     var ICON_MOON = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>';
     // A "glider" — the iconic 5-cell Game of Life pattern.
     var ICON_GRID = '<svg xmlns="http://www.w3.org/2000/svg" width="19" height="19" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="9" y="2" width="6" height="6" rx="1"></rect><rect x="16" y="9" width="6" height="6" rx="1"></rect><rect x="2" y="16" width="6" height="6" rx="1"></rect><rect x="9" y="16" width="6" height="6" rx="1"></rect><rect x="16" y="16" width="6" height="6" rx="1"></rect></svg>';
+    // A back arrow (shown on the Game of Life page to return to the previous page).
+    var ICON_BACK = '<svg xmlns="http://www.w3.org/2000/svg" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>';
 
     function render(btn) {
       var t = effectiveTheme();
@@ -89,15 +91,31 @@
       });
       document.body.appendChild(btn);
 
-      // Easter-egg launcher: link to the full Game of Life playground (hidden on
-      // the playground page itself to avoid a self-link).
-      if (!document.querySelector('.life-app') && !document.getElementById('life-link')) {
+      // Bottom-left companion button:
+      //   • on the Game of Life page  -> a "back" button (previous page, else home)
+      //   • on every other page       -> a launcher to the Game of Life playground
+      if (!document.getElementById('life-link')) {
         var life = document.createElement('a');
         life.id = 'life-link';
-        life.href = '{{ base_path }}/life/';
-        life.setAttribute('aria-label', 'Open the Game of Life playground');
-        life.setAttribute('title', "Conway's Game of Life");
-        life.innerHTML = ICON_GRID;
+        if (document.querySelector('.life-app')) {
+          life.innerHTML = ICON_BACK;
+          life.setAttribute('aria-label', 'Back');
+          life.setAttribute('title', 'Back');
+          life.href = '{{ base_path }}/'; // fallback if there's no in-site history
+          life.addEventListener('click', function (e) {
+            if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+            var ref = document.referrer;
+            if (ref && ref.indexOf(window.location.origin) === 0 && ref !== window.location.href) {
+              e.preventDefault();
+              window.history.back();
+            }
+          });
+        } else {
+          life.innerHTML = ICON_GRID;
+          life.setAttribute('aria-label', 'Open the Game of Life playground');
+          life.setAttribute('title', "Conway's Game of Life");
+          life.href = '{{ base_path }}/life/';
+        }
         document.body.appendChild(life);
       }
 

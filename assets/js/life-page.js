@@ -13,8 +13,9 @@
   if (!canvas || !canvas.getContext) return;
   var ctx = canvas.getContext('2d');
 
-  var MIN_CELL = 5;                         // slider minimum; also the world resolution
-  var MAX_WORLD_COLS = 640, MAX_WORLD_ROWS = 420; // bound compute on very large screens
+  var MAX_CELLS = 130000;       // compute budget: the most cells we'll simulate at once
+  var MIN_CELL_FLOOR = 3;       // never shrink cells below this (aesthetics / touch)
+  var minCell = MIN_CELL_FLOOR; // smallest cell size that tiles the whole screen within budget
 
   var CELL = 6;                             // current render size (cell-size slider)
   var fps = 8;                              // generations per second (speed slider)
@@ -32,10 +33,31 @@
     return light ? '#5e5e5e' : '#a0a0a0';
   }
 
+  // Smallest cell size that still tiles the whole viewport without exceeding the
+  // compute budget — this becomes the slider's minimum, so the densest setting
+  // fills the entire screen.
+  function computeMinCell() {
+    var vw = window.innerWidth, vh = window.innerHeight, c = MIN_CELL_FLOOR;
+    while (c < 64 && Math.ceil(vw / c) * Math.ceil(vh / c) > MAX_CELLS) c++;
+    return c;
+  }
+
+  function refreshMinCell() {
+    minCell = computeMinCell();
+    if (size) {
+      size.min = minCell;
+      if (+size.value < minCell) {
+        size.value = minCell;
+        if (sizeVal) sizeVal.textContent = minCell;
+        CELL = minCell;
+      }
+    }
+  }
+
   function neededWorld() {
     return {
-      c: Math.min(MAX_WORLD_COLS, Math.ceil(window.innerWidth / MIN_CELL) + 1),
-      r: Math.min(MAX_WORLD_ROWS, Math.ceil(window.innerHeight / MIN_CELL) + 1)
+      c: Math.ceil(window.innerWidth / minCell) + 1,
+      r: Math.ceil(window.innerHeight / minCell) + 1
     };
   }
 
@@ -231,9 +253,10 @@
   var rt;
   window.addEventListener('resize', function () {
     clearTimeout(rt);
-    rt = setTimeout(function () { growWorldIfNeeded(); resizeCanvas(); draw(); }, 150);
+    rt = setTimeout(function () { refreshMinCell(); growWorldIfNeeded(); resizeCanvas(); draw(); }, 150);
   });
 
+  refreshMinCell();
   initWorld();
   resizeCanvas();
   randomize();
