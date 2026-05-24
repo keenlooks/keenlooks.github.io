@@ -52,7 +52,7 @@
   }
 
   function setColor() {
-    cellColor = effectiveTheme() === 'light' ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.05)';
+    cellColor = effectiveTheme() === 'light' ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.08)';
   }
 
   function seed() {
