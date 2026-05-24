@@ -1,0 +1,7 @@
+# Docker-only overrides (loaded last by docker-compose.yml).
+# Make asset/link URLs root-relative ("/assets/css/main.css" instead of an
+# absolute http://host:port/... URL). This is what lets the CSS load correctly
+# through the container's port mapping, regardless of which host the browser
+# uses. Your real _config.yml / _config.dev.yml are untouched.
+url: ""
+baseurl: ""

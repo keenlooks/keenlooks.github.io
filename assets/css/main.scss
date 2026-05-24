@@ -33,9 +33,12 @@
 @import "page";
 @import "archive";
 @import "sidebar";
+@import "callouts";
 
 @import "vendor/font-awesome/fontawesome";
 @import "vendor/font-awesome/solid";
 @import "vendor/font-awesome/brands";
 @import "vendor/magnific-popup/magnific-popup";
 @import "print";
+
+@import "color-scheme-light"; // prefers-color-scheme: light overrides (must stay last)

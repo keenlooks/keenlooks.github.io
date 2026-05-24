@@ -1,0 +1,36 @@
+/* ==========================================================================
+   CALLOUTS / ANNOUNCEMENT BANNERS
+   Small, theme-aware highlight boxes (used on the About page). The styling here
+   is the dark-theme base, built from the palette variables; light-mode
+   overrides live in _color-scheme-light.scss.
+   ========================================================================== */
+
+.callout {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin: 0 0 0.55rem;
+  padding: 0.6rem 0.95rem;
+  font-size: 0.95em;
+  line-height: 1.45;
+  border: 1px solid $border-color;
+  border-left: 3px solid $primary-color;
+  border-radius: 6px;
+  background: rgba($primary-color, 0.08);
+
+  &:last-of-type { margin-bottom: 1.75rem; }
+
+  a { font-weight: 600; }
+}
+
+.callout__label {
+  flex: 0 0 auto;
+  padding: 0.22em 0.62em;
+  font-size: 0.68em;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  background: $primary-color;
+  color: $background-color;
+}

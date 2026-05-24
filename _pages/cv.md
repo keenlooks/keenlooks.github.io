@@ -17,11 +17,15 @@ Education
 ======
 * B.S. in Computer Science, United States Air Force Academy, 2014
 * M.S. in Information Security, Carnegie Mellon University, 2016
-* M.S. in Machine Learning, Carnegie Mellon University
-* Ph.D in Electrical and Computer Engineering, Carnegie Mellon University
+* M.S. in Machine Learning, Carnegie Mellon University, 2024
+* Ph.D in Electrical and Computer Engineering, Carnegie Mellon University, 2024
 
 Highlighted Experience
 ======
+* Member of Technical Staff at Anthropic (Frontier Red Team)
+  * July 2024 to Present
+  * Evaluates, measures, and improves the cyber capabilities of frontier large language models to support their safe and robust deployment. Builds benchmarks and realistic evaluations for autonomous vulnerability discovery and exploit development (e.g., ExploitBench, ExploitGym), assesses model performance in cyber competitions and against real-world software, and develops defensive applications through partnerships with external organizations (e.g., Mozilla, PNNL). Regularly publishes findings on the [Anthropic Frontier Red Team blog](https://red.anthropic.com/).
+
 * Student Researcher at Google AI
   * Summer 2022
   *	Worked with Dr Nicholas Carlini on the challenges of evaluating randomized machine learning defenses. [Pre-print of paper available here](https://arxiv.org/abs/2302.13464).

@@ -1,0 +1,175 @@
+/* ==========================================================================
+   COLOR SCHEME (light) + MANUAL TOGGLE
+   --------------------------------------------------------------------------
+   The base theme (compiled from _variables.scss) is dark (slate-900 + teal).
+   All light-mode overrides live in the `light-scheme` mixin below so they can
+   be applied in two ways:
+
+     1. Manual  — the visitor clicks the on-page toggle, which sets
+        <html data-theme="light"> (saved in localStorage). See head/custom.html.
+     2. Auto    — the visitor's OS is in light mode AND they have not manually
+        forced dark (html:not([data-theme="dark"])).
+
+   Palette: a slate + teal system shared with the dark base for a cohesive,
+   professional look. This file is imported LAST in main.scss so these rules
+   win the cascade.
+   ========================================================================== */
+
+@mixin light-scheme {
+  $lt-bg          : #ffffff;
+  $lt-surface     : #f5f5f5; // neutral-100 — footer, code, subtle fills
+  $lt-text        : #262626; // neutral-800 — body text
+  $lt-muted       : #737373; // neutral-500 — footer text, captions
+  $lt-border      : #e5e5e5; // neutral-200
+  $lt-link        : #34568a; // muted navy
+  $lt-link-hover  : #25406b; // deeper muted navy
+  $lt-accent      : #2f4f7d; // muted navy — nav underline, blockquote, buttons
+
+  body { color: $lt-text; }
+
+  /* Headings inherit body color in the base theme, so they follow along. */
+
+  a { color: $lt-link; }
+  a:hover { color: $lt-link-hover; }
+
+  u, ins { border-bottom-color: $lt-border; }
+  abbr[title], abbr[data-original-title] { border-bottom-color: $lt-muted; }
+  hr { border-top-color: $lt-border; }
+  blockquote { border-left-color: $lt-accent; }
+
+  /* Inline code */
+  p > code, a > code, li > code, figcaption > code, td > code {
+    background: $lt-surface;
+    border-color: $lt-border;
+  }
+
+  /* Code / syntax blocks */
+  div.highlighter-rouge, figure.highlight, pre.highlight, .highlight {
+    background-color: $lt-surface;
+  }
+
+  /* Masthead & navigation */
+  .masthead { border-bottom-color: $lt-border; }
+
+  .greedy-nav {
+    background: $lt-bg;
+
+    a { color: $lt-text; }
+    a:hover { color: $lt-link; }
+
+    .visible-links a:before { background: $lt-accent; }
+    button { background-color: $lt-accent; }
+
+    .hidden-links {
+      background: $lt-bg;
+      border-color: $lt-border;
+      box-shadow: 0 0 10px rgba(#000, 0.12);
+
+      a:hover { color: $lt-link; background: $lt-surface; }
+      &:before { border-color: $lt-border transparent; }
+      &:after  { border-color: $lt-bg transparent; }
+      li { border-bottom-color: $lt-border; }
+    }
+  }
+
+  /* Sidebar / author profile */
+  .author__avatar img { border-color: $lt-border; }
+  .author__urls {
+    background-color: $lt-bg;
+    border-color: $lt-border;
+    &:before { border-color: $lt-border transparent; }
+    &:after  { border-color: $lt-bg transparent; }
+  }
+
+  /* Footer */
+  .page__footer {
+    background-color: $lt-surface;
+    color: $lt-muted;
+    border-top: 1px solid $lt-border;
+    a { color: inherit; }
+    .fa { color: $lt-muted; }
+  }
+
+  /* Misc borders */
+  .page__content {
+    table { border-color: $lt-border; }
+    td, th { border-color: $lt-border; }
+  }
+  .pagination li a { border-color: $lt-border; }
+
+  /* Callouts / announcement banners */
+  .callout {
+    border-color: #c7d7fe;
+    border-left-color: $lt-accent;
+    background: #eff4ff; // blue-50
+  }
+  .callout__label {
+    background: $lt-link;
+    color: #ffffff;
+  }
+
+  /* Floating control buttons — light look */
+  #theme-toggle,
+  #life-link {
+    border-color: rgba(#000, 0.14);
+    background: rgba(#000, 0.04);
+    box-shadow: 0 2px 10px rgba(#000, 0.12);
+  }
+}
+
+/* The page background lives on <html>, which can't be nested under an
+   html[...] selector, so set it explicitly in each context. */
+@mixin light-bg { background-color: #ffffff; }
+
+/* 1) Manual: visitor chose light via the toggle */
+html[data-theme="light"] { @include light-bg; }
+html[data-theme="light"] { @include light-scheme; }
+
+/* 2) Auto: OS prefers light and visitor hasn't forced dark */
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) { @include light-bg; }
+  html:not([data-theme="dark"]) { @include light-scheme; }
+}
+
+/* ==========================================================================
+   THEME TOGGLE BUTTON
+   Present in both themes; this is the default (dark) look. Placed bottom-LEFT
+   to avoid the chat widget's launcher (bottom-right). The icon (a monochrome
+   SVG that inherits currentColor) is injected by head/custom.html. The
+   light-mode look is defined inside the light-scheme mixin above.
+   ========================================================================== */
+#theme-toggle,
+#life-link {
+  position: fixed;
+  bottom: 1.25rem;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.6rem;
+  height: 2.6rem;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+  text-decoration: none;
+  border: 1px solid rgba(#fff, 0.22);
+  border-radius: 50%;
+  background: rgba(#fff, 0.10);
+  box-shadow: 0 2px 10px rgba(#000, 0.3);
+  -webkit-backdrop-filter: blur(4px);
+          backdrop-filter: blur(4px);
+  opacity: 0.85;
+  transition: transform 0.15s ease, opacity 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+}
+
+#theme-toggle { left: 1.25rem; }
+#life-link    { left: 4.45rem; } /* sits just to the right of the theme toggle */
+
+#theme-toggle svg,
+#life-link svg { display: block; }
+
+#theme-toggle:hover,
+#life-link:hover { transform: scale(1.08); opacity: 1; }
+
+#theme-toggle:focus-visible,
+#life-link:focus-visible { outline: 2px solid $primary-color; outline-offset: 2px; }

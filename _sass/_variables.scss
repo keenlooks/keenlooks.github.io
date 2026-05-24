@@ -14,7 +14,7 @@ $indent-var                 : 1.3em;
 
 /* system typefaces */
 $serif                      : Georgia, Times, serif;
-$sans-serif                 : -apple-system, ".SFNSText-Regular", "San Francisco", "Roboto", "Segoe UI", "Helvetica Neue", "Lucida Grande", Arial, sans-serif;
+$sans-serif                 : "Source Sans 3", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Helvetica Neue", "Lucida Grande", Arial, sans-serif;
 $monospace                  : Monaco, Consolas, "Lucida Console", monospace;
 
 /* sans serif typefaces */
@@ -53,14 +53,14 @@ $darker-gray                : mix(#000, $gray, 60%);
 $light-gray                 : mix(#fff, $gray, 50%);
 $lighter-gray               : mix(#fff, $gray, 90%);
 
-$body-color                 : #252a34;
-$background-color           : #252a34;
-$code-background-color      : mix(#000, $background-color, 15%);
+$body-color                 : #141414;
+$background-color           : #141414;
+$code-background-color      : mix(#fff, $background-color, 8%);
 $code-background-color-dark : mix(#000, $background-color, 20%);
-$text-color                 : #eaeaea;
-$border-color               : mix(#fff, $background-color, 20%);
+$text-color                 : #d6d6d6;
+$border-color               : mix(#fff, $background-color, 18%);
 
-$primary-color              : #8cd2d5;
+$primary-color              : #82a6cc;
 $success-color              : #62c462;
 $warning-color              : #f89406;
 $danger-color               : #ee5f5b;
@@ -90,11 +90,11 @@ $xing-color                 : #006567;
 
 
 /* links */
-$link-color                 : mix(#000, $info-color, 15%) !default;
-$link-color-hover           : mix(#000, $link-color, 25%) !default;
-$link-color-visited         : mix(#fff, $link-color, 15%) !default;
+$link-color                 : #82a6cc !default;
+$link-color-hover           : #a3c2e0 !default;
+$link-color-visited         : #a3c2e0 !default;
 $masthead-link-color        : $primary-color !default;
-$masthead-link-color-hover  : mix(#000, $primary-color, 25%) !default;
+$masthead-link-color-hover  : mix(#fff, $primary-color, 25%) !default;
 $navicon-link-color-hover   : mix(#fff, $primary-color, 75%) !default;
 
 

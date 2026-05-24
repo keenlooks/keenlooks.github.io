@@ -1,0 +1,9 @@
+# Docker-only Gemfile overlay (used by docker-compose.yml via BUNDLE_GEMFILE).
+# It reuses your real Gemfile, then pins a few native gems to versions that
+# still support Ruby 2.7 (the version GitHub Pages builds with). Your normal
+# Gemfile is left untouched. Safe to ignore in git.
+eval_gemfile "Gemfile"
+
+# The latest ffi/eventmachine dropped Ruby 2.7 support; pin to last 2.7-compatible.
+gem "ffi", "< 1.17"
+gem "eventmachine", "1.2.7"

@@ -1,0 +1,38 @@
+# Local preview of the site, matching GitHub Pages' toolchain.
+#
+#   docker compose up          # build + serve at http://localhost:4000
+#   Ctrl-C to stop             # (or: docker compose down)
+#
+# First run installs all gems (a few minutes) and does an initial build (~1 min);
+# gems are cached in the named "gems" volume so later starts are quick. Jekyll
+# watches for file changes and rebuilds automatically — just refresh the browser.
+#
+# Why build + a static server instead of `jekyll serve`? `jekyll serve --host
+# 0.0.0.0` (required so Docker can reach the server) rewrites site.url to
+# http://0.0.0.0:4000, which the browser can't load, breaking all CSS/JS. Building
+# with root-relative URLs (see _config.docker.yml) and serving the static output
+# avoids that entirely.
+services:
+  site:
+    image: ruby:2.7
+    working_dir: /srv/jekyll
+    environment:
+      - JEKYLL_ENV=development
+      - BUNDLE_GEMFILE=/srv/jekyll/Gemfile.docker
+    command: >
+      bash -c "git config --global --add safe.directory /srv/jekyll &&
+      (bundle check || bundle install) &&
+      rm -rf _site && mkdir -p _site &&
+      ( bundle exec jekyll build --watch --force_polling
+      --config _config.yml,_config.dev.yml,_config.docker.yml --destination _site & ) &&
+      ( until [ -f _site/index.html ]; do sleep 2; done ) &&
+      echo '>>> Site ready at http://localhost:4000' &&
+      ruby -run -e httpd -- _site --port=4000 --bind-address=0.0.0.0 --do-not-reverse-lookup"
+    ports:
+      - "4000:4000"
+    volumes:
+      - .:/srv/jekyll      # your repo, mounted live
+      - gems:/usr/local/bundle  # cached gems (persists between runs)
+
+volumes:
+  gems:

@@ -1,3 +1,9 @@
 _site/
 
 debug.log
+
+# Docker local-preview artifacts
+Gemfile.docker.lock
+.playwright-mcp/
+theme-auto-light.png
+theme-forced-dark.png
