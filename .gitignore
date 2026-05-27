@@ -10,6 +10,7 @@ theme-forced-dark.png
 
 # Local Claude Code config (not part of the site)
 .claude/
+CLAUDE.md
 
 # Cloudflare API token for the keane.ai/keane.phd redirect setup (NEVER commit)
 .cf_token
