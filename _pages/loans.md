@@ -12,7 +12,7 @@ A loan is the mirror image of a <a href="{{ '/bonds/' | relative_url }}">bond</a
 You borrow a lump sum today and pay it back in fixed monthly chunks. If you pay more than the required payment, you can pay off the loan faster and save on interest. The below interactive can help see how that works, how much less interest you pay by making extra payments (earlier or later), and how the loan balance changes over time.
 </p>
 
-<div class="loan-explainer">
+<div class="loan-explainer tex2jax_ignore">
   <canvas id="loan-canvas" class="loan-canvas"
           aria-label="Chart of a loan's remaining balance over time, comparing standard payments to making extra monthly payments, which pays the loan off sooner."></canvas>
   <p class="loan-hint">Tip: <strong>click the chart</strong> to drop a one-time payment and type its amount; <strong>drag</strong> it to move it in time; click it again to change the amount (× or 0 removes it). Click a year on the bottom axis to anchor the timeline to a real date.</p>
@@ -77,7 +77,7 @@ You borrow a lump sum today and pay it back in fixed monthly chunks. If you pay 
 </p>
 
 <style>
-.loan-intro, .loan-foot { max-width: 65ch; line-height: 1.65; }
+.loan-intro, .loan-foot { max-width: 760px; line-height: 1.65; }
 .loan-intro { margin: 0.25rem 0 1.25rem; }
 .loan-foot  { margin: 1.25rem 0 0; opacity: 0.92; }
 .loan-explainer { max-width: 760px; }

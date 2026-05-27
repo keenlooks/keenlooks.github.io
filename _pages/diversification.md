@@ -16,7 +16,7 @@ keeps <strong>reshuffling which industries you hold</strong> every half-second, 
 how much the outcome rides on luck when you hold a few, and how little when you hold many.
 </p>
 
-<div class="div-spread">
+<div class="div-spread tex2jax_ignore">
   <canvas id="div-spread-canvas" class="div-spread-canvas"
           aria-label="Animated chart: the growth of $10,000 from 1995 to 2024 on a log scale. A grey band shows the full range any single industry landed in. A slider sets how many industries are blended equal-weight; the chart reshuffles which ones it holds every half-second. With more industries the blended line and the cloud of recent blends vary less."></canvas>
 
@@ -34,7 +34,7 @@ holds it still and charts it over different numbers of industries held. It shows
 outcomes depending on how many industries are held (each size simulated over hundreds of random 10-year windows and industry picks). Notice how fast the bad outcomes become rare as you diversify over just a few industries, while the median (the middle line) barely budges. The red dashed line shows how significantly low-seeming (e.g., 1%) fees reduce the median outcome, which compounds over time and is the main reason why insisting on holding low-fee (e.g., 0.1%) index funds is important.
 </p>
 
-<div class="div-explainer">
+<div class="div-explainer tex2jax_ignore">
   <canvas id="div-canvas" class="div-canvas"
           aria-label="Chart: the spread of 10-year outcomes for a $10,000 investment, by number of industries held. As more industries are held the 5th-to-95th and 25th-to-75th percentile bands narrow toward the median, and a red dashed line shows the median outcome after annual fees."></canvas>
 
@@ -72,7 +72,7 @@ outcomes depending on how many industries are held (each size simulated over hun
 </p>
 
 <style>
-.div-intro, .div-foot { max-width: 65ch; line-height: 1.65; }
+.div-intro, .div-foot { max-width: 760px; line-height: 1.65; }
 .div-intro { margin: 0.25rem 0 1.25rem; }
 .div-foot  { margin: 1.4rem 0 0; opacity: 0.92; }
 .div-src { display: block; margin-top: 0.6rem; font-size: 0.85rem; opacity: 0.7; }

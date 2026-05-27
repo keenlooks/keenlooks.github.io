@@ -20,7 +20,7 @@ TL;DR: the future payout never changes, so when rates rise, the same
 future-dollars are worth fewer now-dollars. Drag the rate to see the effect on the plot.
 </p>
 
-<div class="bond-explainer">
+<div class="bond-explainer tex2jax_ignore">
   <canvas id="bond-canvas" class="bond-canvas"
           aria-label="Chart of a bond's value over time: a curve grows from today's price up to a fixed future payout; raising the interest rate makes the curve steeper and lowers today's price."></canvas>
 
@@ -79,7 +79,7 @@ future-dollars are worth fewer now-dollars. Drag the rate to see the effect on t
 </p>
 
 <style>
-.bond-intro, .bond-foot { max-width: 65ch; line-height: 1.65; }
+.bond-intro, .bond-foot { max-width: 760px; line-height: 1.65; }
 .bond-intro { margin: 0.25rem 0 1.5rem; }
 .bond-foot  { margin: 1.5rem 0 0; opacity: 0.92; }
 
