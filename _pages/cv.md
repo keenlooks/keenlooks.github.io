@@ -61,9 +61,7 @@ Presentations
   
 Projects
 ======
-  <ul>{% for post in site.projects %}
-    {% include archive-single-cv.html %}
-  {% endfor %}</ul>
+* Doom Bot &mdash; deep reinforcement learning agent that plays DOOM from raw visual input ([GIF-filled presentation](https://bit.ly/mldoom))
 
 
 Top Achievements

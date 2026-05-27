@@ -242,3 +242,12 @@
     }
   }
 }
+
+/* Author sidebar social links: give every icon the accent color (overriding the
+   per-brand colors from _utilities.scss — e.g. the near-black GitHub mark that's
+   invisible on the dark background) and a consistent gap before its label.
+   `.author__urls.social-icons i` (0,2,1) out-specifies the brand rules (0,2,0). */
+.author__urls.social-icons i {
+  color: $primary-color;
+  margin-right: 0.4em;
+}

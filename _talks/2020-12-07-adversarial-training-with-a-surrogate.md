@@ -15,6 +15,8 @@ Recent work has shown that it is easy to find adversarial examples that cause ot
 
 [See video presentation here](https://youtu.be/NQM0_7q6F5I)
 
+<iframe width="560" height="315" src="https://www.youtube.com/embed/NQM0_7q6F5I" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+
 [Download slides here](/files/adversarial-training-surrogate-slides.pdf)
 
 Recommended citation: Keane Lucas, Alec Jasen and Lujo Bauer. Adversarial Training with a Surrogate. NeurIPS NewInML Workshop. December 2020

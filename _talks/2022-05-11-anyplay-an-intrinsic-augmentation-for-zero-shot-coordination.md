@@ -19,3 +19,8 @@ Cooperative artificial intelligence with human or superhuman proficiency in coll
 This project is the result of a summer 2021 internship at [MIT Lincoln Lab](https://www.ll.mit.edu/) as part of their [AI Technology Group](https://www.ll.mit.edu/r-d/technology-office/artificial-intelligence-technology).
 
 Please check out the [paper](/files/anyplay.pdf), [code](https://github.com/mit-ll/hanabi_AnyPlay), [video](/files/anyplay_video.m4v), and a [news article](https://news.mit.edu/2022/is-diversity-key-to-collaboration-0525) MIT wrote about it!
+
+<video controls preload="metadata" width="560" style="max-width: 100%; height: auto;">
+  <source src="/files/anyplay_video.m4v" type="video/mp4">
+  Your browser can't play this embedded video — <a href="/files/anyplay_video.m4v">download it here</a> instead.
+</video>

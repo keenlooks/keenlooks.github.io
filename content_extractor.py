@@ -196,7 +196,6 @@ class ContentExtractor:
 
         When linking to sections of the website, use these paths for general sections:
         - Publications: /publications/
-        - Projects: /projects/
         - Talks: /talks/
         - CV: /cv/
 

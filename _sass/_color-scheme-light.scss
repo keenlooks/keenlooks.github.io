@@ -80,6 +80,8 @@
     &:before { border-color: $lt-border transparent; }
     &:after  { border-color: $lt-bg transparent; }
   }
+  /* match the accent-colored social icons to the light navy accent */
+  .author__urls.social-icons i { color: $lt-link; }
 
   /* Footer */
   .page__footer {
@@ -179,4 +181,57 @@ html[data-theme="light"] { @include light-scheme; }
 @media screen and (max-width: 768px) {
   #theme-toggle,
   #life-link { bottom: 4rem; }
+}
+
+/* ==========================================================================
+   GAME OF LIFE — background easter egg (#life-egg)
+   A faint glider in the bottom-right (lifted above the chat widget) that looks
+   like part of the ambient background. Created by head/custom.html on every page
+   except /life/. It is
+   deliberately NOT a chrome button (no fill/border/blur): just a near-invisible
+   glyph that brightens and reveals a label on hover/focus, then links to /life/.
+   `color: inherit` makes it theme-toned automatically (no light override needed).
+   The hit area is only the glyph itself, so the pointer never appears just from
+   resting the mouse in the margin.
+   ========================================================================== */
+#life-egg {
+  position: fixed;
+  right: 1.5rem;
+  bottom: 5.5rem;          /* lifted above the chat widget, which sits bottom-right */
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  color: inherit;
+  text-decoration: none;
+  opacity: 0.14;
+  transition: opacity 0.3s ease;
+}
+#life-egg:hover,
+#life-egg:focus-visible { opacity: 0.8; }
+#life-egg:focus-visible { outline: 2px solid $primary-color; outline-offset: 4px; }
+#life-egg svg { display: block; width: 1.55rem; height: 1.55rem; }
+
+/* Label sits to the LEFT of the glider and stays collapsed (zero width, no
+   margin) at rest so it adds no hidden clickable area; it expands on hover/focus. */
+#life-egg .life-egg__label {
+  max-width: 0;
+  margin-right: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  opacity: 0;
+  transition: max-width 0.3s ease, margin-right 0.3s ease, opacity 0.25s ease;
+}
+#life-egg:hover .life-egg__label,
+#life-egg:focus-visible .life-egg__label {
+  max-width: 9rem;
+  margin-right: 0.45rem;
+  opacity: 0.85;
+}
+
+/* No hover on touch, and the right edge is awkward there — hide it on phones.
+   (The Game of Life is reachable from the Fun tab / card.) */
+@media screen and (max-width: 768px) {
+  #life-egg { display: none; }
 }

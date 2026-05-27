@@ -7,3 +7,11 @@ Gemfile.docker.lock
 .playwright-mcp/
 theme-auto-light.png
 theme-forced-dark.png
+
+# Local Claude Code config (not part of the site)
+.claude/
+
+# Cloudflare API token for the keane.ai/keane.phd redirect setup (NEVER commit)
+.cf_token
+setup_cf_redirects.ps1
+*.zone
