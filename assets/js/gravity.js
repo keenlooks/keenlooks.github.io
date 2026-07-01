@@ -309,6 +309,40 @@
     cam.cx = 0; cam.cy = 0; cam.scale = 0.8;
   }
 
+  // Two equal stars orbiting their barycentre, plus a few circumbinary planets.
+  function binaryStars() {
+    bodies = [];
+    var M = 2000, a = 120;                       // each star sits `a` from the centre
+    var v = Math.sqrt(G * M / (4 * a));          // circular orbit about the barycentre
+    addBody(-a, 0, 0, -v, M, 35);
+    addBody(a, 0, 0, v, M, 210);
+    for (var i = 0; i < 3; i++) {                // planets far enough out to orbit the PAIR
+      var r = 420 + i * 130;
+      var pv = Math.sqrt(G * 2 * M / r);
+      var ang = Math.random() * 6.2832;
+      addBody(Math.cos(ang) * r, Math.sin(ang) * r, -Math.sin(ang) * pv, Math.cos(ang) * pv, 10 + Math.random() * 25);
+    }
+    cam.cx = 0; cam.cy = 0; cam.scale = 0.75;
+  }
+  // The Chenciner–Montgomery figure-8: three equal masses chasing each other
+  // along one shared figure-of-eight. The published initial conditions are for
+  // G=1, m=1; rescaling positions by L and velocities by sqrt(G·M/L) keeps the
+  // choreography valid here. (Numerical drift eventually breaks it down into a
+  // chaotic three-body dance — also fun to watch.)
+  function figureEight() {
+    bodies = [];
+    // M and L picked so one full lap takes ~15 s at 1× (period scales with
+    // sqrt(L³/G·M)) while the bodies stay small enough to never graze-merge.
+    var M = 200, L = 75, vs = Math.sqrt(G * M / L);
+    var p1 = [0.97000436, -0.24308753];
+    var v3 = [-0.93240737, -0.86473146];
+    addBody(p1[0] * L, p1[1] * L, -v3[0] / 2 * vs, -v3[1] / 2 * vs, M, 50);
+    addBody(-p1[0] * L, -p1[1] * L, -v3[0] / 2 * vs, -v3[1] / 2 * vs, M, 210);
+    addBody(0, 0, v3[0] * vs, v3[1] * vs, M, 320);
+    cam.cx = 0; cam.cy = 0; cam.scale = 2.0;
+    if (elTrails && !elTrails.checked) { elTrails.checked = true; trails = true; } // the path IS the show
+  }
+
   if (elSpeed) elSpeed.addEventListener('input', function () { speed = +elSpeed.value; if (elSpeedV) elSpeedV.textContent = speed.toFixed(2) + '×'; });
   if (elMass) elMass.addEventListener('input', function () { spawnMass = +elMass.value; if (elMassV) elMassV.textContent = Math.round(spawnMass); });
   if (elTrails) elTrails.addEventListener('change', function () { trails = elTrails.checked; if (!trails) for (var i = 0; i < bodies.length; i++) bodies[i].trail = []; });
@@ -317,6 +351,9 @@
   if (btnClear) btnClear.addEventListener('click', function () { bodies = []; });
   if (btnPreset) btnPreset.addEventListener('click', solarSystem);
   if (btnAccrete) btnAccrete.addEventListener('click', accretionDisk);
+  var btnBinary = id('grav-binary'), btnEight = id('grav-eight');
+  if (btnBinary) btnBinary.addEventListener('click', binaryStars);
+  if (btnEight) btnEight.addEventListener('click', figureEight);
   if (elCollapse && elPanel) elCollapse.addEventListener('click', function () { elPanel.classList.toggle('grav-panel--collapsed'); });
 
   // ---- theme + resize + visibility --------------------------------------

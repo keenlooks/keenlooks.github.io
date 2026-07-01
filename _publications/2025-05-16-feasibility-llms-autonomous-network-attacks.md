@@ -1,22 +1,22 @@
 ---
-title: "(arXiv) On the Feasibility of Using LLMs to Autonomously Execute Multi-host Network Attacks"
+title: "Incalmo: An Autonomous LLM-assisted System for Red Teaming Multi-Host Networks"
 collection: publications
 permalink: /publications/2025-05-16-feasibility-llms-autonomous-network-attacks
 redirect_from: 
   - /incalmo/
   - /feasibility-llms-autonomous-network-attacks/
-date: 2025-05-16
-venue_short: "arXiv"
-venue: "arXiv preprint"
+date: 2026-05-18
+venue_short: "IEEE S&P '26"
+venue: "IEEE Symposium on Security and Privacy (S&P) 2026"
 type: "Publication"
 excerpt: ""
 authors_short: "B. Singer, <u>K. Lucas</u>, L. Adiga, M. Jain, L. Bauer, and V. Sekar"
 authors: "Brian Singer, <u>Keane Lucas</u>, Lakshmi Adiga, Meghna Jain, Lujo Bauer, and Vyas Sekar"
-citation: "Brian Singer, Keane Lucas, Lakshmi Adiga, Meghna Jain, Lujo Bauer, and Vyas Sekar. On the Feasibility of Using LLMs to Autonomously Execute Multi-host Network Attacks. arXiv preprint"
-paperurl: 'https://arxiv.org/pdf/2501.16466'
+citation: "Brian Singer, Keane Lucas, Lakshmi Adiga, Meghna Jain, Lujo Bauer, and Vyas Sekar. Incalmo: An autonomous LLM-assisted system for red teaming multi-host networks. In Proceedings of the 47th IEEE Symposium on Security and Privacy, May 2026."
+paperurl: '/files/sp2026-incalmo.pdf'
 bibtex: /files/incalmo.bib
 ---
 
-LLMs have shown preliminary promise in some security tasks and CTF challenges. Real cyberattacks are often multi-host network attacks, which involve executing a number of steps across multiple hosts such as conducting reconnaissance, exploiting vulnerabilities, and using compromised hosts to exfiltrate data. To date, the extent to which LLMs can autonomously execute multi-host network attacks is not well understood. To this end, our first contribution is MHBench, an open-source multi-host attack benchmark with 10 realistic emulated networks (from 25 to 50 hosts). We find that popular LLMs including modern reasoning models (e.g., GPT4o, Gemini 2.5 Pro, Sonnet 3.7 Thinking) with state-of-art security-relevant prompting strategies (e.g., PentestGPT, CyberSecEval3) cannot autonomously execute multi-host network attacks. To enable LLMs to autonomously execute such attacks, our second contribution is Incalmo, an high-level abstraction layer. Incalmo enables LLMs to specify high-level actions (e.g., infect a host, scan a network). Incalmo's translation layer converts these actions into lower-level primitives (e.g., commands to exploit tools) through expert agents. In 9 out of 10 networks in MHBench, LLMs using Incalmo achieve at least some of the attack goals. Even smaller LLMs (e.g., Haiku 3.5, Gemini 2 Flash) equipped with Incalmo achieve all goals in 5 of 10 environments. We also validate the key role of high-level actions in Incalmo's abstraction in enabling LLMs to autonomously execute such attacks.
+In realistic enterprise settings, red teaming involves executing multi-host network attacks that span many "stepping stone" hosts, but red teams are expensive and entail significant expertise and effort. To date, the extent to which LLMs can autonomously execute such attacks is not well understood. We find that state-of-the-art LLM-assisted offense systems (e.g., PentestGPT, CyberSecEval3) with leading LLMs cannot autonomously execute multi-host network attacks. To enable them to, we built Incalmo, a high-level attack-abstraction layer: instead of having LLMs interact with low-level tools and commands, Incalmo lets LLMs plan red team exercises in terms of high-level declarative tasks (e.g., infect a host, scan a network) that are executed by domain-specific task agents, with auxiliary services to manage context and acquired assets. To evaluate it, we built MHBench, a multi-host attack benchmark of realistic emulated networks (from 22 to 50 hosts). Incalmo successfully acquires critical assets in 37 out of 40 MHBench environments, whereas state-of-the-art LLM-assisted systems succeed in only 3 out of 40.
 
-Please check out the [paper](https://arxiv.org/pdf/2501.16466) and [code](https://github.com/bsinger98/Incalmo)!
+Please check out the [paper](/files/sp2026-incalmo.pdf) and [code](https://github.com/bsinger98/Incalmo)!

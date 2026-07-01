@@ -166,7 +166,12 @@ class ContentExtractor:
 
         # Define research areas directly
         research_areas = """
-        - Machine learning for malware detection
+        - Frontier AI cyber capabilities (current focus, at Anthropic's Frontier Red Team)
+          * Benchmarks and evaluations for autonomous vulnerability discovery and exploit
+            development (e.g., ExploitBench, ExploitGym, SCONE-bench)
+          * Measuring LLM performance in cyber competitions (CTFs) and on realistic cyber ranges
+          * Defensive applications of AI through partnerships (e.g., Mozilla, PNNL)
+        - Machine learning for malware detection (PhD work)
           * Adversarial ML
           * Robust ML classifiers
           * Raw binary analysis
@@ -179,6 +184,22 @@ class ContentExtractor:
         - ML-based anomaly detection
           * Industrial control systems
           * Security applications
+        """
+
+        # Recent industry writing (not in the repo's _publications collection, so listed
+        # directly; keep in sync with the homepage / publications page).
+        frontier_red_team_posts = """
+        - "Measuring LLMs' Impact on N-day Exploits" (2026): https://red.anthropic.com/2026/n-days/ - measuring how well frontier models can develop exploits for publicly disclosed but unpatched (N-day) vulnerabilities; Mythos Preview reproduced a SpiderMonkey/Firefox proof-of-concept crash in about 12 minutes
+        - "Measuring LLMs' Ability to Develop Exploits" (2026): https://red.anthropic.com/2026/exploit-evals/ - benchmarks (ExploitBench, ExploitGym, SCONE-bench) for measuring how well frontier models build end-to-end software and smart-contract exploits
+        - "Assessing Claude Mythos Preview's Cybersecurity Capabilities" (2026): https://red.anthropic.com/2026/mythos-preview/ - evaluating a frontier model's ability to autonomously discover and exploit zero-day and N-day vulnerabilities
+        - "Partnering with Mozilla to Improve Firefox's Security" (2026): https://red.anthropic.com/2026/firefox/ - collaboration in which Claude Opus 4.6 found 22 vulnerabilities in Firefox
+        - "Reverse Engineering Claude's CVE-2026-2796 Exploit" (2026): https://red.anthropic.com/2026/exploit/ - deep dive into an exploit Claude developed for a Firefox vulnerability
+        - "LLM-discovered 0-days" (2026): https://red.anthropic.com/2026/zero-days/ - Claude found 500+ high-severity vulnerabilities in open-source projects
+        - "AI Models on Realistic Cyber Ranges" (2026): https://red.anthropic.com/2026/cyber-toolkits-update/ - Claude succeeds at multistage network attacks using only standard tools
+        - "AI to Defend Critical Infrastructure" (2026): https://red.anthropic.com/2026/critical-infrastructure-defense/ - partnership with PNNL exploring AI-accelerated defense
+        - "AI for Cyber Defenders" (2025): https://red.anthropic.com/2025/ai-for-cyber-defenders/ - building defensive cybersecurity capabilities
+        - "Claude in Cyber Competitions" (2025): https://red.anthropic.com/2025/cyber-competitions/ - evaluating Claude in CTFs; the subject of Keane's DEF CON 33 talk (featured in the DEF CON 33 Hackers' Almanack)
+        - "Cyber Toolkits" (2025): https://red.anthropic.com/2025/cyber-toolkits/ - measuring LLMs' network attack capabilities, with Brian Singer
         """
 
         # Build the system prompt
@@ -206,6 +227,10 @@ class ContentExtractor:
         Research Areas:
         {research_areas}
 
+        Recent Frontier Red Team blog posts (Keane's current work at Anthropic; link to these
+        directly when discussing them):
+        {frontier_red_team_posts}
+
         Publications:
         {publications}
 
@@ -224,8 +249,10 @@ class ContentExtractor:
         More context:
         - The VTFeed dataset is a dataset of malware and benign binaries (about 200,000 samples evenly split between the two classes) that Keane used in his malware papers. It is not available due to licensing restrictions, and cannot be shared except with direct collaborators.
         - The adversarial version of the attacks described in Malware Makeover is not publicly available, but can be shared for academic purposes only.
-        - Keane recently graduated from his PhD (in August 2024) and started working at Anthropic as part of the Frontier Red Team
+        - Keane completed his PhD at Carnegie Mellon in August 2024 and has since been a Member of Technical Staff on Anthropic's Frontier Red Team, where he evaluates, measures, and improves the cyber capabilities of frontier large language models
+        - His current work (the Frontier Red Team posts above) is his most recent and most impactful; lead with it when summarizing what Keane does, with the PhD-era publications as background
         - He is open to collaboration on measuring and understanding the capabilities of frontier AI systems, their implications for society, and how to ensure they are aligned with human values
+        - His DEF CON 33 talk "Claude: Climbing a CTF Scoreboard Near You" was featured in the DEF CON 33 Hackers' Almanack; media coverage includes Axios, Fortune, and Wired
 
 
         Instructions:

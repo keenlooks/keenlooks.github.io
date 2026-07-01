@@ -1,0 +1,421 @@
+/* ==========================================================================
+   Fool a Neural Network — FGSM adversarial examples, live in the browser.
+   --------------------------------------------------------------------------
+   Two small MNIST classifiers (784->64->10 MLPs, trained offline by
+   make_adversarial_model.py, shipped int8-quantized in adversarial-model.js):
+   a STANDARD model and an ADVERSARIALLY-TRAINED one. This file runs each
+   model's forward pass AND the gradient of the loss w.r.t. the input. That
+   gradient is the whole trick — the Fast Gradient Sign Method (Goodfellow et
+   al., 2014) nudges every pixel by ±ε in whichever direction hurts the model
+   most:
+
+       x_adv = clip( x + ε · sign(∇ₓ loss), 0, 1 )       (untargeted)
+       x_adv = clip( x − ε · sign(∇ₓ loss_t), 0, 1 )     (toward a chosen class t)
+
+   The noise is always computed against the CURRENTLY ACTIVE model, so toggling
+   adversarial training re-aims the attack. Click a confidence bar to aim the
+   attack at that digit. The hidden-activation grids show how the perturbation
+   reshapes the network's internal representation.
+
+   Original code; theme-aware; Pointer Events + touch-action:none.
+   ========================================================================== */
+(function () {
+  var canvas = document.getElementById('adv-canvas');
+  if (!canvas || !window.ADV_MODEL) return;
+  var ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  function id(x) { return document.getElementById(x); }
+
+  var elEps = id('adv-eps'), elEpsV = id('adv-eps-val');
+  var btnNext = id('adv-next'), btnClear = id('adv-clear');
+  var elRobust = id('adv-robust');
+  var elPanel = id('adv-panel'), elCollapse = id('adv-collapse');
+  var status = id('adv-status');
+
+  /* ---- decode the models ---- */
+  var M = window.ADV_MODEL, HID = M.hidden;
+  function b64bytes(s) {
+    var bin = atob(s), a = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i);
+    return a;
+  }
+  function dequant(b64, scale) {
+    var q = new Int8Array(b64bytes(b64).buffer), f = new Float32Array(q.length);
+    for (var i = 0; i < q.length; i++) f[i] = q[i] * scale;
+    return f;
+  }
+  function decode(spec) {
+    var W2 = dequant(spec.w2, spec.s2);
+    var maxW2 = 1e-6;
+    for (var i = 0; i < W2.length; i++) if (Math.abs(W2[i]) > maxW2) maxW2 = Math.abs(W2[i]);
+    return {
+      W1: dequant(spec.w1, spec.s1),   // 784×HID
+      W2: W2,                          // HID×10
+      B1: new Float32Array(spec.b1),
+      B2: new Float32Array(spec.b2),
+      maxW2: maxW2
+    };
+  }
+  var STD = decode(M.standard), ROB = decode(M.robust);
+  var net = STD;                       // active model
+  var IMGS = b64bytes(M.images);       // n × 784 uint8
+
+  /* ---- the network ---- */
+  function forward(x) {
+    var h = new Float32Array(HID), p = new Float32Array(10), i, j, s;
+    for (j = 0; j < HID; j++) {
+      s = net.B1[j];
+      for (i = 0; i < 784; i++) s += x[i] * net.W1[i * HID + j];
+      h[j] = s > 0 ? s : 0;
+    }
+    var mx = -1e9;
+    for (j = 0; j < 10; j++) {
+      s = net.B2[j];
+      for (i = 0; i < HID; i++) s += h[i] * net.W2[i * 10 + j];
+      p[j] = s; if (s > mx) mx = s;
+    }
+    var sum = 0;
+    for (j = 0; j < 10; j++) { p[j] = Math.exp(p[j] - mx); sum += p[j]; }
+    for (j = 0; j < 10; j++) p[j] /= sum;
+    return { h: h, p: p };
+  }
+  /* d(cross-entropy(label)) / d(input) — backprop through both layers */
+  function inputGrad(x, label) {
+    var f = forward(x), d = new Float32Array(10), i, j;
+    for (j = 0; j < 10; j++) d[j] = f.p[j] - (j === label ? 1 : 0);
+    var dh = new Float32Array(HID);
+    for (i = 0; i < HID; i++) {
+      if (f.h[i] <= 0) continue;
+      var s = 0;
+      for (j = 0; j < 10; j++) s += net.W2[i * 10 + j] * d[j];
+      dh[i] = s;
+    }
+    var dx = new Float32Array(784);
+    for (i = 0; i < 784; i++) {
+      var s2 = 0;
+      for (j = 0; j < HID; j++) s2 += net.W1[i * HID + j] * dh[j];
+      dx[i] = s2;
+    }
+    return dx;
+  }
+  function argmax(p) { var b = 0; for (var i = 1; i < 10; i++) if (p[i] > p[b]) b = i; return b; }
+
+  /* ---- state ---- */
+  var eps = 0.10;
+  var img = new Float32Array(784);     // the (paintable) clean image
+  var trueLabel = null;                // null once the user draws from blank
+  var target = null;                   // chosen attack target class, or null = untargeted
+  var demoIdx = -1;
+  var cleanP = null, advP = null, cleanH = null, advH = null;
+  var gsign = new Float32Array(784), adv = new Float32Array(784);
+  var dirty = true;
+  var W = 0, H = 0, dpr = 1, raf = null;
+  var paint = null;
+  var barHit = [];                     // {d, x, y, w, h} per confidence-bar group, for click-targeting
+
+  function loadDemo(step) {
+    demoIdx = (demoIdx + step + M.n) % M.n;
+    for (var i = 0; i < 784; i++) img[i] = IMGS[demoIdx * 784 + i] / 255;
+    trueLabel = M.labels[demoIdx];
+    target = null;
+    dirty = true;
+  }
+  function recompute() {
+    var f = forward(img);
+    cleanP = f.p; cleanH = f.h;
+    var label, dir;
+    if (target != null) { label = target; dir = -1; }      // descend the target's loss → predict it
+    else { label = (trueLabel != null) ? trueLabel : argmax(cleanP); dir = 1; }
+    var g = inputGrad(img, label);
+    for (var i = 0; i < 784; i++) gsign[i] = dir * (g[i] > 0 ? 1 : (g[i] < 0 ? -1 : 0));
+    applyEps();
+  }
+  function applyEps() {
+    for (var i = 0; i < 784; i++) {
+      var v = img[i] + eps * gsign[i];
+      adv[i] = v < 0 ? 0 : (v > 1 ? 1 : v);
+    }
+    var f = forward(adv);
+    advP = f.p; advH = f.h;
+  }
+
+  /* ---- rendering helpers ---- */
+  function effectiveTheme() {
+    var f = document.documentElement.getAttribute('data-theme');
+    if (f === 'light' || f === 'dark') return f;
+    return (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+  }
+  function bg() { return effectiveTheme() === 'light' ? '#f3f5f8' : '#0e1014'; }
+  function accent() { return effectiveTheme() === 'light' ? '#34568a' : '#82a6cc'; }
+  function nodeColor() { return effectiveTheme() === 'light' ? '#c0892e' : '#e0b24a'; } /* gold (ties to the site favicon); distinct from the blue connection lines */
+  function badColor() { return '#c4574a'; }
+  function textColor(a) { return effectiveTheme() === 'light' ? 'rgba(38,38,38,' + a + ')' : 'rgba(214,214,214,' + a + ')'; }
+
+  var off = document.createElement('canvas'); off.width = 28; off.height = 28;
+  var offCtx = off.getContext('2d');
+  var pix = offCtx.createImageData(28, 28);
+  function blit(data, mode) {
+    var lightT = effectiveTheme() === 'light';
+    for (var i = 0; i < 784; i++) {
+      var v, r, g2, b;
+      if (mode === 'sign') { v = Math.round(127 + data[i] * 110); r = g2 = b = v; }
+      else {
+        v = Math.round(data[i] * 255);
+        if (lightT) { r = g2 = b = 255 - v; } else { r = g2 = b = v; }
+      }
+      pix.data[i * 4] = r; pix.data[i * 4 + 1] = g2; pix.data[i * 4 + 2] = b; pix.data[i * 4 + 3] = 255;
+    }
+    offCtx.putImageData(pix, 0, 0);
+  }
+
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = canvas.clientWidth; H = canvas.clientHeight;
+    if (!W || !H) return;
+    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  /* panel geometry — center the row in the space LEFT of the controls panel */
+  function layout() {
+    var avail = W;
+    if (W > 860 && elPanel && !elPanel.classList.contains('adv-panel--collapsed')) {
+      avail = W - elPanel.offsetWidth - 56;
+    }
+    var S = Math.min(H * 0.30, (avail - 130) / 3);
+    S = Math.max(78, S);
+    var gap = Math.max(28, S * 0.2);
+    var total = S * 3 + gap * 2;
+    var x0 = Math.max(12, (avail - total) / 2), y0 = Math.max(82, H * 0.32 - S / 2);
+    return { S: S, gap: gap, cx: x0 + total / 2, x: [x0, x0 + S + gap, x0 + (S + gap) * 2], y: y0 };
+  }
+
+  function drawPanel(data, mode, x, y, S, caption, captionColor) {
+    blit(data, mode);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(off, x, y, S, S);
+    ctx.imageSmoothingEnabled = true;
+    ctx.strokeStyle = 'rgba(127,127,127,0.45)'; ctx.lineWidth = 1;
+    ctx.strokeRect(x - 0.5, y - 0.5, S + 1, S + 1);
+    ctx.font = Math.max(12, S * 0.1) + 'px "Source Sans 3", system-ui, sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    ctx.fillStyle = captionColor || textColor(0.85);
+    ctx.fillText(caption, x + S / 2, y + S + 9);
+  }
+
+  // A live node-link diagram of the forward pass on the attacked image:
+  //   input image → 64 hidden units → 10 outputs.
+  // Line WIDTH encodes the network weight; line BRIGHTNESS encodes the activation
+  // flowing through it (so only the active sub-network "lights up"); node color
+  // encodes activation. Dead ReLU units (activation 0) contribute nothing, so we
+  // skip their lines — which keeps the picture clean and honest.
+  function drawNetwork(L, top, bot, hAct, p, predIdx, fooled) {
+    var netW = Math.min(L.cx * 2 - 56, 560);
+    var imgR = Math.min(42, (bot - top) * 0.26);
+    var xImg = L.cx - netW / 2 + imgR;
+    var xHid = L.cx - netW * 0.16;        // hidden layer sits left, near the image: the
+    var xOut = L.cx + netW / 2 - 16;       // simple image→hidden fan is compact, the complex
+    var yImg = (top + bot) / 2;            // hidden→output fan gets most of the width
+    var ac = accent(), nc = nodeColor(), maxAct = 1e-6, i, o;
+    for (i = 0; i < HID; i++) if (hAct[i] > maxAct) maxAct = hAct[i];
+    function hy(h) { return top + (h + 0.5) / HID * (bot - top); }
+    function oy(d) { return top + (d + 0.7) / 10 * (bot - top); }
+
+    /* input image → hidden (faint fan, only to active units) */
+    for (i = 0; i < HID; i++) {
+      var a = hAct[i] / maxAct;
+      if (a < 0.02) continue;
+      ctx.strokeStyle = ac; ctx.globalAlpha = 0.03 + 0.22 * a; ctx.lineWidth = 0.5;
+      ctx.beginPath(); ctx.moveTo(xImg + imgR, yImg); ctx.lineTo(xHid, hy(i)); ctx.stroke();
+    }
+    /* hidden → output (width = |weight|, brightness = source activation) */
+    for (i = 0; i < HID; i++) {
+      var act = hAct[i] / maxAct;
+      if (act < 0.02) continue;                 // dead unit: no contribution
+      for (o = 0; o < 10; o++) {
+        var w = net.W2[i * 10 + o];
+        ctx.strokeStyle = ac;
+        ctx.globalAlpha = (0.02 + 0.5 * act) * Math.min(1, Math.abs(w) / net.maxW2 + 0.15);
+        ctx.lineWidth = 0.2 + 2.0 * Math.abs(w) / net.maxW2;
+        ctx.beginPath(); ctx.moveTo(xHid, hy(i)); ctx.lineTo(xOut, oy(o)); ctx.stroke();
+      }
+    }
+    ctx.globalAlpha = 1;
+
+    /* input image */
+    blit(adv, 'img');
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(off, xImg - imgR, yImg - imgR, imgR * 2, imgR * 2);
+    ctx.imageSmoothingEnabled = true;
+    ctx.strokeStyle = 'rgba(127,127,127,0.45)'; ctx.lineWidth = 1;
+    ctx.strokeRect(xImg - imgR - 0.5, yImg - imgR - 0.5, imgR * 2 + 1, imgR * 2 + 1);
+
+    /* hidden nodes (gold) */
+    for (i = 0; i < HID; i++) {
+      var an = hAct[i] / maxAct;
+      ctx.beginPath(); ctx.arc(xHid, hy(i), 2.2, 0, 6.2832);
+      ctx.fillStyle = nc; ctx.globalAlpha = 0.22 + 0.78 * an; ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    /* output nodes (gold; opacity = probability ≈ the summed input) + labels */
+    ctx.font = '600 12px "Source Sans 3", system-ui, sans-serif';
+    ctx.textBaseline = 'middle';
+    for (o = 0; o < 10; o++) {
+      var y = oy(o), isPred = (o === predIdx);
+      ctx.beginPath(); ctx.arc(xOut, y, 6, 0, 6.2832);
+      ctx.fillStyle = (fooled && isPred) ? badColor() : nc;
+      ctx.globalAlpha = 0.2 + 0.8 * p[o]; ctx.fill(); ctx.globalAlpha = 1;
+      if (isPred) { ctx.strokeStyle = (fooled ? badColor() : nc); ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(xOut, y, 8.5, 0, 6.2832); ctx.stroke(); }
+      ctx.fillStyle = isPred ? (fooled ? badColor() : textColor(0.95)) : textColor(0.5);
+      ctx.textAlign = 'left'; ctx.fillText(o, xOut + 13, y);
+    }
+
+    /* layer captions */
+    ctx.font = '11px "Source Sans 3", system-ui, sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.fillStyle = textColor(0.5);
+    ctx.fillText('attacked image', xImg, yImg + imgR + 6);
+    ctx.fillText('64 hidden units', xHid, bot + 4);
+    ctx.fillText('output', xOut, bot + 4);
+    ctx.textBaseline = 'bottom';
+    ctx.fillStyle = textColor(0.6);
+    ctx.fillText('inside the network: blue = connections (width = weight), gold = neuron activity', L.cx, top - 8);
+  }
+
+  function draw() {
+    raf = requestAnimationFrame(draw);
+    if (!W || !H) { resize(); if (!W || !H) return; }
+    if (dirty) { recompute(); dirty = false; }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = bg(); ctx.fillRect(0, 0, W, H);
+
+    var L = layout(), S = L.S, y = L.y;
+    var ci = argmax(cleanP), ai = argmax(advP);
+    var fooled = ai !== ci;
+
+    drawPanel(img, 'img', L.x[0], y, S, 'model sees ' + ci + ' · ' + (cleanP[ci] * 100).toFixed(1) + '%');
+    drawPanel(gsign, 'sign', L.x[1], y, S, 'ε · sign(∇ₓ loss)', textColor(0.6));
+    drawPanel(adv, 'img', L.x[2], y, S,
+      'model sees ' + ai + ' · ' + (advP[ai] * 100).toFixed(1) + '%',
+      fooled ? badColor() : textColor(0.85));
+
+    ctx.font = '300 ' + S * 0.32 + 'px "Source Sans 3", system-ui, sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = textColor(0.6);
+    ctx.fillText('+', L.x[0] + S + L.gap / 2, y + S / 2);
+    ctx.fillText('=', L.x[1] + S + L.gap / 2, y + S / 2);
+
+    /* grouped confidence bars (clickable to aim the attack) */
+    var bw = Math.min(24, (L.cx * 2 - 80) / 34), bgap = bw * 0.5, gw = bw * 2 + 3;
+    var bx0 = L.cx - (gw * 10 + bgap * 9) / 2;
+    var bh = Math.min(78, H * 0.12), by = y + S + S * 0.26 + bh;
+    var labelFs = Math.max(11, bw * 0.6);
+    ctx.font = labelFs + 'px "Source Sans 3", system-ui, sans-serif';
+    barHit = [];
+    for (var d2 = 0; d2 < 10; d2++) {
+      var gx = bx0 + d2 * (gw + bgap);
+      if (target === d2) {                 // highlight the aimed-at digit
+        ctx.fillStyle = 'rgba(196,87,74,0.12)';
+        ctx.fillRect(gx - bgap / 2, by - bh - 6, gw + bgap, bh + labelFs + 12);
+      }
+      ctx.fillStyle = accent();
+      ctx.fillRect(gx, by - bh * cleanP[d2], bw, bh * cleanP[d2]);
+      ctx.fillStyle = (fooled && d2 === ai) ? badColor() : 'rgba(127,127,127,0.55)';
+      ctx.fillRect(gx + bw + 3, by - bh * advP[d2], bw, bh * advP[d2]);
+      ctx.fillStyle = (target === d2) ? badColor() : textColor(d2 === ci || d2 === ai ? 0.9 : 0.45);
+      ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      ctx.fillText(d2, gx + gw / 2, by + 5);
+      barHit.push({ d: d2, x: gx - bgap / 2, y: by - bh - 6, w: gw + bgap, h: bh + labelFs + 12 });
+    }
+    ctx.fillStyle = textColor(0.5);
+    ctx.textAlign = 'center';
+    var legend = 'confidence — original (blue) vs adversarial (grey). Click a bar to aim the attack at that digit.';
+    ctx.fillText(legend, L.cx, by + 5 + labelFs + 5);
+
+    /* live node-link view of the forward pass on the attacked image */
+    var netTop = by + labelFs + 50, netBottom = H - 26;
+    if (netBottom - netTop > 70) drawNetwork(L, netTop, netBottom, advH, advP, ai, fooled);
+
+    if (status) {
+      var modelName = (net === ROB) ? 'adversarially-trained model' : 'standard model';
+      var aim = (target != null) ? (' (aimed at ' + target + ')') : '';
+      if (fooled) status.textContent = 'Fooled the ' + modelName + aim + ': "' + ci + '" became "' + ai + '" with at most ' + Math.round(eps * 100) + '% per-pixel change.';
+      else if (eps === 0) status.textContent = 'Slide ε up to start attacking the ' + modelName + '.';
+      else status.textContent = 'The ' + modelName + ' is holding at ε = ' + eps.toFixed(2) + aim + '. Keep sliding, or aim at a digit.';
+    }
+  }
+
+  /* ---- painting on the left panel + clicking bars to target ---- */
+  function rel(e) { var r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
+  function paintAt(p, erase) {
+    var L = layout(), S = L.S;
+    var fx = (p.x - L.x[0]) / S * 28, fy = (p.y - L.y) / S * 28;
+    if (fx < -2 || fy < -2 || fx > 30 || fy > 30) return false;
+    for (var dy = -1; dy <= 1; dy++) {
+      for (var dx = -1; dx <= 1; dx++) {
+        var x = Math.round(fx + dx), y = Math.round(fy + dy);
+        if (x < 0 || y < 0 || x > 27 || y > 27) continue;
+        var w = (dx === 0 && dy === 0) ? 1 : 0.45;
+        var i = y * 28 + x;
+        img[i] = erase ? Math.max(0, img[i] - w) : Math.min(1, img[i] + w * 0.9);
+      }
+    }
+    dirty = true;
+    return true;
+  }
+  canvas.addEventListener('pointerdown', function (e) {
+    var p = rel(e), L = layout();
+    /* left image → paint */
+    if (p.x >= L.x[0] - 8 && p.x <= L.x[0] + L.S + 8 && p.y >= L.y - 8 && p.y <= L.y + L.S + 8) {
+      paint = { erase: e.button === 2 };
+      paintAt(p, paint.erase);
+      try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
+      e.preventDefault();
+      return;
+    }
+    /* confidence bar → aim the attack (toggle off if the same digit) */
+    for (var i = 0; i < barHit.length; i++) {
+      var b = barHit[i];
+      if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) {
+        target = (target === b.d) ? null : b.d;
+        dirty = true;
+        e.preventDefault();
+        return;
+      }
+    }
+  });
+  canvas.addEventListener('pointermove', function (e) { if (paint) paintAt(rel(e), paint.erase); });
+  canvas.addEventListener('pointerup', function () { paint = null; });
+  canvas.addEventListener('pointercancel', function () { paint = null; });
+  canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+
+  /* ---- controls ---- */
+  if (elEps) elEps.addEventListener('input', function () {
+    eps = +elEps.value;
+    if (elEpsV) elEpsV.textContent = eps.toFixed(2);
+    applyEps();
+  });
+  if (btnNext) btnNext.addEventListener('click', function () { loadDemo(1); });
+  if (btnClear) btnClear.addEventListener('click', function () { img.fill(0); trueLabel = null; target = null; dirty = true; });
+  if (elRobust) elRobust.addEventListener('change', function () { net = elRobust.checked ? ROB : STD; dirty = true; });
+  if (elCollapse && elPanel) {
+    elCollapse.addEventListener('click', function () { elPanel.classList.toggle('adv-panel--collapsed'); });
+    if (window.innerWidth < 600) elPanel.classList.add('adv-panel--collapsed');
+  }
+
+  var rt;
+  window.addEventListener('resize', function () { clearTimeout(rt); rt = setTimeout(resize, 150); });
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) { if (raf) { cancelAnimationFrame(raf); raf = null; } }
+    else if (!raf) raf = requestAnimationFrame(draw);
+  });
+  try {
+    new MutationObserver(function () { dirty = true; })
+      .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  } catch (e) {}
+
+  if (elEpsV) elEpsV.textContent = eps.toFixed(2);
+  resize();
+  loadDemo(1 + Math.floor(Math.random() * M.n));
+  raf = requestAnimationFrame(draw);
+})();

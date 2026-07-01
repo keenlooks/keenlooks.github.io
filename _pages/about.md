@@ -11,7 +11,7 @@ redirect_from:
 
 <div class="callout">
   <span class="callout__label">New!</span>
-  <span class="callout__text">New benchmarks work: <a href="https://red.anthropic.com/2026/exploit-evals/">Measuring LLMs' Ability to Develop Exploits</a></span>
+  <span class="callout__text">Latest post: <a href="https://red.anthropic.com/2026/n-days/">Measuring LLMs' Impact on N-day Exploits</a></span>
 </div>
 
 <div class="callout">
@@ -30,6 +30,7 @@ Originally from [Alaska](https://www.frontiersman.com/news/trio-of-valley-studen
 
 My most recent contributions are on [Anthropic's Frontier Red Team blog](https://red.anthropic.com/), where we regularly post about our work measuring, projecting, and improving frontier LLM capabilities:
 
+- **[Measuring LLMs' Impact on N-day Exploits](https://red.anthropic.com/2026/n-days/)** - How well frontier models can develop exploits for publicly disclosed but unpatched vulnerabilities (Mythos Preview reproduced a SpiderMonkey/Firefox PoC crash in about 12 minutes)
 - **[Measuring LLMs' Ability to Develop Exploits](https://red.anthropic.com/2026/exploit-evals/)** - Benchmarks (ExploitBench, ExploitGym, SCONE-bench) for measuring how well frontier models build end-to-end software and smart-contract exploits
 - **[Assessing Claude Mythos Preview's Cybersecurity Capabilities](https://red.anthropic.com/2026/mythos-preview/)** - Evaluating a frontier model's ability to autonomously discover and exploit zero-day and N-day vulnerabilities across operating systems, browsers, and libraries
 - **[Partnering with Mozilla to Improve Firefox's Security](https://red.anthropic.com/2026/firefox/)** - A collaboration with Mozilla in which Claude Opus 4.6 found 22 vulnerabilities in Firefox

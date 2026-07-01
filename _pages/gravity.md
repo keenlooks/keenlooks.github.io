@@ -40,6 +40,8 @@ description: "An interactive full-screen 2D gravity sandbox by Keane Lucas: pick
         <button id="grav-pause" class="grav-btn" type="button">Pause</button>
         <button id="grav-preset" class="grav-btn" type="button">Solar system</button>
         <button id="grav-accrete" class="grav-btn" type="button">Accretion disk</button>
+        <button id="grav-binary" class="grav-btn" type="button" title="Two equal stars orbiting their barycentre, with circumbinary planets">Binary stars</button>
+        <button id="grav-eight" class="grav-btn" type="button" title="The Chenciner–Montgomery figure-8: three equal masses chasing each other along one shared orbit">Figure-8</button>
         <button id="grav-clear" class="grav-btn" type="button">Clear</button>
       </div>
 

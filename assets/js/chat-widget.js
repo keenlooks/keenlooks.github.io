@@ -350,11 +350,11 @@ document.addEventListener('DOMContentLoaded', function() {
     let isLoading = false;
 
     // Welcome message with explicit <br> tags
-    const welcomeMessage = `👋 Hi! I'm an AI assistant who can tell you about Keane's research in:<br><br>
-    🛡️ AI Safety<br>
+    const welcomeMessage = `👋 Hi! I'm an AI assistant who can tell you about Keane's work in:<br><br>
+    🤖 Frontier AI Cyber Capabilities (Anthropic Frontier Red Team)<br>
+    🚩 Claude in CTFs &amp; Exploit Benchmarks<br>
     🦠 ML-based Malware Detection<br>
-    🤝 Cooperative Multi-agent RL<br>
-    🔒 National Security<br><br>
+    🛡️ Adversarial &amp; Robust ML<br><br>
     How can I help you today?`;
 
     // Set up marked options

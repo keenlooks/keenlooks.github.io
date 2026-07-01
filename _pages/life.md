@@ -28,6 +28,14 @@ description: "A full-screen, interactive Conway's Game of Life — draw cells, c
         <button id="life-step" class="life-btn" type="button">Step</button>
         <button id="life-rand" class="life-btn" type="button">Randomize</button>
         <button id="life-clear" class="life-btn" type="button">Clear</button>
+        <button id="life-share" class="life-btn" type="button" title="Copy a link to this exact board">Share</button>
+      </div>
+
+      <div class="life-presets">
+        <span>Patterns:</span>
+        <button class="life-pattern" data-pattern="glider-gun" type="button" title="Gosper's glider gun — fires a glider every 30 generations">Glider gun</button>
+        <button class="life-pattern" data-pattern="pulsar" type="button" title="A period-3 oscillator">Pulsar</button>
+        <button class="life-pattern" data-pattern="lwss" type="button" title="Lightweight spaceship — flies right forever">Spaceship</button>
       </div>
 
       <label class="life-slider">
@@ -157,14 +165,14 @@ html[data-theme="light"] .life-panel {
 .life-blurb { margin: 0; font-size: 0.92em; opacity: 0.85; }
 
 .life-row { display: flex; flex-wrap: wrap; gap: 0.4rem; }
-.life-btn, .life-toggle, .life-preset {
+.life-btn, .life-toggle, .life-preset, .life-pattern {
   font: inherit; color: inherit; cursor: pointer;
   border: 1px solid rgba(127, 127, 127, 0.4);
   background: rgba(127, 127, 127, 0.14);
   border-radius: 6px; padding: 0.4em 0.7em; line-height: 1;
   transition: background 0.15s ease, border-color 0.15s ease;
 }
-.life-btn:hover, .life-toggle:hover, .life-preset:hover { background: rgba(127, 127, 127, 0.26); }
+.life-btn:hover, .life-toggle:hover, .life-preset:hover, .life-pattern:hover { background: rgba(127, 127, 127, 0.26); }
 .life-slider { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.95em; }
 .life-slider input[type="range"] { width: 100%; accent-color: #5b82b8; }
 .life-rule-group { display: flex; flex-direction: column; gap: 0.35rem; }

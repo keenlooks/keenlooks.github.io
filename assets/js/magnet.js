@@ -32,6 +32,7 @@
   var status = id('mag-status');
 
   var magnets = [];               // {x,y,angle,strength,vx,vy,va}
+  var compass = { x: 0, y: 0, ang: -1.5708, show: true, R: 22 };  // a draggable field probe
   var newStrength = 3, lineCount = 12, showFilings = false, dynamics = true;
   var MAX = 14, RED = '#e0564a', BLUE = '#4a7be0';
   var W = 0, H = 0, dpr = 1, raf = null;
@@ -52,6 +53,9 @@
     if (!W || !H) return;
     canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (!compass.x) { compass.x = W * 0.22; compass.y = H * 0.62; }
+    compass.x = Math.min(Math.max(compass.x, compass.R), W - compass.R);
+    compass.y = Math.min(Math.max(compass.y, compass.R), H - compass.R);
     seedFilings();
   }
   function halfLen(m) { return 12 + m.strength * 3.2; }
@@ -176,6 +180,41 @@
   }
   function roundRect(x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
 
+  // A compass needle settles along the local field direction (its red end is a
+  // tiny north pole, so it points the way B points — into nearby south poles).
+  function updateCompass() {
+    if (!compass.show) return;
+    var b = field(compass.x, compass.y), mag = Math.hypot(b.bx, b.by);
+    compass.mag = mag;
+    if (mag < 1e-7) return;                       // no field → keep the last heading
+    var target = Math.atan2(b.by, b.bx);
+    var d = (target - compass.ang + Math.PI * 3) % (Math.PI * 2) - Math.PI;
+    compass.ang += d * 0.22;                      // ease toward the field (needle inertia)
+  }
+  function drawCompass() {
+    var R = compass.R, light = effectiveTheme() === 'light';
+    ctx.save(); ctx.translate(compass.x, compass.y);
+    ctx.beginPath(); ctx.arc(0, 0, R, 0, 6.2832);
+    ctx.fillStyle = light ? 'rgba(255,255,255,0.78)' : 'rgba(20,24,34,0.78)';
+    ctx.fill();
+    ctx.strokeStyle = lineColor(0.8); ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.strokeStyle = lineColor(0.45); ctx.lineWidth = 1;
+    for (var k = 0; k < 4; k++) {                 // cardinal ticks
+      var a = k * Math.PI / 2;
+      ctx.beginPath(); ctx.moveTo(Math.cos(a) * (R - 4), Math.sin(a) * (R - 4));
+      ctx.lineTo(Math.cos(a) * (R - 1), Math.sin(a) * (R - 1)); ctx.stroke();
+    }
+    ctx.rotate(compass.ang);
+    ctx.globalAlpha = (compass.mag > 1e-7) ? 1 : 0.45;  // dim when there's nothing to read
+    ctx.fillStyle = RED;                          // north end → along the field
+    ctx.beginPath(); ctx.moveTo(R - 6, 0); ctx.lineTo(-3, 4.5); ctx.lineTo(-3, -4.5); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = lineColor(0.75);              // tail
+    ctx.beginPath(); ctx.moveTo(-(R - 6), 0); ctx.lineTo(3, 3.5); ctx.lineTo(3, -3.5); ctx.closePath(); ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.beginPath(); ctx.arc(0, 0, 2.2, 0, 6.2832); ctx.fillStyle = lineColor(0.9); ctx.fill();
+    ctx.restore();
+  }
+
   function draw() {
     if (!W || !H) resize(); if (!W || !H) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -183,9 +222,10 @@
     if (lineCount > 0) drawLines();
     if (showFilings) drawFilings();
     for (var i = 0; i < magnets.length; i++) drawMagnet(magnets[i]);
+    if (compass.show) drawCompass();
     if (status) status.textContent = magnets.length + (magnets.length === 1 ? ' magnet' : ' magnets');
   }
-  function loop() { raf = requestAnimationFrame(loop); physics(); draw(); }
+  function loop() { raf = requestAnimationFrame(loop); physics(); updateCompass(); draw(); }
   function start() { if (!raf) raf = requestAnimationFrame(loop); }
 
   // ---- interaction -------------------------------------------------------
@@ -197,6 +237,11 @@
   canvas.addEventListener('pointerdown', function (e) {
     var p = rel(e); pointers[e.pointerId] = p;
     canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
+    // the compass is on top: grab it before anything else (left button only)
+    if (compass.show && e.button !== 2 && Math.hypot(p.x - compass.x, p.y - compass.y) <= compass.R + 6) {
+      gesture = { mode: 'compass', ox: p.x - compass.x, oy: p.y - compass.y };
+      e.preventDefault(); return;
+    }
     var i = magnetAt(p.x, p.y);
     if (e.button === 2) { if (i >= 0) magnets.splice(i, 1); e.preventDefault(); return; }
     if (i >= 0) {
@@ -212,7 +257,13 @@
   });
   canvas.addEventListener('pointermove', function (e) {
     if (!gesture) return;
-    var p = rel(e), m = magnets[gesture.idx]; if (!m) { gesture = null; return; }
+    var p = rel(e);
+    if (gesture.mode === 'compass') {
+      compass.x = Math.min(Math.max(p.x - gesture.ox, compass.R), W - compass.R);
+      compass.y = Math.min(Math.max(p.y - gesture.oy, compass.R), H - compass.R);
+      return;
+    }
+    var m = magnets[gesture.idx]; if (!m) { gesture = null; return; }
     if (gesture.mode === 'move') { m.x = p.x - gesture.ox; m.y = p.y - gesture.oy; }
     else { m.angle = Math.atan2(p.y - m.y, p.x - m.x); }
     m.vx = m.vy = m.va = 0;
@@ -231,6 +282,8 @@
   if (elLines) elLines.addEventListener('input', function () { lineCount = Math.round(+elLines.value); if (elLinesV) elLinesV.textContent = lineCount; });
   if (elFilings) elFilings.addEventListener('change', function () { showFilings = elFilings.checked; });
   if (elPhysics) elPhysics.addEventListener('change', function () { dynamics = elPhysics.checked; if (!dynamics) for (var i = 0; i < magnets.length; i++) { magnets[i].vx = magnets[i].vy = magnets[i].va = 0; } });
+  var elCompass = id('mag-compass');
+  if (elCompass) elCompass.addEventListener('change', function () { compass.show = elCompass.checked; });
   if (elCollapse && elPanel) elCollapse.addEventListener('click', function () { elPanel.classList.toggle('mag-panel--collapsed'); });
   if (btnClear) btnClear.addEventListener('click', function () { magnets = []; });
   if (btnPreset) btnPreset.addEventListener('click', function () {

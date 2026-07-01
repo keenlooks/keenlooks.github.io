@@ -33,6 +33,7 @@ description: "An interactive full-screen magnetic-field sandbox by Keane Lucas: 
       <div class="mag-checks">
         <label class="mag-check"><input id="mag-filings" type="checkbox"> Iron filings</label>
         <label class="mag-check"><input id="mag-physics" type="checkbox" checked> Magnets move &amp; rotate</label>
+        <label class="mag-check"><input id="mag-compass" type="checkbox" checked> Compass (drag it around the field)</label>
       </div>
 
       <div class="mag-row">

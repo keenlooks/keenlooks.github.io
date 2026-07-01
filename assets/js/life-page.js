@@ -230,6 +230,122 @@
     b.addEventListener('click', function () { applyRule(b.getAttribute('data-rule')); });
   });
 
+  /* ---- patterns (classic Conway constructions, stored as standard RLE) ---- */
+  var PATTERNS = {
+    'glider-gun': '24bo$22bobo$12b2o6b2o12b2o$11bo3bo4b2o12b2o$2o8bo5bo3b2o$2o8bo3bob2o4bobo$10bo5bo7bo$11bo3bo$12b2o!',
+    'pulsar': '2b3o3b3o2b2$o4bobo4bo$o4bobo4bo$o4bobo4bo$2b3o3b3o2b2$2b3o3b3o2b$o4bobo4bo$o4bobo4bo$o4bobo4bo2$2b3o3b3o!',
+    'lwss': 'o2bo$4bo$o3bo$b4o!'
+  };
+
+  // Decode run-length-encoded Life patterns ("b" dead, "o" alive, "$" row end).
+  function parseRLE(str) {
+    var cells = [], x = 0, y = 0, w = 0, count = '';
+    for (var i = 0; i < str.length; i++) {
+      var ch = str[i];
+      if (ch >= '0' && ch <= '9') { count += ch; continue; }
+      var n = count ? parseInt(count, 10) : 1;
+      count = '';
+      if (ch === 'b') { x += n; }
+      else if (ch === 'o') { for (var k = 0; k < n; k++) cells.push([x++, y]); }
+      else if (ch === '$') { w = Math.max(w, x); x = 0; y += n; }
+      else if (ch === '!') break;
+    }
+    w = Math.max(w, x);
+    return { w: w, h: y + 1, cells: cells };
+  }
+
+  // Stamp a pattern into the world, centered in the visible viewport.
+  function stampCentered(rle) {
+    var p = parseRLE(rle);
+    var visCols = Math.min(worldCols, Math.ceil(window.innerWidth / CELL));
+    var visRows = Math.min(worldRows, Math.ceil(window.innerHeight / CELL));
+    var ox = Math.max(0, Math.floor((visCols - p.w) / 2));
+    var oy = Math.max(0, Math.floor((visRows - p.h) / 2));
+    for (var i = 0; i < p.cells.length; i++) {
+      var x = ox + p.cells[i][0], y = oy + p.cells[i][1];
+      if (x < worldCols && y < worldRows) grid[y * worldCols + x] = 1;
+    }
+    draw();
+  }
+
+  Array.prototype.forEach.call(document.querySelectorAll('.life-pattern'), function (b) {
+    b.addEventListener('click', function () {
+      var rle = PATTERNS[b.getAttribute('data-pattern')];
+      if (!rle) return;
+      applyRule('B3/S23'); /* these constructions only work under Conway rules */
+      clearBoard();
+      stampCentered(rle);
+      setRunning(true);
+    });
+  });
+
+  /* ---- shareable URLs: encode the live cells (bounding box, RLE) in the hash ---- */
+  function serializeGrid() {
+    var minX = worldCols, minY = worldRows, maxX = -1, maxY = -1, x, y;
+    for (y = 0; y < worldRows; y++) {
+      for (x = 0; x < worldCols; x++) {
+        if (grid[y * worldCols + x]) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    if (maxX < 0) return null; /* empty board */
+    var out = '', run = 0, runCh = '';
+    function flush() {
+      if (!run) return;
+      out += (run > 1 ? run : '') + runCh;
+      run = 0;
+    }
+    for (y = minY; y <= maxY; y++) {
+      for (x = minX; x <= maxX; x++) {
+        var ch = grid[y * worldCols + x] ? 'o' : 'b';
+        if (ch === runCh) { run++; } else { flush(); runCh = ch; run = 1; }
+      }
+      if (runCh === 'b') run = 0; /* trailing dead cells in a row are implicit */
+      flush();
+      runCh = '$'; run = 1;
+      if (y === maxY) run = 0;
+      flush();
+      runCh = '';
+    }
+    return out + '!';
+  }
+
+  var shareBtn = document.getElementById('life-share');
+  if (shareBtn) {
+    shareBtn.addEventListener('click', function () {
+      var rle = serializeGrid();
+      var old = 'Share';
+      if (!rle) { shareBtn.textContent = 'Board is empty'; }
+      else if (rle.length > 8000) { shareBtn.textContent = 'Too big to share'; }
+      else {
+        var rule = 'B' + sortedKeys(born) + 'S' + sortedKeys(survive);
+        var hash = '#r=' + rule + ';p=' + rle;
+        var url = location.origin + location.pathname + hash;
+        try { history.replaceState(null, '', hash); } catch (e) {}
+        var done = function () { shareBtn.textContent = 'Link copied!'; };
+        var fail = function () { shareBtn.textContent = 'URL updated — copy it'; };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(url).then(done, fail);
+        } else { fail(); }
+      }
+      setTimeout(function () { shareBtn.textContent = old; }, 1800);
+    });
+  }
+
+  function loadFromHash() {
+    var m = /[#;]r=B([0-8]*)S([0-8]*)/.exec(location.hash);
+    var pm = /[#;]p=([0-9bo$]+!)/.exec(location.hash);
+    if (!pm) return false;
+    if (m) applyRule('B' + m[1] + '/S' + m[2]);
+    grid.fill(0);
+    stampCentered(pm[1]);
+    return true;
+  }
+
   /* collapse / expand the controls (starts collapsed on small screens) */
   var collapseBtn = document.getElementById('life-collapse');
   var panel = document.getElementById('life-panel');
@@ -259,6 +375,6 @@
   refreshMinCell();
   initWorld();
   resizeCanvas();
-  randomize();
+  if (!loadFromHash()) randomize(); /* a shared pattern in the URL replaces the soup */
   raf = requestAnimationFrame(loop);
 })();
