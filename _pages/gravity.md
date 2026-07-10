@@ -15,6 +15,7 @@ description: "An interactive full-screen 2D gravity sandbox by Keane Lucas: pick
   <div class="grav-panel" id="grav-panel">
     <div class="grav-panel__head">
       <span class="grav-panel__title">Gravity Sandbox</span>
+      <button id="grav-help" class="gadget-help" type="button" aria-label="Show hint" title="Show hint">?</button>
       <button id="grav-collapse" class="grav-collapse" type="button" aria-label="Hide / show controls" title="Hide / show controls">&ndash;</button>
     </div>
     <div class="grav-panel__body" id="grav-panel-body">
@@ -25,6 +26,7 @@ description: "An interactive full-screen 2D gravity sandbox by Keane Lucas: pick
         everything else; bodies that collide <strong>merge</strong>. Tip: drop one heavy "sun," then lower
         the mass and fling light planets around it.
       </p>
+      <p class="grav-edu">Every pair attracts with F = G&middot;m&#8321;&middot;m&#8322;/r&sup2;.</p>
 
       <label class="grav-slider"><span>Mass: <strong id="grav-mass-val" class="editable-val" data-range="grav-mass">400</strong></span>
         <input id="grav-mass" type="range" min="5" max="10000" step="5" value="400"></label>
@@ -43,10 +45,13 @@ description: "An interactive full-screen 2D gravity sandbox by Keane Lucas: pick
         <button id="grav-binary" class="grav-btn" type="button" title="Two equal stars orbiting their barycentre, with circumbinary planets">Binary stars</button>
         <button id="grav-eight" class="grav-btn" type="button" title="The Chenciner–Montgomery figure-8: three equal masses chasing each other along one shared orbit">Figure-8</button>
         <button id="grav-clear" class="grav-btn" type="button">Clear</button>
+        <button id="grav-resetview" class="grav-btn" type="button" title="Re-center the camera and reset the zoom">Reset view</button>
+        <button id="grav-share" class="grav-btn" type="button" title="Copy a link to this exact scene">Share</button>
+        <button id="grav-snap" class="grav-btn" type="button" title="Download the scene as a PNG">Save image</button>
       </div>
 
       <p class="grav-hint">
-        <strong>Click a body</strong>: retarget / stop it &middot; <strong>Right-click</strong> a body: delete &middot;
+        <strong>Click a body</strong>: retarget / stop it &middot; <strong>Right-click</strong> (or press and hold) a body: delete &middot;
         <strong>Right-drag</strong>: pan &middot; <strong>Scroll / pinch</strong>: zoom
       </p>
       <p class="grav-status-line"><span id="grav-status">0 bodies</span></p>
@@ -113,6 +118,7 @@ html[data-theme="light"] .grav-panel { background: rgba(255,255,255,0.97); borde
 .grav-panel--collapsed .grav-panel__body { display: none; }
 .grav-panel__body { display: flex; flex-direction: column; gap: 0.8rem; margin-top: 0.7rem; }
 .grav-blurb { margin: 0; font-size: 0.9em; opacity: 0.85; line-height: 1.5; }
+.grav-edu { margin: 0; font-size: 0.82em; opacity: 0.7; }
 
 .grav-slider { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.95em; }
 .grav-slider strong { font-variant-numeric: tabular-nums; }
@@ -139,5 +145,7 @@ html[data-theme="light"] .grav-check input { accent-color: #34568a; }
 }
 </style>
 
+<script defer src="{{ '/assets/js/gadget-ui.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
+<script defer src="{{ '/assets/js/share-hash.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/gravity.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/editable-values.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>

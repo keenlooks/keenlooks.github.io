@@ -29,6 +29,10 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
 
+{% if page.math %}
+<!-- MathJax is loaded ONLY on pages that opt in with `math: true` front matter.
+     It parses any DOM text between $...$ as math (see the currency-mangling
+     gotcha in CLAUDE.md), so keep it off pages that don't need it. -->
 <script type="text/x-mathjax-config"> MathJax.Hub.Config({ TeX: { equationNumbers: { autoNumber: "all" } } }); </script>
 <script type="text/x-mathjax-config">
   MathJax.Hub.Config({
@@ -39,6 +43,7 @@
   });
 </script>
 <script src='https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.4/latest.js?config=TeX-MML-AM_CHTML' async></script>
+{% endif %}
 
 <!-- Conway's Game of Life: subtle animated background (deferred; non-blocking) -->
 <script defer src="{{ base_path }}/assets/js/gol-bg.js?v={{ site.time | date: '%s' }}"></script>
@@ -79,6 +84,33 @@
 
     function init() {
       if (document.getElementById('theme-toggle')) return;
+
+      /* Let the "Skip to content" link (_layouts/default.html) move focus into
+         the main content container. The theme's smooth-scroll plugin
+         (main.min.js: $("a").smoothScroll(...)) preventDefaults the anchor
+         navigation, so the fragment jump never moves focus on its own —
+         move it ourselves on activation. */
+      var mainEl = document.getElementById('main');
+      if (mainEl && !mainEl.hasAttribute('tabindex')) mainEl.setAttribute('tabindex', '-1');
+      var skipEl = document.querySelector('.skip-link');
+      if (skipEl && mainEl) {
+        skipEl.addEventListener('click', function () {
+          mainEl.focus({ preventScroll: true });
+        });
+      }
+
+      /* Mirror the greedy-nav's open/close state onto the hamburger button's
+         aria-expanded (main.min.js toggles the `hidden` class on .hidden-links). */
+      var navBtn = document.querySelector('.greedy-nav button');
+      var navLinks = document.querySelector('.greedy-nav .hidden-links');
+      if (navBtn && navLinks && window.MutationObserver) {
+        var syncNav = function () {
+          navBtn.setAttribute('aria-expanded', navLinks.classList.contains('hidden') ? 'false' : 'true');
+        };
+        syncNav();
+        new MutationObserver(syncNav).observe(navLinks, { attributes: true, attributeFilter: ['class'] });
+      }
+
       var btn = document.createElement('button');
       btn.id = 'theme-toggle';
       btn.type = 'button';

@@ -15,6 +15,7 @@ description: "An interactive full-screen double pendulum by Keane Lucas: drag th
   <div class="pend-panel" id="pend-panel">
     <div class="pend-panel__head">
       <span class="pend-panel__title">Double Pendulum</span>
+      <button id="pend-help" class="gadget-help" type="button" aria-label="Show hint" title="Show hint">?</button>
       <button id="pend-collapse" class="pend-collapse" type="button" aria-label="Hide / show controls" title="Hide / show controls">&ndash;</button>
     </div>
     <div class="pend-panel__body" id="pend-panel-body">
@@ -23,9 +24,9 @@ description: "An interactive full-screen double pendulum by Keane Lucas: drag th
         <strong>twin</strong> start about <strong>0.001 radians</strong> apart (roughly 0.06&deg;).
         They stay in step for a few seconds, and then their motions separate completely.
         Identical rules and nearly identical starting points still lead to totally different
-        paths. The plot along the bottom shows how far apart the two tips are over time, and the
-        moment they split happens at a different time on each run. <strong>Drag either bob</strong>
-        to set a new starting pose.
+        paths. The plot along the bottom shows how far apart the two pendulums' angles are over
+        time, and the moment they split happens at a different time on each run.
+        <strong>Drag either bob</strong> to set a new starting pose.
       </p>
 
       <label class="pend-slider"><span>Speed: <strong id="pend-speed-val" class="editable-val" data-range="pend-speed">1.00&times;</strong></span>
@@ -125,5 +126,6 @@ html[data-theme="light"] .pend-check input { accent-color: #34568a; }
 }
 </style>
 
+<script defer src="{{ '/assets/js/gadget-ui.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/pendulum.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/editable-values.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>

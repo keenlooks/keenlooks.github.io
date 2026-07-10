@@ -3,12 +3,12 @@ layout: single
 title: "Fun"
 permalink: /fun/
 author_profile: false
-excerpt: "A small, growing collection of interactive things I've built for fun."
+excerpt: "A small, growing collection of interactive things, built as an ongoing exercise in seeing what Claude can do."
 description: "Interactive visualizations and toys by Keane Lucas &mdash; visual explainers and playgrounds, starting with Conway's Game of Life."
 ---
 
 <p class="xp-intro">
-Some fun, sometimes interactive, things built either for interest or to help understand them better.
+Some fun, sometimes interactive, things. Most of this was built as an ongoing exercise in seeing what <a href="https://claude.com/claude-code">Claude</a> can do: I supply ideas, direction, and review, and Claude writes most of the code.
 </p>
 
 <div class="xp-sections">
@@ -37,40 +37,13 @@ Some fun, sometimes interactive, things built either for interest or to help und
     </div>
   </a>
 
-</div>
-</section>
-
-<section class="xp-sec">
-<h2 class="xp-section">Physics</h2>
-<div class="xp-grid">
-
-  <a class="xp-card" href="{{ base_path }}/gravity/">
-    <div class="xp-card__art" aria-hidden="true" data-thumb="gravity">
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"></circle><ellipse cx="12" cy="12" rx="9.5" ry="4.6" transform="rotate(-22 12 12)"></ellipse><circle cx="20" cy="8.4" r="1.7" fill="currentColor" stroke="none"></circle></svg>
+  <a class="xp-card" href="{{ base_path }}/transformer/">
+    <div class="xp-card__art" aria-hidden="true" data-thumb="transformer">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="16.5" width="4" height="4" rx="1" fill="currentColor" stroke="none" opacity="0.55"></rect><rect x="9" y="16.5" width="4" height="4" rx="1" fill="currentColor" stroke="none" opacity="0.55"></rect><rect x="15.5" y="16.5" width="4" height="4" rx="1" fill="currentColor" stroke="none"></rect><path d="M17.5 14.5 Q10.5 5 4.5 14.5"></path><path d="M17.5 14.5 Q14.5 9 11 14.5" stroke-opacity="0.5"></path></svg>
     </div>
     <div class="xp-card__body">
-      <h2 class="xp-card__title">Gravity Sandbox</h2>
-      <p class="xp-card__desc">Fling masses into orbit and watch Newtonian gravity pull them together, merge, and trace long paths.</p>
-    </div>
-  </a>
-
-  <a class="xp-card" href="{{ base_path }}/magnets/">
-    <div class="xp-card__art" aria-hidden="true" data-thumb="magnets">
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3 H4 v7 a8 8 0 0 0 16 0 V3 h-3 v7 a5 5 0 0 1 -10 0 Z"></path><path d="M4 6.5 H7"></path><path d="M17 6.5 H20"></path></svg>
-    </div>
-    <div class="xp-card__body">
-      <h2 class="xp-card__title">Magnetic Field</h2>
-      <p class="xp-card__desc">Drop bar magnets and watch their field lines weave; opposite poles snap together, like poles repel.</p>
-    </div>
-  </a>
-
-  <a class="xp-card" href="{{ base_path }}/pendulum/">
-    <div class="xp-card__art" aria-hidden="true" data-thumb="pendulum">
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 L8 12 L15 18"></path><circle cx="12" cy="3" r="1.2" fill="currentColor" stroke="none"></circle><circle cx="8" cy="12" r="2" fill="currentColor" stroke="none"></circle><circle cx="15" cy="18" r="2.4" fill="currentColor" stroke="none"></circle></svg>
-    </div>
-    <div class="xp-card__body">
-      <h2 class="xp-card__title">Double Pendulum</h2>
-      <p class="xp-card__desc">Two pendulums start a hair apart and end up with nothing in common. Chaos, on screen.</p>
+      <h2 class="xp-card__title">Tiny Transformer</h2>
+      <p class="xp-card__desc">A tiny language model writes Shakespeare one character at a time, with its attention heads on display.</p>
     </div>
   </a>
 
@@ -108,6 +81,73 @@ Some fun, sometimes interactive, things built either for interest or to help und
     <div class="xp-card__body">
       <h2 class="xp-card__title">Hashes &amp; Collisions</h2>
       <p class="xp-card__desc">Watch SHA-256's avalanche effect, then find a real CRC32 collision in a fraction of a second.</p>
+    </div>
+  </a>
+
+  <a class="xp-card" href="{{ base_path }}/fourier/">
+    <div class="xp-card__art" aria-hidden="true" data-thumb="fourier">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="13" r="6"></circle><line x1="9" y1="13" x2="13.5" y2="9"></line><circle cx="13.5" cy="9" r="3" stroke-opacity="0.7"></circle><line x1="13.5" y1="9" x2="16.4" y2="8.2"></line><circle cx="16.4" cy="8.2" r="1.3" fill="currentColor" stroke="none"></circle><path d="M16.4 8.2 c 3.4 1.6 4 6 1.4 9.4" stroke-opacity="0.45"></path></svg>
+    </div>
+    <div class="xp-card__body">
+      <h2 class="xp-card__title">Fourier Drawing Machine</h2>
+      <p class="xp-card__desc">Draw any shape and a chain of rotating circles traces it back.</p>
+    </div>
+  </a>
+
+  <a class="xp-card" href="{{ base_path }}/timing/">
+    <div class="xp-card__art" aria-hidden="true" data-thumb="timing">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><rect x="2.5" y="15" width="2.8" height="6" rx="0.6" opacity="0.5"></rect><rect x="7" y="14" width="2.8" height="7" rx="0.6" opacity="0.5"></rect><rect x="11.5" y="5" width="2.8" height="16" rx="0.6"></rect><rect x="16" y="14.5" width="2.8" height="6.5" rx="0.6" opacity="0.5"></rect><rect x="20.5" y="15" width="2.8" height="6" rx="0.6" opacity="0.5"></rect></svg>
+    </div>
+    <div class="xp-card__body">
+      <h2 class="xp-card__title">Timing Attack</h2>
+      <p class="xp-card__desc">Recover a hidden token character by character, using nothing but how long each guess takes to reject.</p>
+    </div>
+  </a>
+
+  <a class="xp-card" href="{{ base_path }}/bayes/">
+    <div class="xp-card__art" aria-hidden="true" data-thumb="bayes">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="5" r="1.7" opacity="0.35"></circle><circle cx="12" cy="5" r="1.7" opacity="0.35"></circle><circle cx="19" cy="5" r="1.7" opacity="0.35"></circle><circle cx="5" cy="12" r="1.7" opacity="0.35"></circle><circle cx="12" cy="12" r="1.7"></circle><circle cx="19" cy="12" r="1.7" opacity="0.6"></circle><circle cx="5" cy="19" r="1.7" opacity="0.35"></circle><circle cx="12" cy="19" r="1.7" opacity="0.6"></circle><circle cx="19" cy="19" r="1.7" opacity="0.35"></circle></svg>
+    </div>
+    <div class="xp-card__body">
+      <h2 class="xp-card__title">Base Rates</h2>
+      <p class="xp-card__desc">Test 10,000 people at once and see why a positive result on an accurate test is usually a false alarm.</p>
+    </div>
+  </a>
+
+</div>
+</section>
+
+<section class="xp-sec">
+<h2 class="xp-section">Physics</h2>
+<div class="xp-grid">
+
+  <a class="xp-card" href="{{ base_path }}/gravity/">
+    <div class="xp-card__art" aria-hidden="true" data-thumb="gravity">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"></circle><ellipse cx="12" cy="12" rx="9.5" ry="4.6" transform="rotate(-22 12 12)"></ellipse><circle cx="20" cy="8.4" r="1.7" fill="currentColor" stroke="none"></circle></svg>
+    </div>
+    <div class="xp-card__body">
+      <h2 class="xp-card__title">Gravity Sandbox</h2>
+      <p class="xp-card__desc">Fling masses into orbit and watch Newtonian gravity pull them together, merge, and trace long paths.</p>
+    </div>
+  </a>
+
+  <a class="xp-card" href="{{ base_path }}/magnets/">
+    <div class="xp-card__art" aria-hidden="true" data-thumb="magnets">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3 H4 v7 a8 8 0 0 0 16 0 V3 h-3 v7 a5 5 0 0 1 -10 0 Z"></path><path d="M4 6.5 H7"></path><path d="M17 6.5 H20"></path></svg>
+    </div>
+    <div class="xp-card__body">
+      <h2 class="xp-card__title">Magnetic Field</h2>
+      <p class="xp-card__desc">Drop bar magnets and watch their field lines weave; opposite poles snap together, like poles repel.</p>
+    </div>
+  </a>
+
+  <a class="xp-card" href="{{ base_path }}/pendulum/">
+    <div class="xp-card__art" aria-hidden="true" data-thumb="pendulum">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 L8 12 L15 18"></path><circle cx="12" cy="3" r="1.2" fill="currentColor" stroke="none"></circle><circle cx="8" cy="12" r="2" fill="currentColor" stroke="none"></circle><circle cx="15" cy="18" r="2.4" fill="currentColor" stroke="none"></circle></svg>
+    </div>
+    <div class="xp-card__body">
+      <h2 class="xp-card__title">Double Pendulum</h2>
+      <p class="xp-card__desc">Two pendulums start a hair apart and end up with nothing in common. Chaos, on screen.</p>
     </div>
   </a>
 
@@ -172,6 +212,26 @@ Some fun, sometimes interactive, things built either for interest or to help und
     <div class="xp-card__body">
       <h2 class="xp-card__title">PDF Toolbench</h2>
       <p class="xp-card__desc">Merge, split, reorder, rotate, redact, sign, and fill PDFs. Private and in-browser; nothing is uploaded.</p>
+    </div>
+  </a>
+
+  <a class="xp-card" href="{{ base_path }}/qr/">
+    <div class="xp-card__art" aria-hidden="true">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="6.5" height="6.5" rx="1"></rect><rect x="14.5" y="3" width="6.5" height="6.5" rx="1"></rect><rect x="3" y="14.5" width="6.5" height="6.5" rx="1"></rect><rect x="13.5" y="13.5" width="2.6" height="2.6" fill="currentColor" stroke="none"></rect><rect x="18.4" y="13.5" width="2.6" height="2.6" fill="currentColor" stroke="none"></rect><rect x="16" y="16.2" width="2.6" height="2.6" fill="currentColor" stroke="none"></rect><rect x="13.5" y="18.9" width="2.6" height="2.6" fill="currentColor" stroke="none"></rect><rect x="18.4" y="18.9" width="2.6" height="2.6" fill="currentColor" stroke="none"></rect></svg>
+    </div>
+    <div class="xp-card__body">
+      <h2 class="xp-card__title">QR Studio</h2>
+      <p class="xp-card__desc">Generate and scan static QR codes that never expire. In your browser; nothing is uploaded.</p>
+    </div>
+  </a>
+
+  <a class="xp-card" href="{{ base_path }}/diff/">
+    <div class="xp-card__art" aria-hidden="true">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3" width="8" height="18" rx="1.5"></rect><rect x="13.5" y="3" width="8" height="18" rx="1.5"></rect><line x1="5" y1="7.5" x2="8" y2="7.5" stroke-opacity="0.45"></line><line x1="5" y1="12" x2="8" y2="12"></line><line x1="5" y1="16.5" x2="8" y2="16.5" stroke-opacity="0.45"></line><line x1="16" y1="7.5" x2="19" y2="7.5" stroke-opacity="0.45"></line><line x1="16" y1="12" x2="19" y2="12" stroke-opacity="0.45"></line><line x1="16" y1="16.5" x2="19" y2="16.5"></line></svg>
+    </div>
+    <div class="xp-card__body">
+      <h2 class="xp-card__title">Diff Checker</h2>
+      <p class="xp-card__desc">Compare two texts, files, or PDFs and see exactly what changed. In your browser; nothing is uploaded.</p>
     </div>
   </a>
 

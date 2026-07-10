@@ -1,0 +1,9 @@
+# CI-only Jekyll override, loaded after _config.yml by
+# .github/workflows/site-ci.yml. It empties site.url so the built site is
+# root-relative and self-contained: the link checker and the Chromium smoke
+# test then exercise THIS build on localhost instead of resolving assets
+# against the live https://keanelucas.com. Same trick as _config.docker.yml.
+# (The leading underscore in the filename keeps Jekyll from copying it into
+# the built site as a static file.)
+url: ""
+baseurl: ""

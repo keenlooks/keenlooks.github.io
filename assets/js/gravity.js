@@ -50,7 +50,7 @@
   var vdrag = null;                // editing an existing body's velocity: {body, cx,cy}
   var rmouse = null;               // {sx,sy, moved}
   var pinch = null;                // {dist, mx, my}
-  var raf = null, lastT = 0;
+  var raf = null;
 
   function effectiveTheme() {
     var f = document.documentElement.getAttribute('data-theme');
@@ -343,18 +343,103 @@
     if (elTrails && !elTrails.checked) { elTrails.checked = true; trails = true; } // the path IS the show
   }
 
+  function resetView() { cam.cx = 0; cam.cy = 0; cam.scale = 1; }
+
   if (elSpeed) elSpeed.addEventListener('input', function () { speed = +elSpeed.value; if (elSpeedV) elSpeedV.textContent = speed.toFixed(2) + '×'; });
   if (elMass) elMass.addEventListener('input', function () { spawnMass = +elMass.value; if (elMassV) elMassV.textContent = Math.round(spawnMass); });
   if (elTrails) elTrails.addEventListener('change', function () { trails = elTrails.checked; if (!trails) for (var i = 0; i < bodies.length; i++) bodies[i].trail = []; });
   if (elWells) elWells.addEventListener('change', function () { wells = elWells.checked; });
   if (btnPause) btnPause.addEventListener('click', function () { paused = !paused; btnPause.textContent = paused ? 'Play' : 'Pause'; });
-  if (btnClear) btnClear.addEventListener('click', function () { bodies = []; });
+  if (btnClear) btnClear.addEventListener('click', function () { bodies = []; resetView(); });   /* Clear = empty space AND home camera */
+  var btnView = id('grav-resetview');
+  if (btnView) btnView.addEventListener('click', resetView);
   if (btnPreset) btnPreset.addEventListener('click', solarSystem);
   if (btnAccrete) btnAccrete.addEventListener('click', accretionDisk);
   var btnBinary = id('grav-binary'), btnEight = id('grav-eight');
   if (btnBinary) btnBinary.addEventListener('click', binaryStars);
   if (btnEight) btnEight.addEventListener('click', figureEight);
-  if (elCollapse && elPanel) elCollapse.addEventListener('click', function () { elPanel.classList.toggle('grav-panel--collapsed'); });
+
+  // ---- share link + PNG snapshot (shared codec in share-hash.js) ----------
+  var SH = window.ShareHash;
+  var btnShare = id('grav-share'), btnSnap = id('grav-snap');
+  function shareState() {
+    var bs = bodies.map(function (b) {
+      var e = [Math.round(b.x * 100) / 100, Math.round(b.y * 100) / 100,
+               Math.round(b.vx * 1000) / 1000, Math.round(b.vy * 1000) / 1000,
+               Math.round(b.m * 100) / 100, Math.round(b.hue)];
+      if (b.frozen) e.push(1);
+      return e;
+    });
+    return { b: bs,
+             cx: Math.round(cam.cx * 100) / 100, cy: Math.round(cam.cy * 100) / 100,
+             z: Math.round(cam.scale * 1000) / 1000,
+             sp: speed, sm: spawnMass, t: trails ? 1 : 0, w: wells ? 1 : 0 };
+  }
+  // Restore a shared scene from the URL hash (untrusted: cap the body count,
+  // clamp masses/velocities/camera to sane ranges).
+  function applyShared() {
+    var d = SH.decode(SH.readHash());
+    if (!d || d.version !== 1) return false;
+    var o = d.obj;
+    bodies = [];
+    var ba = SH.arr(o.b, MAX_BODIES);
+    for (var i = 0; i < ba.length; i++) {
+      var e = ba[i];
+      if (!Array.isArray(e)) continue;
+      var m = SH.num(e[4], 0, 1e6, 0);   // non-positive / non-numeric mass drops the body
+      if (!(m > 0)) continue;
+      addBody(SH.num(e[0], -1e6, 1e6, 0), SH.num(e[1], -1e6, 1e6, 0),
+              SH.num(e[2], -1e4, 1e4, 0), SH.num(e[3], -1e4, 1e4, 0),
+              m, SH.num(e[5], 0, 360, Math.random() * 360));
+      if (e[6]) bodies[bodies.length - 1].frozen = true;
+    }
+    cam.cx = SH.num(o.cx, -1e6, 1e6, 0);
+    cam.cy = SH.num(o.cy, -1e6, 1e6, 0);
+    cam.scale = SH.num(o.z, 0.05, 20, 1);
+    speed = SH.num(o.sp, 0, 3, 1);
+    spawnMass = SH.num(o.sm, 5, 10000, 400);
+    trails = !!o.t; wells = !!o.w;
+    if (elSpeed) elSpeed.value = speed;
+    if (elMass) elMass.value = spawnMass;
+    if (elTrails) elTrails.checked = trails;
+    if (elWells) elWells.checked = wells;
+    return true;
+  }
+  if (btnShare && SH) btnShare.addEventListener('click', function () {
+    var enc = SH.encode(1, shareState());
+    if (enc.length > 6000) {   // pathological scenes would make a broken/oversized URL
+      btnShare.textContent = 'Scene too large to share';
+      setTimeout(function () { btnShare.textContent = 'Share'; }, 1500);
+      return;
+    }
+    SH.copyLink(btnShare, enc);
+  });
+  if (btnSnap && SH) btnSnap.addEventListener('click', function () {
+    draw();
+    SH.savePng(canvas, {
+      label: 'Gravity sandbox', file: 'gravity-sandbox.png',
+      light: effectiveTheme() === 'light', bg: bg()
+    });
+  });
+
+  /* panel collapse + first-run hint (shared helper; adds the sub-600px auto-collapse) */
+  if (window.GadgetUI) {
+    var hint = GadgetUI.firstRunHint('gravity', 'Click to drop a body, drag to fling one.');
+    GadgetUI.initPanel({
+      panel: elPanel, toggle: elCollapse,
+      collapsedClass: 'grav-panel--collapsed',
+      help: id('grav-help'), hint: hint
+    });
+    /* touch parity: press-and-hold a body deletes it (same code path as right-click) */
+    GadgetUI.longPress(canvas, function (pt) {
+      var r = canvas.getBoundingClientRect();
+      var bi = bodyAt(pt.clientX - r.left, pt.clientY - r.top);
+      if (bi < 0) return;
+      if (vdrag && vdrag.body === bodies[bi]) vdrag = null;
+      bodies.splice(bi, 1);
+      create = null;
+    });
+  }
 
   // ---- theme + resize + visibility --------------------------------------
   var rt;
@@ -362,6 +447,7 @@
   document.addEventListener('visibilitychange', function () { if (document.hidden) { if (raf) { cancelAnimationFrame(raf); raf = null; } } else start(); });
 
   // ---- init --------------------------------------------------------------
+  if (SH) applyShared();   // a shared scene in the URL replaces the empty space
   if (elSpeedV) elSpeedV.textContent = speed.toFixed(2) + '×';
   if (elMassV) elMassV.textContent = Math.round(spawnMass);
   resize();

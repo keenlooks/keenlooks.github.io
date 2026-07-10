@@ -180,15 +180,16 @@
 
   /* ---- click / drag to paint (infect, vaccinate, or right-drag to clear) ---- */
   function paintAt(clientX, clientY, erase) {
+    var doErase = erase || paintMode === 'erase';    // right-drag always erases; the Erase mode makes left-drag/touch erase too
     var r = canvas.getBoundingClientRect();
     var cx = Math.floor((clientX - r.left) / cell), cy = Math.floor((clientY - r.top) / cell);
-    var rad = (paintMode === 'vaccinate' || erase) ? 2 : 1;   // a bigger brush for painting regions
+    var rad = (paintMode !== 'infect' || doErase) ? 2 : 1;    // a bigger brush for painting regions
     for (var dy = -rad; dy <= rad; dy++) {
       for (var dx = -rad; dx <= rad; dx++) {
         var x = cx + dx, y = cy + dy;
         if (x < 0 || y < 0 || x >= cols || y >= rows) continue;
         var i = y * cols + x, v = grid[i];
-        if (erase) { grid[i] = 0; }                  // back to plain susceptible
+        if (doErase) { grid[i] = 0; }                // back to plain susceptible
         else if (paintMode === 'vaccinate') { if (v === 0) grid[i] = -2; }
         else { if (v === 0) grid[i] = durDays; }     // infect (only susceptible cells)
       }
@@ -227,9 +228,22 @@
     recount();
   }
 
+  /* Rough R0 from the model's REAL parameters. Each infected cell has 8 fixed
+     grid neighbors, and a given susceptible neighbor is EVENTUALLY infected
+     with probability 1 − (1−p)^days (the daily trials saturate — a naive
+     p × 8 × days would badly overcount, since a neighbor can only be
+     infected once). "Rough" because edge cells have fewer neighbors and
+     neighbors are shared with other infected cells. */
+  var elR0 = id('epi-r0');
+  function updateR0() {
+    if (!elR0) return;
+    var per = 1 - Math.pow(1 - pTrans, durDays);
+    elR0.textContent = 'Rough R₀ ≈ 8 neighbors × ' + per.toFixed(2) + ' chance each ≈ ' + (8 * per).toFixed(1);
+  }
+
   /* ---- controls ---- */
-  if (elTrans) elTrans.addEventListener('input', function () { pTrans = +elTrans.value / 100; if (elTransV) elTransV.textContent = elTrans.value + '%'; });
-  if (elDur) elDur.addEventListener('input', function () { durDays = +elDur.value; if (elDurV) elDurV.textContent = elDur.value; });
+  if (elTrans) elTrans.addEventListener('input', function () { pTrans = +elTrans.value / 100; if (elTransV) elTransV.textContent = elTrans.value + '%'; updateR0(); });
+  if (elDur) elDur.addEventListener('input', function () { durDays = +elDur.value; if (elDurV) elDurV.textContent = elDur.value; updateR0(); });
   if (elVax) elVax.addEventListener('input', function () { vaxPct = +elVax.value; if (elVaxV) elVaxV.textContent = elVax.value + '%'; applyVaxLive(vaxPct); });
   var modeBtns = document.querySelectorAll('.epi-mode');
   Array.prototype.forEach.call(modeBtns, function (b) {
@@ -238,12 +252,68 @@
       Array.prototype.forEach.call(modeBtns, function (o) { o.classList.toggle('epi-mode--on', o === b); });
     });
   });
-  if (btnPause) btnPause.addEventListener('click', function () { paused = !paused; btnPause.textContent = paused ? 'Play' : 'Pause'; });
-  if (btnRestart) btnRestart.addEventListener('click', function () { initGrid(); recount(); });
-  if (elCollapse && elPanel) {
-    elCollapse.addEventListener('click', function () { elPanel.classList.toggle('epi-panel--collapsed'); });
-    if (window.innerWidth < 600) elPanel.classList.add('epi-panel--collapsed');
+  function togglePause() { paused = !paused; if (btnPause) btnPause.textContent = paused ? 'Play' : 'Pause'; }
+  function restart() { initGrid(); recount(); }
+  if (btnPause) btnPause.addEventListener('click', togglePause);
+  if (btnRestart) btnRestart.addEventListener('click', restart);
+
+  /* ---- share link + PNG snapshot (shared codec in share-hash.js) ----
+     The grid is randomly seeded on restart, so sharing the PARAMETERS is the
+     whole state: restoring applies the sliders and then restarts. */
+  var SH = window.ShareHash;
+  var btnShare = id('epi-share'), btnSnap = id('epi-snap');
+  function shareState() { return { t: Math.round(pTrans * 100), d: durDays, v: vaxPct }; }
+  function applyShared() {
+    var d = SH.decode(SH.readHash());
+    if (!d || d.version !== 1) return false;
+    var o = d.obj;
+    pTrans = SH.int(o.t, 1, 50, 10) / 100;
+    durDays = SH.int(o.d, 2, 30, 10);
+    vaxPct = SH.int(o.v, 0, 95, 0);
+    if (elTrans) { elTrans.value = Math.round(pTrans * 100); if (elTransV) elTransV.textContent = Math.round(pTrans * 100) + '%'; }
+    if (elDur) { elDur.value = durDays; if (elDurV) elDurV.textContent = String(durDays); }
+    if (elVax) { elVax.value = vaxPct; if (elVaxV) elVaxV.textContent = vaxPct + '%'; }
+    return true;
   }
+  if (btnShare && SH) btnShare.addEventListener('click', function () {
+    SH.copyLink(btnShare, SH.encode(1, shareState()));
+  });
+  if (btnSnap && SH) btnSnap.addEventListener('click', function () {
+    draw();
+    SH.savePng(canvas, {
+      label: 'Epidemic', file: 'epidemic.png',
+      light: effectiveTheme() === 'light', bg: bg()
+    });
+  });
+
+  /* panel collapse + first-run hint (shared helper) */
+  if (window.GadgetUI) {
+    var hint = GadgetUI.firstRunHint('epidemic', 'Click or drag to infect.');
+    GadgetUI.initPanel({
+      panel: elPanel, toggle: elCollapse,
+      collapsedClass: 'epi-panel--collapsed',
+      help: id('epi-help'), hint: hint
+    });
+    /* touch parity: press and hold, then drag, to erase (right-drag on a mouse) */
+    GadgetUI.longPress(canvas, function (pt) {
+      if (!painting) return;
+      painting.erase = true;
+      paintAt(pt.clientX, pt.clientY, true);
+    });
+  }
+
+  /* keyboard: Space = pause/resume, R = restart (ignored while typing) */
+  window.addEventListener('keydown', function (e) {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (window.GadgetUI && GadgetUI.isTyping(e)) return;
+    if (e.key === ' ') {
+      /* a focused button already activates on Space — don't double-toggle */
+      if (e.target && (e.target.tagName || '').toLowerCase() === 'button') return;
+      e.preventDefault(); togglePause();
+    }
+    else if (e.key === 'r' || e.key === 'R') restart();
+  });
+
   if (btnPause && paused) btnPause.textContent = 'Play';
 
   var rt;
@@ -261,7 +331,9 @@
   document.addEventListener('visibilitychange', function () { if (document.hidden) { if (raf) { cancelAnimationFrame(raf); raf = null; } } else start(); });
 
   resize();
+  if (SH) applyShared();   // shared parameters in the URL apply before the first seed
   initGrid();
   recount();
+  updateR0();
   start();
 })();

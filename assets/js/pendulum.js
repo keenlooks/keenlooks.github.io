@@ -32,14 +32,15 @@
   var speed = 1, showTwin = true, trails = true, paused = reduced;
   var GRAV = 9.81, SUB = 1 / 240;          // physics in unit lengths; rendering scales to px
   var EPS = 0.001;                          // the twin's initial offset (radians)
-  var TRAIL_MAX = 900, DIVERGE_PX = 40;
+  var TRAIL_MAX = 900;
+  var DIVERGE_RAD = 0.35;                   // divergence threshold in STATE space (radians, ~20°) — viewport-independent
 
   // state vectors [th1, w1, th2, w2]; lengths/masses equal (1, 1)
   var main = [2.1, 0, 2.5, 0];
   var twin = [2.1 + EPS, 0, 2.5, 0];
   var trailA = [], trailB = [];
   var runTime = 0, divergedAt = -1;
-  var divHist = [];                         // {t, d} tip-separation over time (the divergence plot)
+  var divHist = [];                         // [t, d] angular separation over time (the divergence plot)
   var DIVHIST_MAX = 1400;
   var drag = null;                          // {bob: 1|2}
 
@@ -86,6 +87,21 @@
     return { x1: x1, y1: y1, x2: x1 + Math.sin(s[2]) * L, y2: y1 + Math.cos(s[2]) * L };
   }
 
+  /* Divergence is measured in STATE space (the two joint angles), not screen
+     pixels, so the reported time doesn't depend on the viewport size. Angle
+     differences are wrapped to [-pi, pi] — once the twins truly separate,
+     one may complete more full spins than the other. */
+  function angDiff(a, b) {
+    var d = (a - b) % (Math.PI * 2);
+    if (d > Math.PI) d -= Math.PI * 2;
+    else if (d < -Math.PI) d += Math.PI * 2;
+    return d;
+  }
+  function twinSeparation(a, b) {
+    var d1 = angDiff(a[0], b[0]), d2 = angDiff(a[2], b[2]);
+    return Math.sqrt(d1 * d1 + d2 * d2);
+  }
+
   function resetTimers() {
     runTime = 0; divergedAt = -1;
     trailA.length = 0; trailB.length = 0;
@@ -113,8 +129,8 @@
     if (showTwin) {
       var q = tip(twin);
       trailB.push([q.x2, q.y2]); if (trailB.length > TRAIL_MAX) trailB.shift();
-      var sep = Math.hypot(p.x2 - q.x2, p.y2 - q.y2);
-      if (divergedAt < 0 && sep > DIVERGE_PX) divergedAt = runTime;
+      var sep = twinSeparation(main, twin);   /* radians, viewport-independent */
+      if (divergedAt < 0 && sep > DIVERGE_RAD) divergedAt = runTime;
       divHist.push([runTime, sep]); if (divHist.length > DIVHIST_MAX) divHist.shift();
     }
   }
@@ -140,8 +156,8 @@
     ctx.globalAlpha = 1;
   }
 
-  // The separation-vs-time plot along the bottom. On a linear axis the tip gap
-  // sits near zero, then shoots up to the saturation value at a different moment
+  // The separation-vs-time plot along the bottom. On a linear axis the angular
+  // gap sits near zero, then shoots up to saturation at a different moment
   // each run — the visible "boom" of sensitive dependence on initial conditions.
   function drawDivergence() {
     if (divHist.length < 2) return;
@@ -152,7 +168,7 @@
     var ph = Math.min(82, H * 0.12), pb = H - reserve;
     var x0 = (W < 768) ? 16 : 46, x1 = W - x0;
     var tEnd = divHist[divHist.length - 1][0], tSpan = Math.max(6, tEnd);
-    var cap = rodLen() * 3.4;                 // max meaningful tip separation (~ full swing apart)
+    var cap = Math.PI;                        // max meaningful angular separation (wrapped diffs saturate near pi)
     function px(t) { return x0 + (x1 - x0) * (t / tSpan); }
     function py(d) { return pb - ph * Math.min(1, d / cap); }
     ctx.strokeStyle = 'rgba(127,127,127,0.35)'; ctx.lineWidth = 1;
@@ -172,7 +188,7 @@
     ctx.font = '12px "Source Sans 3", system-ui, sans-serif';
     ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
     ctx.fillStyle = textColor(0.5);
-    ctx.fillText('how far apart the two tips are, over time', x0, pb - ph - 4);
+    ctx.fillText('how far apart the twins’ angles are, over time', x0, pb - ph - 4);
   }
 
   function draw() {
@@ -192,7 +208,7 @@
     if (status) {
       if (!showTwin) status.textContent = 't = ' + runTime.toFixed(1) + ' s';
       else if (divergedAt < 0) status.textContent = 't = ' + runTime.toFixed(1) + ' s — twins still together (offset 0.001 rad)';
-      else status.textContent = 'twins diverged after ' + divergedAt.toFixed(1) + ' s';
+      else status.textContent = 'twins diverged after ' + divergedAt.toFixed(1) + ' s (angles differ by ~20 degrees)';
     }
   }
 
@@ -231,16 +247,47 @@
   if (elSpeed) elSpeed.addEventListener('input', function () { speed = +elSpeed.value; if (elSpeedV) elSpeedV.textContent = speed.toFixed(2) + '×'; });
   if (elTwin) elTwin.addEventListener('change', function () { showTwin = elTwin.checked; syncTwin(); });
   if (elTrails) elTrails.addEventListener('change', function () { trails = elTrails.checked; if (!trails) { trailA.length = 0; trailB.length = 0; } });
-  if (btnPause) btnPause.addEventListener('click', function () { paused = !paused; btnPause.textContent = paused ? 'Play' : 'Pause'; });
+  function togglePause() { paused = !paused; if (btnPause) btnPause.textContent = paused ? 'Play' : 'Pause'; }
+  if (btnPause) btnPause.addEventListener('click', togglePause);
   if (btnReset) btnReset.addEventListener('click', reset);
-  if (elCollapse && elPanel) {
-    elCollapse.addEventListener('click', function () { elPanel.classList.toggle('pend-panel--collapsed'); });
-    if (window.innerWidth < 600) elPanel.classList.add('pend-panel--collapsed');
+
+  /* panel collapse + first-run hint (shared helper) */
+  if (window.GadgetUI) {
+    var hint = GadgetUI.firstRunHint('pendulum', 'Drag either bob, then let go.');
+    GadgetUI.initPanel({
+      panel: elPanel, toggle: elCollapse,
+      collapsedClass: 'pend-panel--collapsed',
+      help: id('pend-help'), hint: hint
+    });
   }
+
+  /* keyboard: Space = pause/resume, R = reset (ignored while typing) */
+  window.addEventListener('keydown', function (e) {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (window.GadgetUI && GadgetUI.isTyping(e)) return;
+    if (e.key === ' ') {
+      /* a focused button already activates on Space — don't double-toggle */
+      if (e.target && (e.target.tagName || '').toLowerCase() === 'button') return;
+      e.preventDefault(); togglePause();
+    }
+    else if (e.key === 'r' || e.key === 'R') reset();
+  });
   if (btnPause && paused) btnPause.textContent = 'Play';
 
   var rt;
-  window.addEventListener('resize', function () { clearTimeout(rt); rt = setTimeout(function () { resize(); resetTimers(); }, 150); });
+  window.addEventListener('resize', function () {
+    clearTimeout(rt);
+    rt = setTimeout(function () {
+      var ow = W, oh = H;
+      resize();
+      /* dimension guard (epidemic-style): mobile fires resize on URL-bar
+         show/hide and the on-screen keyboard — a height-only nudge must not
+         wipe the run. A real resize still resets (the px-space trails and
+         plot layout depend on it). */
+      if (W === ow && Math.abs(H - oh) < 120) return;
+      resetTimers();
+    }, 150);
+  });
   document.addEventListener('visibilitychange', function () { if (document.hidden) { if (raf) { cancelAnimationFrame(raf); raf = null; } } else start(); });
 
   if (elSpeedV) elSpeedV.textContent = speed.toFixed(2) + '×';

@@ -1,9 +1,9 @@
 /* Unified full-screen page editor for the PDF Toolbench. One page preview with tools:
-   Move, Text (click to place, font/size/color), Sign (draw/upload + place), Redact (draw
-   boxes → rasterize). Inline form-field inputs are shown when the page has AcroForm widgets.
-   All edits live on the page model (pg.texts / pg.sigs / pg.raster) and on
-   docs[i].formValues, so thumbnails and export pick them up. Depends on window.__PT.
-   External file → // comments fine. */
+   Move, Text (click to place, font/size/color), Sign (draw/upload/saved + place), Redact
+   (draw boxes → rasterize). Inline form-field inputs (text, checkbox, dropdown, radio
+   groups) are shown when the page has AcroForm widgets. All edits live on the page model
+   (pg.texts / pg.sigs / pg.raster) and on docs[i].formValues, so thumbnails and export
+   pick them up. Depends on window.__PT. External file → // comments fine. */
 (function () {
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
@@ -11,6 +11,9 @@
   var ed = $('pt-ed'); if (!ed) return;
 
   var scrollEl = $('pt-ed-scroll'), stage = $('pt-ed-stage'), canvas = $('pt-ed-canvas'), layer = $('pt-ed-layer');
+  // never let a native drag start inside the editor (a stray text selection, or the
+  // signature <img>, would otherwise hijack annotation drags via pointercancel)
+  ed.addEventListener('dragstart', function (e) { e.preventDefault(); });
   var hint = $('pt-ed-hint'), pageLabel = $('pt-ed-page');
   var fontSel = $('pt-text-font'), sizeSel = $('pt-text-size'), colorInp = $('pt-text-color');
 
@@ -28,18 +31,26 @@
 
   // ---------- open / render ----------
   function open(i) {
+    if (PT.isBusy && PT.isBusy()) return;
     var pages = PT.pages(); if (i < 0 || i >= pages.length) return;
+    if (pg) PT.markDirty(pg);          // navigating away — that page's thumbnail may be stale
     idx = i; pg = pages[i]; selected = null; pendingRedact = []; setTool('move');
     ed.hidden = false;
     renderPage();
   }
-  function close() { ed.hidden = true; pg = null; idx = -1; PT.renderGrid(); PT.updateToolbar(); }
+  function close() {
+    if (pg) PT.markDirty(pg);
+    ed.hidden = true; pg = null; idx = -1;
+    PT.renderGrid(); PT.updateToolbar();
+  }
 
   // annotations (text/sig) are drawn with rotation-0 math at export, so a page with any
-  // effective rotation must be flattened upright first (same as redact/sign already do).
+  // effective rotation must be flattened upright first (same as redact already does).
+  // Snapshotted so Ctrl+Z can undo the flatten.
   function ensureUpright() {
     return PT.pageEffRotation(pg).then(function (r) {
       if (r === 0) return false;
+      if (PT.snapshot) PT.snapshot('flatten page ' + (idx + 1) + ' upright');
       return PT.bakePageToRaster(pg, 150).then(function () { return renderPage(); }).then(function () { return true; });
     });
   }
@@ -57,6 +68,8 @@
       canvas.width = res.canvas.width; canvas.height = res.canvas.height;
       cx.drawImage(res.canvas, 0, 0);
       dispW = canvas.width; dispH = canvas.height; scale = dispW / Wpt;
+      // watermarks + page numbers preview (texts/sigs are live DOM elements instead)
+      if (PT.drawMarks) PT.drawMarks(cx, pg, dispW, dispH, Wpt, Hpt, idx);
       stage.style.width = dispW + 'px'; stage.style.height = dispH + 'px';
       layer.style.width = dispW + 'px'; layer.style.height = dispH + 'px';
       pageLabel.textContent = 'Page ' + (idx + 1) + ' of ' + PT.pages().length;
@@ -90,14 +103,15 @@
     $('pt-text-opts').hidden = t !== 'text';
     $('pt-redact-opts').hidden = t !== 'redact';
     $('pt-ed-signbar').hidden = t !== 'sign';
+    if (t === 'sign') renderSavedSigs();
     stage.classList.toggle('pt-stage--text', t === 'text');
     stage.classList.toggle('pt-stage--redact', t === 'redact');
     // text content editable only in the text tool
     Array.prototype.forEach.call(layer.querySelectorAll('.pt-anno__txt'), function (el) { el.contentEditable = (t === 'text'); });
     hint.textContent = t === 'text' ? 'Click anywhere on the page to add text. Pick font, size, and color above.'
-      : t === 'sign' ? 'Draw or upload a signature, click “Place on page”, then drag it where you want.'
+      : t === 'sign' ? 'Draw or upload a signature, click “Place on page”, then drag it where you want. Saved signatures stay in this browser only.'
       : t === 'redact' ? 'Drag boxes over anything to remove, then “Apply redaction”. The page is flattened to an image so the text underneath is gone.'
-      : 'Click a text box or signature to move it. Double-click a page thumbnail to edit a different page.';
+      : 'Click a text box or signature to move it. Use ‹ › or the arrow keys to change pages.';
   }
   ['move', 'text', 'sign', 'redact'].forEach(function (k) { $('pt-tool-' + k).addEventListener('click', function () { setTool(k); }); });
 
@@ -148,7 +162,12 @@
     var el = document.createElement('div'); el.className = 'pt-anno pt-anno--sig'; el.__model = s;
     el.style.left = (s.x * dispW) + 'px'; el.style.top = (s.y * dispH) + 'px';
     el.style.width = (s.w * dispW) + 'px'; el.style.height = (s.h * dispH) + 'px';
-    var img = document.createElement('img'); img.src = URL.createObjectURL(new Blob([s.png], { type: 'image/png' })); el.appendChild(img);
+    var img = document.createElement('img');
+    var url = URL.createObjectURL(new Blob([s.png], { type: 'image/png' }));
+    img.onload = function () { URL.revokeObjectURL(url); };
+    img.onerror = function () { URL.revokeObjectURL(url); };
+    img.src = url;
+    el.appendChild(img);
     el.addEventListener('pointerdown', function (e) { if (tool === 'move' || tool === 'sign') { e.preventDefault(); select(el); startDrag(e, el, s); } });
     return el;
   }
@@ -229,23 +248,34 @@
   redactDialog.addEventListener('click', function (e) { if (e.target === redactDialog) redactDialog.hidden = true; });
   $('pt-dialog-go').addEventListener('click', function () {
     redactDialog.hidden = true; if (!pendingRedact.length) return;
-    var dpi = parseInt($('pt-redact-dpi').value, 10) || 150; PT.setStatus('Rasterizing and redacting…');
+    var dpi = parseInt($('pt-redact-dpi').value, 10) || 150;
+    if (PT.snapshot) PT.snapshot('redact page ' + (idx + 1));
+    PT.progress(0, 2, 'Rasterizing and redacting…');
     var boxes = pendingRedact.slice();
     PT.effPointSize(pg).then(function (sz) {
       return PT.renderPageCanvas(pg, sz.w * dpi / 72).then(function (r) {
         var c = r.canvas, cx = c.getContext('2d'); cx.fillStyle = '#000';
         boxes.forEach(function (b) { cx.fillRect(b.x * c.width, b.y * c.height, b.w * c.width, b.h * c.height); });
-        return PT.canvasToBytes(c, 'image/png').then(function (png) {
-          pg.raster = { png: png, wPt: sz.w, hPt: sz.h }; pg.rot = 0; pg.redacted = true;
-          pendingRedact = []; $('pt-ed-redact-apply').disabled = true; PT.setStatus('Page redacted and flattened.');
+        return PT.progress(1, 2, 'Encoding the redacted page…').then(function () {
+          return PT.canvasToBytes(c, 'image/png');
+        }).then(function (png) {
+          pg.raster = { png: png, wPt: sz.w, hPt: sz.h }; pg.rot = 0; pg.blank = null; pg.redacted = true;
+          PT.markDirty(pg);
+          pendingRedact = []; $('pt-ed-redact-apply').disabled = true;
+          PT.progressDone();
+          PT.setStatus('Page redacted and flattened. Ctrl+Z undoes it.');
           setTool('move'); renderPage();
         });
       });
-    }).catch(function (e) { PT.setStatus('Redaction failed: ' + (e && e.message || e)); });
+    }).catch(function (e) { PT.progressDone(); PT.setStatus('Redaction failed: ' + (e && e.message || e)); });
   });
 
-  // ---------- signature pad / upload ----------
+  // ---------- signature pad / upload / saved ----------
   var pad = $('pt-sigpad'), padCtx = pad.getContext('2d'), sigCanvas = null;
+  function sigReady() {
+    $('pt-sig-place').disabled = !sigCanvas;
+    var sv = $('pt-sig-save'); if (sv) sv.disabled = !sigCanvas;
+  }
   function tab(which) {
     $('pt-sign-draw').hidden = which !== 'draw'; $('pt-sign-upload').hidden = which !== 'upload';
     $('pt-sign-tab-draw').classList.toggle('pt-tab--on', which === 'draw'); $('pt-sign-tab-upload').classList.toggle('pt-tab--on', which === 'upload');
@@ -256,14 +286,15 @@
   function padPos(e) { var r = pad.getBoundingClientRect(); return { x: (e.clientX - r.left) * pad.width / r.width, y: (e.clientY - r.top) * pad.height / r.height }; }
   pad.addEventListener('pointerdown', function (e) { drawing = true; last = padPos(e); try { pad.setPointerCapture(e.pointerId); } catch (er) {} e.preventDefault(); });
   pad.addEventListener('pointermove', function (e) { if (!drawing) return; var p = padPos(e); padCtx.strokeStyle = '#111'; padCtx.lineWidth = 2.2; padCtx.lineCap = 'round'; padCtx.beginPath(); padCtx.moveTo(last.x, last.y); padCtx.lineTo(p.x, p.y); padCtx.stroke(); last = p; });
-  function commitPad() { if (!drawing) return; drawing = false; sigCanvas = trimToInk(pad) || sigCanvas; $('pt-sig-place').disabled = !sigCanvas; }
+  function commitPad() { if (!drawing) return; drawing = false; sigCanvas = trimToInk(pad) || sigCanvas; sigReady(); }
   pad.addEventListener('pointerup', commitPad); pad.addEventListener('pointercancel', commitPad);
-  $('pt-sig-clear').addEventListener('click', function () { padCtx.clearRect(0, 0, pad.width, pad.height); sigCanvas = null; $('pt-sig-place').disabled = true; });
+  $('pt-sig-clear').addEventListener('click', function () { padCtx.clearRect(0, 0, pad.width, pad.height); sigCanvas = null; sigReady(); });
   var sigFile = $('pt-sigfile');
   $('pt-sig-pick').addEventListener('click', function () { sigFile.click(); });
   sigFile.addEventListener('change', function () {
     var f = sigFile.files && sigFile.files[0]; if (!f) return; var url = URL.createObjectURL(f), im = new Image();
-    im.onload = function () { URL.revokeObjectURL(url); var c = document.createElement('canvas'); c.width = im.naturalWidth; c.height = im.naturalHeight; c.getContext('2d').drawImage(im, 0, 0); sigCanvas = c; $('pt-sig-place').disabled = false; };
+    im.onload = function () { URL.revokeObjectURL(url); var c = document.createElement('canvas'); c.width = im.naturalWidth; c.height = im.naturalHeight; c.getContext('2d').drawImage(im, 0, 0); sigCanvas = c; sigReady(); };
+    im.onerror = function () { URL.revokeObjectURL(url); };
     im.src = url; sigFile.value = '';
   });
   function trimToInk(c) {
@@ -272,6 +303,52 @@
     if (maxX < 0) return null; var pad2 = 5; minX = Math.max(0, minX - pad2); minY = Math.max(0, minY - pad2); maxX = Math.min(w - 1, maxX + pad2); maxY = Math.min(h - 1, maxY + pad2);
     var cw = maxX - minX + 1, ch = maxY - minY + 1, o = document.createElement('canvas'); o.width = cw; o.height = ch; o.getContext('2d').drawImage(c, minX, minY, cw, ch, 0, 0, cw, ch); return o;
   }
+
+  // saved signatures — trimmed dataURLs in localStorage; nothing leaves the device
+  var SIG_KEY = 'pdftools.sigs';
+  function loadSavedSigs() {
+    try { var a = JSON.parse(localStorage.getItem(SIG_KEY) || '[]'); return Array.isArray(a) ? a : []; }
+    catch (e) { return []; }
+  }
+  function storeSavedSigs(a) { try { localStorage.setItem(SIG_KEY, JSON.stringify(a)); } catch (e) {} }
+  function renderSavedSigs() {
+    var wrap = $('pt-sig-savedwrap'), row = $('pt-sig-saved');
+    if (!wrap || !row) return;
+    row.innerHTML = '';
+    var a = loadSavedSigs();
+    wrap.hidden = a.length === 0;
+    a.forEach(function (durl, i) {
+      var chip = document.createElement('span'); chip.className = 'pt-sigsaved';
+      var im = document.createElement('img');
+      im.src = durl; im.alt = 'Saved signature ' + (i + 1); im.title = 'Use this signature';
+      im.addEventListener('click', function () {
+        var img = new Image();
+        img.onload = function () {
+          var c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight;
+          c.getContext('2d').drawImage(img, 0, 0);
+          sigCanvas = c; sigReady();
+          PT.setStatus('Signature loaded — click “Place on page”.');
+        };
+        img.src = durl;
+      });
+      var del = document.createElement('button'); del.type = 'button'; del.className = 'pt-sigsaved__del'; del.textContent = '×'; del.title = 'Delete this saved signature';
+      del.addEventListener('click', function () {
+        var b = loadSavedSigs(); b.splice(i, 1); storeSavedSigs(b); renderSavedSigs();
+      });
+      chip.appendChild(im); chip.appendChild(del);
+      row.appendChild(chip);
+    });
+  }
+  var sigSaveBtn = $('pt-sig-save');
+  if (sigSaveBtn) sigSaveBtn.addEventListener('click', function () {
+    if (!sigCanvas) return;
+    var a = loadSavedSigs();
+    a.unshift(sigCanvas.toDataURL('image/png'));
+    storeSavedSigs(a.slice(0, 4));
+    renderSavedSigs();
+    PT.setStatus('Signature saved in this browser (it never leaves your device).');
+  });
+
   $('pt-sig-place').addEventListener('click', function () {
     if (!sigCanvas) return;
     // signatures need an upright page; flatten first if rotated (shared with the text tool)
@@ -286,30 +363,54 @@
   });
 
   // ---------- inline form-field widgets ----------
+  function saveFieldValue(di, name, value) {
+    var d = PT.docs()[di];
+    d.formValues = d.formValues || {};
+    d.formValues[name] = value;
+  }
   function addFormWidgets() {
-    if (pg.raster) return;                       // a rasterized page has no live form fields
+    if (pg.raster || pg.blank) return;           // a rasterized/blank page has no live form fields
+    var myPg = pg;
     PT.pageEffRotation(pg).then(function (rot) {
-      if (rot !== 0) return;                      // only place widgets on upright pages
+      if (rot !== 0 || myPg !== pg) return;       // only place widgets on upright pages
       return PT.pdfjsPage(pg).then(function (page) {
         return page.getAnnotations().then(function (annots) {
+          if (myPg !== pg) return;
           var di = pg.docIndex, vals = (PT.docs()[di].formValues) || {};
           annots.forEach(function (a) {
             if (a.subtype !== 'Widget' || !a.fieldName) return;
             var r = a.rect; if (!r) return;
             var left = r[0] * scale, top = (Hpt - r[3]) * scale, w = (r[2] - r[0]) * scale, h = (r[3] - r[1]) * scale;
             var el;
-            if (a.fieldType === 'Tx') { el = document.createElement('input'); el.type = 'text'; el.value = (a.fieldName in vals) ? vals[a.fieldName] : (a.fieldValue || ''); }
-            else if (a.fieldType === 'Ch') {
+            if (a.fieldType === 'Tx') {
+              el = document.createElement('input'); el.type = 'text';
+              el.value = (a.fieldName in vals) ? vals[a.fieldName] : (a.fieldValue || '');
+            } else if (a.fieldType === 'Ch') {
               el = document.createElement('select');
               (a.options || []).forEach(function (o) { var op = document.createElement('option'); var v = (o && o.exportValue != null) ? o.exportValue : (o && o.displayValue != null ? o.displayValue : o); op.value = v; op.textContent = (o && o.displayValue) || v; el.appendChild(op); });
               el.value = (a.fieldName in vals) ? vals[a.fieldName] : (a.fieldValue || '');
-            } else if (a.fieldType === 'Btn') { el = document.createElement('input'); el.type = 'checkbox'; el.checked = (a.fieldName in vals) ? !!vals[a.fieldName] : (a.fieldValue && a.fieldValue !== 'Off'); }
-            else return;
-            el.className = 'pt-formwidget'; el.style.left = left + 'px'; el.style.top = top + 'px'; el.style.width = w + 'px'; el.style.height = h + 'px';
-            if (el.type !== 'checkbox') el.style.fontSize = Math.max(9, h * 0.6) + 'px';
+            } else if (a.fieldType === 'Btn' && a.radioButton) {
+              // radio group: each widget is one option; buttonValue is its export value.
+              // pdf-lib's PDFRadioGroup.select() takes that same export value at build time.
+              el = document.createElement('input'); el.type = 'radio';
+              el.name = 'ptr-' + di + '-' + a.fieldName;
+              el.value = a.buttonValue != null ? String(a.buttonValue) : '';
+              var cur = (a.fieldName in vals) ? vals[a.fieldName] : a.fieldValue;
+              el.checked = cur != null && String(cur) === el.value && el.value !== '';
+            } else if (a.fieldType === 'Btn' && !a.pushButton) {
+              el = document.createElement('input'); el.type = 'checkbox';
+              el.checked = (a.fieldName in vals) ? !!vals[a.fieldName] : (a.fieldValue && a.fieldValue !== 'Off');
+            } else return;                        // push buttons and unknown widgets: skip
+            el.className = 'pt-formwidget';
+            el.style.left = left + 'px'; el.style.top = top + 'px'; el.style.width = w + 'px'; el.style.height = h + 'px';
+            if (el.type !== 'checkbox' && el.type !== 'radio') el.style.fontSize = Math.max(9, h * 0.6) + 'px';
             el.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
-            el.addEventListener('change', function () { var d = PT.docs()[di]; d.formValues = d.formValues || {}; d.formValues[a.fieldName] = (el.type === 'checkbox') ? el.checked : el.value; });
-            el.addEventListener('input', function () { var d = PT.docs()[di]; d.formValues = d.formValues || {}; d.formValues[a.fieldName] = (el.type === 'checkbox') ? el.checked : el.value; });
+            function commit() {
+              if (el.type === 'radio') { if (el.checked) saveFieldValue(di, a.fieldName, el.value); }
+              else saveFieldValue(di, a.fieldName, el.type === 'checkbox' ? el.checked : el.value);
+            }
+            el.addEventListener('change', commit);
+            el.addEventListener('input', commit);
             layer.appendChild(el);
           });
           if (annots.some(function (a) { return a.subtype === 'Widget' && a.fieldName; })) hint.textContent = 'This page has form fields (highlighted) — click into them to fill. ' + hint.textContent;
@@ -318,7 +419,7 @@
     });
   }
 
-  // keyboard: Delete removes selected, Escape closes
+  // keyboard: Delete removes selected, Escape closes, arrows navigate
   document.addEventListener('keydown', function (e) {
     if (ed.hidden) return;
     var onBody = document.activeElement === document.body;

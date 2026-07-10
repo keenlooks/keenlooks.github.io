@@ -15,6 +15,7 @@ description: "An interactive full-screen magnetic-field sandbox by Keane Lucas: 
   <div class="mag-panel" id="mag-panel">
     <div class="mag-panel__head">
       <span class="mag-panel__title">Magnetic Field</span>
+      <button id="mag-help" class="gadget-help" type="button" aria-label="Show hint" title="Show hint">?</button>
       <button id="mag-collapse" class="mag-collapse" type="button" aria-label="Hide / show controls" title="Hide / show controls">&ndash;</button>
     </div>
     <div class="mag-panel__body" id="mag-panel-body">
@@ -24,6 +25,7 @@ description: "An interactive full-screen magnetic-field sandbox by Keane Lucas: 
         pole; field lines leave the north and curl into the south. Bring opposite poles together and
         they <strong>snap</strong> into a stronger magnet; line up like poles and they shove apart.
       </p>
+      <p class="mag-edu">Each magnet is modelled as two point poles; real magnets are continuous dipoles, but the field pattern matches.</p>
 
       <label class="mag-slider"><span>New magnet strength: <strong id="mag-strength-val" class="editable-val" data-range="mag-strength">3.0</strong></span>
         <input id="mag-strength" type="range" min="1" max="9" step="0.5" value="3"></label>
@@ -42,8 +44,8 @@ description: "An interactive full-screen magnetic-field sandbox by Keane Lucas: 
       </div>
 
       <p class="mag-hint">
-        <strong>Right-click</strong> a magnet: delete &middot;
-        <strong>Scroll</strong> over one: change its strength
+        <strong>Right-click</strong> (or press and hold) a magnet: delete &middot;
+        <strong>Scroll</strong> over one, or <strong>tap</strong> it for + / &minus; buttons: change its strength
       </p>
       <p class="mag-status-line"><span id="mag-status">0 magnets</span></p>
     </div>
@@ -106,6 +108,7 @@ html[data-theme="light"] .mag-panel { background: rgba(255,255,255,0.97); border
 .mag-panel--collapsed .mag-panel__body { display: none; }
 .mag-panel__body { display: flex; flex-direction: column; gap: 0.8rem; margin-top: 0.7rem; }
 .mag-blurb { margin: 0; font-size: 0.9em; opacity: 0.85; line-height: 1.5; }
+.mag-edu { margin: 0; font-size: 0.82em; opacity: 0.7; line-height: 1.5; }
 
 .mag-slider { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.95em; }
 .mag-slider strong { font-variant-numeric: tabular-nums; }
@@ -132,5 +135,6 @@ html[data-theme="light"] .mag-check input { accent-color: #34568a; }
 }
 </style>
 
+<script defer src="{{ '/assets/js/gadget-ui.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/magnet.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/editable-values.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>

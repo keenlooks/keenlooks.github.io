@@ -20,9 +20,14 @@
 
 <title>{{ seo_title | default: site.title }}{% if paginator %}{% unless paginator.page == 1 %} {{ site.title_separator }} {{ site.data.ui-text[site.locale].page | default: "Page" }} {{ paginator.page }}{% endunless %}{% endif %}</title>
 
-{% assign seo_description = page.description | default: page.excerpt | default: site.description %}
+{% assign seo_description = page.description | default: page.excerpt %}
 {% if seo_description %}
-  {% assign seo_description = seo_description | markdownify | strip_html | strip_newlines | escape_once %}
+  {% assign seo_description = seo_description | markdownify | strip_html | strip_newlines | truncate: 160 %}
+{% endif %}
+{% assign seo_description = seo_description | default: site.description %}
+{% if seo_description %}
+  {% assign seo_description = seo_description | strip_newlines | escape_once %}
+  <meta name="description" content="{{ seo_description }}">
 {% endif %}
 
 {% assign seo_author = page.author | default: page.author[0] | default: site.author[0] %}
@@ -48,7 +53,7 @@
   <meta property="og:url" content="{{ page.url | prepend: seo_url | replace: "/index.html", "/" }}">
 {% endif %}
 
-{% if page.excerpt %}
+{% if seo_description %}
   <meta property="og:description" content="{{ seo_description }}">
 {% endif %}
 
@@ -61,11 +66,11 @@
   {% if page.header.image %}
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:image" content="{% if page.header.image contains "://" %}{{ page.header.image }}{% else %}{{ page.header.image | prepend: "/images/" | prepend: base_path }}{% endif %}">
+  {% elsif site.og_image %}
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:image" content="{{ site.og_image | prepend: "/images/" | prepend: base_path }}">
   {% else %}
     <meta name="twitter:card" content="summary">
-    {% if site.og_image %}
-      <meta name="twitter:image" content="{{ site.og_image | prepend: "/images/" | prepend: base_path }}">
-    {% endif %}
   {% endif %}
 
   {% if seo_author_twitter %}
@@ -87,11 +92,49 @@
   <meta property="og:image" content="{% if page.header.image contains "://" %}{{ page.header.image }}{% else %}{{ page.header.image | prepend: "/images/" | prepend: base_path }}{% endif %}">
 {% elsif page.header.overlay_image %}
   <meta property="og:image" content="{% if page.header.overlay_image contains "://" %}{{ page.header.overlay_image }}{% else %}{{ page.header.overlay_image | prepend: "/images/" | prepend: base_path }}{% endif %}">
+{% elsif site.og_image %}
+  <meta property="og:image" content="{{ site.og_image | prepend: "/images/" | prepend: base_path }}">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
 {% endif %}
 
-{% if page.date %}
+{% if page.date or page.collection == "publications" %}
   <meta property="og:type" content="article">
+{% else %}
+  <meta property="og:type" content="website">
+{% endif %}
+{% if page.date %}
   <meta property="article:published_time" content="{{ page.date | date_to_xmlschema }}">
+{% endif %}
+
+{% if page.collection == "publications" %}
+  <meta name="citation_title" content="{{ page.title | markdownify | strip_html | strip_newlines | escape_once }}">
+  {% if page.authors %}
+    {% assign citation_author_list = page.authors | strip_html | strip_newlines | split: ", " %}
+    {% for citation_author in citation_author_list %}
+      {% assign citation_author_clean = citation_author | strip %}
+      {% assign citation_author_prefix = citation_author_clean | slice: 0, 4 %}
+      {% if citation_author_prefix == "and " %}
+        {% assign citation_author_clean = citation_author_clean | remove_first: "and " | strip %}
+      {% endif %}
+      {% if citation_author_clean != "" %}
+  <meta name="citation_author" content="{{ citation_author_clean | escape_once }}">
+      {% endif %}
+    {% endfor %}
+  {% endif %}
+  {% if page.date %}
+  <meta name="citation_publication_date" content="{{ page.date | date: "%Y/%m/%d" }}">
+  {% endif %}
+  {% if page.venue %}
+  <meta name="citation_conference_title" content="{{ page.venue | escape_once }}">
+  {% endif %}
+  {% if page.paperurl %}
+    {% if page.paperurl contains "://" %}
+  <meta name="citation_pdf_url" content="{{ page.paperurl }}">
+    {% else %}
+  <meta name="citation_pdf_url" content="{{ page.paperurl | prepend: seo_url }}">
+    {% endif %}
+  {% endif %}
 {% endif %}
 
 {% if paginator.previous_page %}
@@ -101,28 +144,49 @@
   <link rel="next" href="{{ paginator.next_page_path | prepend: seo_url }}">
 {% endif %}
 
-{% if site.og_image %}
-  <script type="application/ld+json">
-    {
-      "@context": "http://schema.org",
+{% assign person_links = "" %}
+{% if site.author.googlescholar %}
+  {% assign person_links = person_links | append: site.author.googlescholar | append: "||" %}
+{% endif %}
+{% if site.author.orcid %}
+  {% assign person_links = person_links | append: site.author.orcid | append: "||" %}
+{% endif %}
+{% if site.author.linkedin %}
+  {% if site.author.linkedin contains "://" %}
+    {% assign seo_linkedin_url = site.author.linkedin %}
+  {% else %}
+    {% assign seo_linkedin_url = site.author.linkedin | prepend: "https://www.linkedin.com/in/" %}
+  {% endif %}
+  {% assign person_links = person_links | append: seo_linkedin_url | append: "||" %}
+{% endif %}
+{% if site.author.github %}
+  {% if site.author.github contains "://" %}
+    {% assign seo_github_url = site.author.github %}
+  {% else %}
+    {% assign seo_github_url = site.author.github | prepend: "https://github.com/" %}
+  {% endif %}
+  {% assign person_links = person_links | append: seo_github_url | append: "||" %}
+{% endif %}
+{% assign person_links = person_links | split: "||" %}
+<script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Person",
+    "name": {{ site.author.name | default: site.name | jsonify }},
+    "url": {{ seo_url | jsonify }},
+    "jobTitle": "Member of Technical Staff",
+    "worksFor": {
       "@type": "Organization",
-      "url": {{ seo_url | jsonify }},
-      "logo": {{ site.og_image | prepend: "/images/" | prepend: base_path | jsonify }}
-    }
-  </script>
-{% endif %}
-
-{% if site.social %}
-  <script type="application/ld+json">
-    {
-      "@context" : "http://schema.org",
-      "@type" : "{% if site.social.type %}{{ site.social.type }}{% else %}Person{% endif %}",
-      "name" : "{{ site.social.name | default: site.name }}",
-      "url" : {{ seo_url | jsonify }},
-      "sameAs" : {{ site.social.links | jsonify }}
-    }
-  </script>
-{% endif %}
+      "name": "Anthropic",
+      "url": "https://www.anthropic.com"
+    },
+    "alumniOf": [
+      { "@type": "CollegeOrUniversity", "name": "Carnegie Mellon University" },
+      { "@type": "CollegeOrUniversity", "name": "United States Air Force Academy" }
+    ],
+    "sameAs": {{ person_links | jsonify }}
+  }
+</script>
 
 {% if site.google_site_verification %}
   <meta name="google-site-verification" content="{{ site.google_site_verification }}" />

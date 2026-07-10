@@ -15,6 +15,7 @@ description: "An interactive reinforcement-learning demo by Keane Lucas: a small
   <div class="land-panel" id="land-panel">
     <div class="land-panel__head">
       <span class="land-panel__title">Rocket Lander</span>
+      <button id="land-help" class="gadget-help" type="button" aria-label="Show hint" title="Show hint">?</button>
       <button id="land-collapse" class="land-collapse" type="button" aria-label="Hide / show controls" title="Hide / show controls">&ndash;</button>
     </div>
     <div class="land-panel__body" id="land-panel-body">
@@ -42,7 +43,8 @@ description: "An interactive reinforcement-learning demo by Keane Lucas: a small
         <button id="land-reset" class="land-btn" type="button">New rocket</button>
       </div>
 
-      <p class="land-hint">With autopilot off, fly it yourself: <strong>↑</strong> thrust, <strong>← →</strong> rotate.</p>
+      <p class="land-hint">With autopilot off, fly it yourself: <strong>↑</strong> thrust, <strong>← →</strong> rotate
+        (on a touchscreen, buttons appear at the bottom).</p>
       <p class="land-credit">
         Original code and physics. The task and controls are inspired by the classic
         <a href="https://gymnasium.farama.org/environments/box2d/lunar_lander/" target="_blank" rel="noopener">LunarLander</a>
@@ -105,5 +107,6 @@ html[data-theme="light"] .land-slider input[type="range"], html[data-theme="ligh
 </style>
 
 <script defer src="{{ '/assets/js/lander-model.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
+<script defer src="{{ '/assets/js/gadget-ui.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/lander.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/editable-values.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>

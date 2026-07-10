@@ -195,7 +195,8 @@
     right: 0;
     padding: 0 0.5rem;
     border: 0;
-    outline: none;
+    /* no `outline: none` here — keyboard focus gets the site-wide
+       :focus-visible ring from _reset.scss (WCAG 2.4.7) */
     background-color: $primary-color;
     color: #fff;
     cursor: pointer;

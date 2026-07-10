@@ -35,6 +35,7 @@
     if (!range) return;
     el.setAttribute('contenteditable', 'true');
     el.setAttribute('role', 'textbox');
+    el.setAttribute('inputmode', 'decimal');   /* numeric keypad on phones */
     el.setAttribute('title', 'Click to type a value');
     el.addEventListener('pointerdown', function (e) { e.preventDefault(); el.focus(); selectAll(el); });
     el.addEventListener('focus', function () { selectAll(el); });

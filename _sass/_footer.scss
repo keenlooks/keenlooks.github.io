@@ -12,16 +12,25 @@
   -webkit-animation-delay: 0.45s;
           animation-delay: 0.45s;
   background-color: mix(#000, $background-color, 30%);
-  border-top: mix(#fff, $background-color, 20%);
+  border-top: 1px solid $border-color;
+  /* Light theme (background, text, border, link colors) is handled by
+     .page__footer overrides in _color-scheme-light.scss; everything inside
+     .site-footer inherits color, so it works on both themes. */
 
   footer {
     @include container;
     @include clearfix;
-    margin-top: 2em;
-    padding: 0 1em 2em;
+    margin-top: 0;
+    padding: 2em 1em 2.25em;
 
     @include breakpoint($x-large) {
       max-width: $x-large;
+    }
+
+    /* The chat widget becomes a full-width fixed bar at the bottom on
+       mobile; leave room so it doesn't cover the last footer line. */
+    @media (max-width: 768px) {
+      padding-bottom: 5em;
     }
   }
 
@@ -34,40 +43,103 @@
     }
   }
 
-  .fa {
-    color: mix(#fff, $gray, 25%);
+  /* The footer/custom.html include renders a bare sitemap anchor as a direct
+     child of <footer>; the same link lives in the colophon below, so hide the
+     stray one rather than let it float above the columns. */
+  footer > a {
+    display: none;
   }
 }
 
-.page__footer-copyright {
+/*
+   Designed footer content (see _includes/footer.html)
+   ========================================================================== */
+
+.site-footer {
   font-family: $global-font-family;
-  font-size: $type-size-7;
+  font-size: $type-size-6;
+  line-height: 1.6;
 }
 
-.page__footer-follow {
-  color: inherit;
-  ul {
-    margin: 0;
-    padding: 0;
-    list-style-type: none;
-  }
+.site-footer__grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5em 3.5em;
+}
+
+.site-footer__col {
+  flex: 0 0 auto;
+  min-width: 7.5em;
+}
+
+.site-footer__heading {
+  margin: 0 0 0.5em;
+  font-size: 0.8em;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  opacity: 0.55;
+}
+
+.site-footer__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
 
   li {
-    display: inline-block;
-    padding-top: 5px;
-    padding-bottom: 5px;
-    font-family: $sans-serif-narrow;
-    font-size: $type-size-6;
-    text-transform: uppercase;
+    margin: 0 0 0.3em;
   }
 
-  li + li:before {
-    content: "";
-    padding-right: 5px;
+  i {
+    margin-right: 0.35em;
+    opacity: 0.7;
+  }
+}
+
+.site-footer__colophon {
+  position: relative;
+  flex: 1 1 16em;
+  min-width: 14em;
+  max-width: 34em;
+  /* keep the text clear of the glider in the top-right corner */
+  padding-right: 2.5em;
+
+  p {
+    margin: 0 0 0.5em;
+  }
+}
+
+.site-footer__sep {
+  margin: 0 0.35em;
+  opacity: 0.5;
+}
+
+.site-footer__copyright {
+  opacity: 0.7;
+}
+
+.site-footer__glider {
+  position: absolute;
+  top: 0.2em;
+  right: 0;
+  width: 17px;
+  height: 17px;
+  color: inherit;
+  opacity: 0.3;
+}
+
+@media (max-width: 600px) {
+  .site-footer__grid {
+    display: block;
   }
 
-  a {
-    padding-right: 10px;
-    font-weight: bold;
+  .site-footer__col {
+    min-width: 0;
+    margin-bottom: 1.5em;
+  }
+
+  .site-footer__colophon {
+    max-width: none;
+    margin-bottom: 0;
   }
 }

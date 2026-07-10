@@ -8,6 +8,7 @@ redirect_from:
   - /XBD/
   - /creating-XBD/
 date: 2019-06-01
+math: true
 venue_short: "CVPR Workshops '19"
 venue: "IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) Workshops"
 type: "Publication"

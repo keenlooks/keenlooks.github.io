@@ -284,33 +284,51 @@
     return c;
   }
   async function encodeToTarget(src, type, targetBytes) {
+    /* toBlob can return null (not throw) when the canvas is too big for the
+       browser to encode — guard every result so one null doesn't crash the
+       search or clobber an earlier usable blob. */
     var scale = 1, best = null;
     for (var attempt = 0; attempt < 7; attempt++) {
       var c = scaledCanvas(src, scale);
       if (type === 'image/png') {
-        best = await toBlob(c, type);                 /* png: quality not adjustable → downscale only */
-        if (best.size <= targetBytes) return best;
+        var p = await toBlob(c, type);                /* png: quality not adjustable → downscale only */
+        if (p) { best = p; if (p.size <= targetBytes) return p; }
       } else {
         var lo = 0.25, hi = 0.95, b = await toBlob(c, type, hi);
-        if (b.size <= targetBytes) return b;
-        for (var it = 0; it < 8; it++) { var mid = (lo + hi) / 2; b = await toBlob(c, type, mid); if (b.size <= targetBytes) { best = b; lo = mid; } else hi = mid; }
-        if (best && best.size <= targetBytes) return best;
+        if (b && b.size <= targetBytes) return b;
+        if (b) {
+          for (var it = 0; it < 8; it++) { var mid = (lo + hi) / 2; b = await toBlob(c, type, mid); if (b && b.size <= targetBytes) { best = b; lo = mid; } else hi = mid; }
+          if (best && best.size <= targetBytes) return best;
+        }
       }
       scale *= 0.8;
     }
     return best;
   }
   async function buildExport() {
-    var src = exportSource(), type = typeStr(), blob;
-    if (elMode.value === 'target') blob = await encodeToTarget(src, type, (+elTarget.value) * 1024);
-    else blob = await toBlob(src, type, type === 'image/png' ? undefined : +elQual.value);
-    return { blob: blob, w: src.width, h: src.height };
+    var src = exportSource(), type = typeStr(), blob, encodeFailed = false;
+    if (elMode.value === 'target') {
+      blob = await encodeToTarget(src, type, (+elTarget.value) * 1024);
+      /* Distinguish "couldn't reach the target size" from "the browser refused
+         to encode this canvas at all" (typically an image beyond canvas limits):
+         if a plain encode of the export canvas also yields null, it's the latter. */
+      if (!blob) encodeFailed = (await toBlob(src, type, type === 'image/png' ? undefined : 0.8)) === null;
+    } else {
+      blob = await toBlob(src, type, type === 'image/png' ? undefined : +elQual.value);
+      encodeFailed = !blob;
+    }
+    return { blob: blob, w: src.width, h: src.height, encodeFailed: encodeFailed };
   }
   id('it-download').addEventListener('click', async function () {
     if (!loaded) return;
     var st = id('it-status'); st.textContent = 'Encoding…';
     var r = await buildExport();
-    if (!r.blob) { st.textContent = 'Could not reach that size even at lowest quality.'; return; }
+    if (!r.blob) {
+      st.textContent = r.encodeFailed
+        ? 'This image is too large for your browser to re-encode. Try the max-dimension setting in Advanced first.'
+        : 'Could not reach that size even at lowest quality.';
+      return;
+    }
     var ext = elFmt.value === 'png' ? 'png' : elFmt.value === 'webp' ? 'webp' : 'jpg';
     downloadBlob(r.blob, 'image-' + r.w + 'x' + r.h + '.' + ext);
     st.textContent = 'Saved ' + r.w + '×' + r.h + ' · ' + fmtBytes(r.blob.size) + ' (metadata stripped).';

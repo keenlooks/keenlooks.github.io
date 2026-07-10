@@ -15,6 +15,7 @@ description: "An interactive SHA-256 avalanche-effect visualizer by Keane Lucas:
   <div class="hash-panel" id="hash-panel">
     <div class="hash-panel__head">
       <span class="hash-panel__title">Hash Avalanche</span>
+      <button id="hash-help" class="gadget-help" type="button" aria-label="Show hint" title="Show hint">?</button>
       <button id="hash-collapse" class="hash-collapse" type="button" aria-label="Hide / show controls" title="Hide / show controls">&ndash;</button>
     </div>
     <div class="hash-panel__body" id="hash-panel-body">
@@ -147,4 +148,5 @@ html[data-theme="light"] .hash-view--on { background: #34568a; border-color: #34
 .hash-hint { margin: 0; font-size: 0.82em; opacity: 0.7; }
 </style>
 
+<script defer src="{{ '/assets/js/gadget-ui.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/hash.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>

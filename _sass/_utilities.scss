@@ -65,18 +65,48 @@ body:hover .visually-hidden button {
    Skip links
    ========================================================================== */
 
+/* "Skip to content" — the first focusable element on every page (see
+   _layouts/default.html). Visually hidden until it receives keyboard focus,
+   then shown as a small accent pill in the top-left. The muted navy reads
+   fine with white text on both the dark and light themes. */
+
 .skip-link {
   position: fixed;
-  z-index: 20;
+  top: 0;
+  left: 0;
+  z-index: 1100; /* above the masthead (20) and the floating buttons (1000) */
+  width: 1px;
+  height: 1px;
   margin: 0;
-  font-family: $sans-serif;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
   white-space: nowrap;
+  font-family: $sans-serif;
 }
 
-.skip-link li {
-  height: 0;
-  width: 0;
-  list-style: none;
+.skip-link:focus {
+  top: 0.75rem;
+  left: 0.75rem;
+  width: auto;
+  height: auto;
+  padding: 0.5em 1em;
+  overflow: visible;
+  clip: auto;
+  clip-path: none;
+  background: #34568a;
+  color: #fff;
+  border-radius: 4px;
+  text-decoration: none;
+}
+
+/* The skip link's target (#main, given tabindex="-1" by head/custom.html) is
+   not sequentially focusable, so it doesn't need a ring of its own — and a
+   2px ring around the whole content column would be jarring. */
+
+#main:focus {
+  outline: 0;
 }
 
 

@@ -1,0 +1,143 @@
+# Site CI: build the site the way GitHub Pages does, then run quality checks
+# against the built output.
+#
+# Jobs:
+#   build-and-check  Builds with JEKYLL_ENV=production inside a ruby:2.7
+#                    container (the same toolchain GitHub Pages and the local
+#                    docker-compose preview use) and uploads _site as an
+#                    artifact. Production mode matters: it activates the HTML
+#                    compression that has repeatedly broken inline scripts
+#                    containing // comments (see CLAUDE.md gotcha #1).
+#   check            Static checks on the built HTML: every inline <script>
+#                    must parse (node --check), and every internal href/src
+#                    must resolve to a file in _site. Scripts live in ci/.
+#   smoke            Serves _site and opens the main pages in headless
+#                    Chromium, failing on any uncaught page error.
+#
+# Why the node-based checks run in separate ubuntu-latest jobs instead of
+# inside the ruby:2.7 container: that image is an end-of-life Debian whose
+# apt-provided nodejs is v12, far too old for Playwright or modern Node
+# scripts, and bolting a current Node onto an EOL container is brittle.
+# Handing _site off as an artifact to ubuntu-latest jobs that use
+# actions/setup-node is the more reliable approach.
+
+name: Site CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: site-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-check:
+    name: Build site (production, ruby 2.7)
+    runs-on: ubuntu-latest
+    container: ruby:2.7
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache gems
+        uses: actions/cache@v4
+        with:
+          path: vendor/bundle
+          key: bundle-ruby2.7-${{ hashFiles('Gemfile', 'Gemfile.docker') }}
+          restore-keys: |
+            bundle-ruby2.7-
+
+      # BUNDLE_GEMFILE=Gemfile.docker reuses the real Gemfile (it
+      # eval_gemfile's it) and only adds the Ruby-2.7 pins for ffi and
+      # eventmachine, exactly like the local docker-compose preview.
+      # vendor/ is in _config.yml's exclude list, so BUNDLE_PATH=vendor/bundle
+      # cannot leak into the built site.
+      - name: Install gems
+        env:
+          BUNDLE_GEMFILE: Gemfile.docker
+          BUNDLE_PATH: vendor/bundle
+          BUNDLE_JOBS: "4"
+        run: bundle install
+
+      # ci/_config.ci.yml only empties site.url so the build is
+      # self-contained and root-relative (same trick as _config.docker.yml).
+      # Without it, every asset URL points at the live https://keanelucas.com
+      # and the smoke test would exercise the deployed site, not this build.
+      # JEKYLL_GITHUB_TOKEN keeps jekyll-github-metadata (pulled in by the
+      # github-pages gem) from making unauthenticated, rate-limited API calls.
+      - name: Build site (JEKYLL_ENV=production)
+        env:
+          JEKYLL_ENV: production
+          BUNDLE_GEMFILE: Gemfile.docker
+          BUNDLE_PATH: vendor/bundle
+          JEKYLL_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PAGES_REPO_NWO: ${{ github.repository }}
+        run: bundle exec jekyll build --config _config.yml,ci/_config.ci.yml --destination _site --trace
+
+      - name: Upload built site
+        uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: _site
+          include-hidden-files: true
+          if-no-files-found: error
+
+  check:
+    name: Inline scripts + internal links
+    runs-on: ubuntu-latest
+    needs: build-and-check
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download built site
+        uses: actions/download-artifact@v4
+        with:
+          name: site
+          path: _site
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check inline scripts parse (catches the //-comment compression bug)
+        run: node ci/check-inline-scripts.js _site
+
+      - name: Check internal links resolve
+        if: success() || failure()
+        run: node ci/check-links.js _site
+
+  smoke:
+    name: Browser smoke test
+    runs-on: ubuntu-latest
+    needs: build-and-check
+    continue-on-error: false
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download built site
+        uses: actions/download-artifact@v4
+        with:
+          name: site
+          path: _site
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # --omit=dev keeps npm from also installing the theme's decade-old
+      # package.json devDependencies (uglify-js 2 etc.), which are unrelated
+      # to the smoke test.
+      - name: Install Playwright and a static server
+        run: |
+          npm i --no-save --omit=dev playwright http-server
+          npx playwright install --with-deps chromium
+
+      - name: Open every page in ci/pages.json, fail on uncaught errors
+        run: node ci/smoke.js _site

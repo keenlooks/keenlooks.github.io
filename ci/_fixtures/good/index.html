@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Good fixture</title>
+<link rel="stylesheet" href="/assets/css/main.css?v=1751400000">
+<script type="application/ld+json">{"@context":"https://schema.org","this is": "not JS and must be skipped",,,}</script>
+<script src="/assets/js/app.js?v=1751400000"></script>
+<script>/* compressed to one line, block comments survive it */(function(){var t=null;try{t=localStorage.getItem('theme');}catch(e){}if(t){document.documentElement.setAttribute('data-theme',t);}})();</script>
+</head><body>
+<p>Links that must all resolve:
+<a href="/about/">about (dir with index.html)</a>
+<a href="about/">about (relative)</a>
+<a href="/page">extensionless (page.html)</a>
+<a href="https://keanelucas.com/about/">absolute on own domain</a>
+<a href="https://example.com/external">external, ignored</a>
+<a href="mailto:someone@example.com">mailto, ignored</a>
+<a href="#section">fragment, ignored</a>
+</p>
+<script>var el=document.createElement('script');el.src='/assets/js/'+String('app')+'.js';/* JS string, link checker must NOT treat the partial path as a document reference */</script>
+</body></html>

@@ -394,9 +394,18 @@
   if (elWind) elWind.addEventListener('input', function () { wind = +elWind.value; if (elWindV) elWindV.textContent = fmtWind(wind); });
   if (elPad) elPad.addEventListener('input', function () { padX = +elPad.value / 100; if (elPadV) elPadV.textContent = (padX).toFixed(2); });
   if (btnReset) btnReset.addEventListener('click', reset);
-  if (elAuto) elAuto.addEventListener('change', function () { autopilot = elAuto.checked; });
+  if (elAuto) elAuto.addEventListener('change', function () { autopilot = elAuto.checked; updateTouchControls(); });
   if (elBrain) elBrain.addEventListener('change', function () { showBrain = elBrain.checked; });
-  if (elCollapse && elPanel) { elCollapse.addEventListener('click', function () { elPanel.classList.toggle('land-panel--collapsed'); }); if (window.innerWidth < 600) elPanel.classList.add('land-panel--collapsed'); }
+
+  /* panel collapse + first-run hint (shared helper) */
+  if (window.GadgetUI) {
+    var frHint = GadgetUI.firstRunHint('lander', 'Fling the rocket and watch it recover.');
+    GadgetUI.initPanel({
+      panel: elPanel, toggle: elCollapse,
+      collapsedClass: 'land-panel--collapsed',
+      help: id('land-help'), hint: frHint
+    });
+  }
 
   /* manual flight (when autopilot off): track which keys are held so releasing one
      (e.g. a spin key) doesn't cut thrust that's still held. Thrust takes priority. */
@@ -411,8 +420,63 @@
     if (autopilot) return;
     action = held.up ? 2 : held.left ? 3 : held.right ? 1 : 0;   /* left → nose left (3), right → nose right (1) */
   }
-  window.addEventListener('keydown', function (e) { var s = keySlot(e.key); if (s) { held[s] = true; recomputeAction(); } });
+  window.addEventListener('keydown', function (e) {
+    if (window.GadgetUI && GadgetUI.isTyping(e)) return;   /* don't steer while typing a slider value */
+    var s = keySlot(e.key); if (s) { held[s] = true; recomputeAction(); }
+  });
   window.addEventListener('keyup', function (e) { var s = keySlot(e.key); if (s) { held[s] = false; recomputeAction(); } });
+
+  /* ---- on-screen touch controls: manual flight on coarse-pointer devices ----
+     Three translucent buttons bottom-center (rotate left / thrust / rotate right)
+     driving the same held-key flags as the arrow keys. Shown only when autopilot
+     is OFF and the primary pointer is coarse. Sits at bottom:4.8rem so it clears
+     the mobile full-width chat bar and the bottom-left back/theme buttons. */
+  var touchWrap = null;
+  var coarse = window.matchMedia ? window.matchMedia('(pointer: coarse)') : null;
+  function buildTouchControls() {
+    if (touchWrap) return;
+    var st = document.createElement('style');
+    st.textContent = '.land-touch{position:fixed;left:50%;bottom:4.8rem;transform:translateX(-50%);' +
+      'display:flex;gap:16px;z-index:25;}' +
+      '.land-touch button{width:56px;height:56px;border-radius:50%;padding:0;cursor:pointer;' +
+      'border:1px solid rgba(127,127,127,0.45);background:rgba(127,127,127,0.18);color:inherit;' +
+      'touch-action:none;-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px);' +
+      'display:flex;align-items:center;justify-content:center;-webkit-user-select:none;user-select:none;}' +
+      '.land-touch button:active{background:rgba(127,127,127,0.38);}' +
+      '.land-touch svg{width:26px;height:26px;display:block;}';
+    document.head.appendChild(st);
+    touchWrap = document.createElement('div');
+    touchWrap.className = 'land-touch';
+    touchWrap.style.display = 'none';
+    function mk(slot, aria, path) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.setAttribute('aria-label', aria);
+      b.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + path + '</svg>';
+      b.addEventListener('pointerdown', function (e) { e.preventDefault(); held[slot] = true; recomputeAction(); });
+      function release() { held[slot] = false; recomputeAction(); }
+      b.addEventListener('pointerup', release);
+      b.addEventListener('pointercancel', release);
+      b.addEventListener('pointerleave', release);
+      b.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+      touchWrap.appendChild(b);
+    }
+    mk('left', 'Rotate left', '<path d="M19 12H6"/><path d="M11 6l-6 6 6 6"/>');
+    mk('up', 'Thrust', '<path d="M12 19V5"/><path d="M6 11l6-6 6 6"/>');
+    mk('right', 'Rotate right', '<path d="M5 12h13"/><path d="M13 6l6 6-6 6"/>');
+    document.body.appendChild(touchWrap);
+  }
+  function updateTouchControls() {
+    var want = !autopilot && coarse && coarse.matches;
+    if (want) buildTouchControls();
+    if (touchWrap) touchWrap.style.display = want ? 'flex' : 'none';
+    if (!want) { held.up = held.left = held.right = false; recomputeAction(); }
+  }
+  if (coarse) {
+    if (coarse.addEventListener) coarse.addEventListener('change', updateTouchControls);
+    else if (coarse.addListener) coarse.addListener(updateTouchControls);
+  }
+  updateTouchControls();
 
   var rt; window.addEventListener('resize', function () { clearTimeout(rt); rt = setTimeout(resize, 150); });
   document.addEventListener('visibilitychange', function () { if (document.hidden) { if (raf) { cancelAnimationFrame(raf); raf = null; } } else start(); });

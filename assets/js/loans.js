@@ -389,6 +389,57 @@
     refresh();
   });
 
+  // ---- share link + PNG snapshot (shared codec in share-hash.js) ----------
+  var SH = window.ShareHash;
+  var btnShare = id('loan-share'), btnSnap = id('loan-snap');
+  function shareState() {
+    var o = {
+      p: s.principal, r: Math.round(s.apr * 1000) / 10, y: s.years,
+      e: s.extra, sy: s.startYear,
+      l: s.lumps.map(function (l) { return [l.month, Math.round(l.amount)]; })
+    };
+    if (s.startYearCal != null) o.c = s.startYearCal;
+    return o;
+  }
+  // Restore a shared scenario from the URL hash. The hash is untrusted input:
+  // every field is clamped to the slider ranges / sane bounds.
+  function applyShared() {
+    var d = SH.decode(SH.readHash());
+    if (!d || d.version !== 1) return false;
+    var o = d.obj;
+    s.principal = SH.int(o.p, 1000, 100000, DEF.principal);
+    s.apr = SH.num(o.r, 0, 12, DEF.apr * 100) / 100;
+    s.years = SH.int(o.y, 2, 30, DEF.years);
+    s.extra = SH.int(o.e, 0, 1000, DEF.extra);
+    s.startYear = SH.int(o.sy, 0, s.years, DEF.startYear);
+    s.startYearCal = (o.c == null) ? null : SH.int(o.c, 1000, 9999, null);
+    s.lumps = [];
+    var la = SH.arr(o.l, 120);
+    for (var i = 0; i < la.length; i++) {
+      var it = la[i];
+      if (!Array.isArray(it)) continue;
+      var m = SH.int(it[0], 1, s.years * 12, 0), a = SH.num(it[1], 1, 1e7, 0);
+      if (m >= 1 && a > 0) s.lumps.push({ month: m, amount: a });
+    }
+    if (elP) elP.value = s.principal;
+    if (elR) elR.value = s.apr * 100;
+    if (elY) elY.value = s.years;
+    if (elE) elE.value = s.extra;
+    syncStartMax();
+    if (elS) elS.value = s.startYear;
+    return true;
+  }
+  if (btnShare && SH) btnShare.addEventListener('click', function () {
+    SH.copyLink(btnShare, SH.encode(1, shareState()));
+  });
+  if (btnSnap && SH) btnSnap.addEventListener('click', function () {
+    update();   // this chart renders on demand: force a fresh frame first
+    SH.savePng(canvas, {
+      label: 'Loan payoff', file: 'loan-payoff.png',
+      light: effectiveTheme() === 'light'
+    });
+  });
+
   // ---- theme + resize ----------------------------------------------------
   var mo = new MutationObserver(update);
   mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
@@ -401,5 +452,6 @@
   // ---- init --------------------------------------------------------------
   syncStartMax();
   resize();
+  if (SH) applyShared();   // a shared scenario in the URL replaces the defaults
   refresh();
 })();

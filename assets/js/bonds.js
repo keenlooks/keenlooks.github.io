@@ -355,6 +355,63 @@
     setRate(DEF.rate, true);
   });
 
+  // ---- share link + PNG snapshot (shared codec in share-hash.js) ----------
+  var SH = window.ShareHash;
+  var btnShare = id('bond-share'), btnSnap = id('bond-snap');
+  function shareState() {
+    var o = {
+      m: s.view === 'coupon' ? 1 : 0, r: Math.round(s.rate * 1000) / 10,
+      y: s.years, x: s.curve === 'exp' ? 1 : 0,
+      f: s.face, cr: Math.round(s.coupon * 1000) / 10
+    };
+    if (s.view === 'coupon') o.po = s.payouts.map(function (p) { return [Math.round(p.t * 10) / 10, Math.round(p.amt)]; });
+    if (s.startYearCal != null) o.c = s.startYearCal;
+    return o;
+  }
+  // Restore a shared bond from the URL hash (untrusted: clamp every field).
+  function applyShared() {
+    var d = SH.decode(SH.readHash());
+    if (!d || d.version !== 1) return false;
+    var o = d.obj;
+    s.years = SH.int(o.y, 1, 30, DEF.years);
+    s.curve = o.x ? 'exp' : 'linear';
+    s.face = SH.int(o.f, 100, 10000, DEF.face);
+    s.coupon = SH.num(o.cr, 0, 12, DEF.coupon * 100) / 100;
+    s.startYearCal = (o.c == null) ? null : SH.int(o.c, 1000, 9999, null);
+    s.rate = SH.num(o.r, 0, 12, DEF.rate * 100) / 100;
+    var view = o.m ? 'coupon' : 'single';
+    if (view === 'coupon') {
+      s.payouts = [];
+      var pa = SH.arr(o.po, 100);
+      for (var i = 0; i < pa.length; i++) {
+        var it = pa[i];
+        if (!Array.isArray(it)) continue;
+        var t = SH.num(it[0], 0.1, s.years, 0), a = SH.num(it[1], 1, 1e7, 0);
+        if (t >= 0.1 && a > 0) s.payouts.push({ t: Math.round(t * 10) / 10, amt: a });
+      }
+      if (!s.payouts.length) rebuildStandard();
+    }
+    if (yearsInput) yearsInput.value = s.years;
+    if (curveToggle) curveToggle.checked = s.curve === 'exp';
+    if (faceInput) faceInput.value = s.face;
+    if (couponInput) couponInput.value = s.coupon * 100;
+    if (rSingle) rSingle.checked = view === 'single';
+    if (rCoupon) rCoupon.checked = view === 'coupon';
+    displayRate = s.rate;
+    setView(view);   // shows/hides the coupon controls and draws
+    return true;
+  }
+  if (btnShare && SH) btnShare.addEventListener('click', function () {
+    SH.copyLink(btnShare, SH.encode(1, shareState()));
+  });
+  if (btnSnap && SH) btnSnap.addEventListener('click', function () {
+    jumpToRate();   // settle any rate animation and force a fresh render
+    SH.savePng(canvas, {
+      label: 'Bond pricing', file: 'bond-pricing.png',
+      light: effectiveTheme() === 'light'
+    });
+  });
+
   // ---- theme + resize ----------------------------------------------------
   var mo = new MutationObserver(function () { draw(); });
   mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
@@ -365,5 +422,5 @@
   // ---- init --------------------------------------------------------------
   rebuildStandard();
   resize();
-  draw();
+  if (!(SH && applyShared())) draw();   // a shared bond in the URL replaces the defaults
 })();

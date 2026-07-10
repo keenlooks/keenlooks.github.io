@@ -23,7 +23,9 @@
   var survive = { 2: true, 3: true };
 
   var worldCols = 0, worldRows = 0, grid = null, next = null, dpr = 1;
-  var running = true, raf = null, lastStep = 0;
+  var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var running = !reduced;   /* reduced motion: start PAUSED with the soup drawn; Play still works */
+  var raf = null, lastStep = 0;
 
   function cellColor() {
     // Monochrome, but a gentler contrast than the body text so it's easy on the eyes.
@@ -171,6 +173,7 @@
   var playBtn = document.getElementById('life-play');
   function setRunning(v) { running = v; playBtn.textContent = running ? 'Pause' : 'Play'; }
   playBtn.addEventListener('click', function () { setRunning(!running); });
+  setRunning(running);   /* normalize the button label (reduced motion starts paused) */
   document.getElementById('life-rand').addEventListener('click', randomize);
   document.getElementById('life-clear').addEventListener('click', function () { clearBoard(); setRunning(false); });
   document.getElementById('life-step').addEventListener('click', function () { setRunning(false); step(); draw(); });
@@ -346,20 +349,27 @@
     return true;
   }
 
-  /* collapse / expand the controls (starts collapsed on small screens) */
-  var collapseBtn = document.getElementById('life-collapse');
-  var panel = document.getElementById('life-panel');
-  if (collapseBtn && panel) {
-    function setCollapsed(c) {
-      panel.classList.toggle('life-panel--collapsed', c);
-      collapseBtn.textContent = c ? '+' : '–';
-      collapseBtn.setAttribute('aria-label', c ? 'Show controls' : 'Hide controls');
-    }
-    collapseBtn.addEventListener('click', function () {
-      setCollapsed(!panel.classList.contains('life-panel--collapsed'));
+  /* collapse / expand the controls + first-run hint (shared helper) */
+  if (window.GadgetUI) {
+    var hint = GadgetUI.firstRunHint('life', 'Draw on the grid, then press play.');
+    GadgetUI.initPanel({
+      panel: 'life-panel', toggle: 'life-collapse',
+      collapsedClass: 'life-panel--collapsed',
+      help: 'life-help', hint: hint
     });
-    if (window.innerWidth < 600) setCollapsed(true);
   }
+
+  /* keyboard: Space = pause/resume, R = new random soup (ignored while typing) */
+  window.addEventListener('keydown', function (e) {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (window.GadgetUI && GadgetUI.isTyping(e)) return;
+    if (e.key === ' ') {
+      /* a focused button already activates on Space — don't double-toggle */
+      if (e.target && (e.target.tagName || '').toLowerCase() === 'button') return;
+      e.preventDefault(); setRunning(!running);
+    }
+    else if (e.key === 'r' || e.key === 'R') randomize();
+  });
 
   /* recolor cells when the site theme changes */
   try {

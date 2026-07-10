@@ -36,8 +36,8 @@ Highlighted Experience
 
 * Deep Learning Researcher at Department of Defense (DoD) Research Directorate (RD)
   * Spring 2017 to Fall 2019
-  * Customizes dense neural nets, recurrent neural nets, generative adversarial networks, and reinforcement learning networks to aid in solving Intelligence Community (IC) problems. Attended NeurIPS and other AI related conferences.
-  * Author on technical paper in final stages. The work has been presented at internal conferences and is being pushed into production as a pathfinding use case to justify deep learning analytics.
+  * Customized dense neural nets, recurrent neural nets, generative adversarial networks, and reinforcement learning networks to aid in solving Intelligence Community (IC) problems. Attended NeurIPS and other AI related conferences.
+  * Authored a technical paper presented at internal conferences; the work was pushed into production as a pathfinding use case for deep learning analytics.
 
 * Machine Learning Researcher at Center for Communications Research La Jolla
   * Summer 2018
@@ -93,7 +93,7 @@ Service and Leadership
   * Led a Flight consisting of 70+ airmen across 4+ directorates in research, capabilities, and IT support
 
 * President, Graduate Organization Information Networking Institute, Carnegie Mellon University
-  * , Fall 2015 to Spring 2016
+  * Fall 2015 to Spring 2016
   * Led graduate organization comprising ~200 students from ~15 countries and served as a dept strategic board member
 
 * Commander, US Air Force Academy Cyber Defense Exercise

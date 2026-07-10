@@ -15,6 +15,7 @@ description: "An interactive epidemic simulator by Keane Lucas: every cell is a 
   <div class="epi-panel" id="epi-panel">
     <div class="epi-panel__head">
       <span class="epi-panel__title">Epidemic</span>
+      <button id="epi-help" class="gadget-help" type="button" aria-label="Show hint" title="Show hint">?</button>
       <button id="epi-collapse" class="epi-collapse" type="button" aria-label="Hide / show controls" title="Hide / show controls">&ndash;</button>
     </div>
     <div class="epi-panel__body" id="epi-panel-body">
@@ -34,15 +35,20 @@ description: "An interactive epidemic simulator by Keane Lucas: every cell is a 
       <label class="epi-slider"><span>Vaccinated: <strong id="epi-vax-val" class="editable-val" data-range="epi-vax">0%</strong></span>
         <input id="epi-vax" type="range" min="0" max="95" step="5" value="0"></label>
 
+      <p class="epi-r0" id="epi-r0"></p>
+
       <div class="epi-modes">
         <span class="epi-modes__label">Click to:</span>
         <button class="epi-mode epi-mode--on" data-mode="infect" type="button">Infect</button>
         <button class="epi-mode" data-mode="vaccinate" type="button">Vaccinate</button>
+        <button class="epi-mode" data-mode="erase" type="button" title="Paint cells back to plain susceptible (a mouse can also right-drag)">Erase</button>
       </div>
 
       <div class="epi-row">
         <button id="epi-pause" class="epi-btn" type="button">Pause</button>
         <button id="epi-restart" class="epi-btn" type="button">Restart</button>
+        <button id="epi-share" class="epi-btn" type="button" title="Copy a link with these exact settings">Share</button>
+        <button id="epi-snap" class="epi-btn" type="button" title="Download the grid as a PNG">Save image</button>
       </div>
 
       <p class="epi-status-line"><span id="epi-status"></span></p>
@@ -130,6 +136,7 @@ html[data-theme="light"] .epi-mode--on { background: #34568a; border-color: #345
   html:not([data-theme="dark"]) .epi-mode--on { background: #34568a; border-color: #34568a; }
 }
 .epi-status-line { margin: 0; font-size: 0.85em; opacity: 0.75; font-variant-numeric: tabular-nums; min-height: 1.2em; }
+.epi-r0 { margin: 0; font-size: 0.82em; opacity: 0.75; font-variant-numeric: tabular-nums; }
 
 html[data-theme="light"] .epi-slider input[type="range"] { accent-color: #34568a; }
 @media (prefers-color-scheme: light) {
@@ -137,5 +144,7 @@ html[data-theme="light"] .epi-slider input[type="range"] { accent-color: #34568a
 }
 </style>
 
+<script defer src="{{ '/assets/js/gadget-ui.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
+<script defer src="{{ '/assets/js/share-hash.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/epidemic.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/editable-values.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>

@@ -36,8 +36,10 @@
   var newStrength = 3, lineCount = 12, showFilings = false, dynamics = true;
   var MAX = 14, RED = '#e0564a', BLUE = '#4a7be0';
   var W = 0, H = 0, dpr = 1, raf = null;
-  var pointers = {}, gesture = null;   // gesture: {mode:'move'|'rotate', idx, ox, oy}
+  var pointers = {}, gesture = null;   // gesture: {mode:'move'|'rotate', idx, ox, oy, created}
   var filings = [];
+  var selectedMag = null, tap = null;  // tap-to-select (touch parity for the strength wheel)
+  var chipWrap = null;                 // floating "+ / −" strength chips near the selected magnet
 
   function effectiveTheme() {
     var f = document.documentElement.getAttribute('data-theme');
@@ -222,10 +224,53 @@
     if (lineCount > 0) drawLines();
     if (showFilings) drawFilings();
     for (var i = 0; i < magnets.length; i++) drawMagnet(magnets[i]);
+    if (selectedMag && magnets.indexOf(selectedMag) >= 0) {   // selection ring (tap-to-select)
+      ctx.beginPath(); ctx.arc(selectedMag.x, selectedMag.y, halfLen(selectedMag) + 10, 0, 6.2832);
+      ctx.strokeStyle = lineColor(0.85); ctx.lineWidth = 1.6; ctx.stroke();
+    }
     if (compass.show) drawCompass();
     if (status) status.textContent = magnets.length + (magnets.length === 1 ? ' magnet' : ' magnets');
   }
-  function loop() { raf = requestAnimationFrame(loop); physics(); updateCompass(); draw(); }
+
+  /* ---- tap-to-select strength chips: a touch-friendly stand-in for the wheel ---- */
+  function ensureChips() {
+    if (chipWrap) return;
+    var st = document.createElement('style');
+    st.textContent = '.mag-chips{position:fixed;z-index:25;display:flex;gap:8px;}' +
+      '.mag-chips button{font:600 1.05rem/1 "Source Sans 3",system-ui,sans-serif;width:34px;height:34px;' +
+      'border-radius:50%;border:1px solid rgba(127,127,127,0.5);background:rgba(127,127,127,0.28);' +
+      'color:inherit;cursor:pointer;padding:0;-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px);}';
+    document.head.appendChild(st);
+    chipWrap = document.createElement('div');
+    chipWrap.className = 'mag-chips';
+    chipWrap.style.display = 'none';
+    function mk(label, aria, delta) {
+      var b = document.createElement('button');
+      b.type = 'button'; b.textContent = label; b.setAttribute('aria-label', aria);
+      b.addEventListener('click', function () {
+        if (!selectedMag) return;
+        selectedMag.strength = Math.max(1, Math.min(9, selectedMag.strength + delta));  // same step + clamp as the wheel
+      });
+      chipWrap.appendChild(b);
+    }
+    mk('−', 'Weaken this magnet', -0.5);
+    mk('+', 'Strengthen this magnet', 0.5);
+    document.body.appendChild(chipWrap);
+  }
+  function updateChips() {
+    if (selectedMag && magnets.indexOf(selectedMag) < 0) selectedMag = null;   // deleted or merged away
+    if (!selectedMag) { if (chipWrap) chipWrap.style.display = 'none'; return; }
+    ensureChips();
+    var m = selectedMag, off = halfLen(m) + 16;
+    var cx = Math.min(Math.max(m.x - 38, 6), W - 86);        // canvas is full-viewport, so canvas coords = client coords
+    var cy = m.y - off - 36;
+    if (cy < 6) cy = Math.min(H - 42, m.y + off + 8);        // no room above → sit below
+    chipWrap.style.display = 'flex';
+    chipWrap.style.left = Math.round(cx) + 'px';
+    chipWrap.style.top = Math.round(cy) + 'px';
+  }
+
+  function loop() { raf = requestAnimationFrame(loop); physics(); updateCompass(); updateChips(); draw(); }
   function start() { if (!raf) raf = requestAnimationFrame(loop); }
 
   // ---- interaction -------------------------------------------------------
@@ -240,6 +285,7 @@
     // the compass is on top: grab it before anything else (left button only)
     if (compass.show && e.button !== 2 && Math.hypot(p.x - compass.x, p.y - compass.y) <= compass.R + 6) {
       gesture = { mode: 'compass', ox: p.x - compass.x, oy: p.y - compass.y };
+      tap = null;
       e.preventDefault(); return;
     }
     var i = magnetAt(p.x, p.y);
@@ -249,15 +295,20 @@
       if (d < halfLen(m) * 0.55) gesture = { mode: 'move', idx: i, ox: p.x - m.x, oy: p.y - m.y };
       else gesture = { mode: 'rotate', idx: i };
       m.vx = m.vy = m.va = 0;
+      tap = { mag: m, x: p.x, y: p.y, moved: false };      // a clean tap (no drag) selects it
     } else if (magnets.length < MAX) {
       magnets.push({ x: p.x, y: p.y, angle: 0, strength: newStrength, vx: 0, vy: 0, va: 0 });
-      gesture = { mode: 'move', idx: magnets.length - 1, ox: 0, oy: 0 };
+      gesture = { mode: 'move', idx: magnets.length - 1, ox: 0, oy: 0, created: true };
+      selectedMag = null; tap = null;                      // background tap deselects
+    } else {
+      selectedMag = null; tap = null;                      // background tap deselects (at the magnet cap)
     }
     e.preventDefault();
   });
   canvas.addEventListener('pointermove', function (e) {
     if (!gesture) return;
     var p = rel(e);
+    if (tap && Math.hypot(p.x - tap.x, p.y - tap.y) > 6) tap.moved = true;
     if (gesture.mode === 'compass') {
       compass.x = Math.min(Math.max(p.x - gesture.ox, compass.R), W - compass.R);
       compass.y = Math.min(Math.max(p.y - gesture.oy, compass.R), H - compass.R);
@@ -268,9 +319,16 @@
     else { m.angle = Math.atan2(p.y - m.y, p.x - m.x); }
     m.vx = m.vy = m.va = 0;
   });
-  function endP(e) { delete pointers[e.pointerId]; gesture = null; }
+  function endP(e) {
+    delete pointers[e.pointerId];
+    gesture = null;
+    if (tap) {                        // tap without a drag → toggle selection (shows the +/− chips)
+      if (!tap.moved && magnets.indexOf(tap.mag) >= 0) selectedMag = (selectedMag === tap.mag) ? null : tap.mag;
+      tap = null;
+    }
+  }
   canvas.addEventListener('pointerup', endP);
-  canvas.addEventListener('pointercancel', endP);
+  canvas.addEventListener('pointercancel', function (e) { delete pointers[e.pointerId]; gesture = null; tap = null; });
   canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
   canvas.addEventListener('wheel', function (e) {
     var p = rel(e), i = magnetAt(p.x, p.y);
@@ -284,7 +342,26 @@
   if (elPhysics) elPhysics.addEventListener('change', function () { dynamics = elPhysics.checked; if (!dynamics) for (var i = 0; i < magnets.length; i++) { magnets[i].vx = magnets[i].vy = magnets[i].va = 0; } });
   var elCompass = id('mag-compass');
   if (elCompass) elCompass.addEventListener('change', function () { compass.show = elCompass.checked; });
-  if (elCollapse && elPanel) elCollapse.addEventListener('click', function () { elPanel.classList.toggle('mag-panel--collapsed'); });
+
+  /* panel collapse + first-run hint (shared helper; adds the sub-600px auto-collapse) */
+  if (window.GadgetUI) {
+    var hint = GadgetUI.firstRunHint('magnets', 'Click to add a magnet, drag its ends to rotate.');
+    GadgetUI.initPanel({
+      panel: elPanel, toggle: elCollapse,
+      collapsedClass: 'mag-panel--collapsed',
+      help: id('mag-help'), hint: hint
+    });
+    /* touch parity: press-and-hold a magnet deletes it (same as right-click) */
+    GadgetUI.longPress(canvas, function (pt) {
+      if (gesture && (gesture.mode === 'compass' || gesture.created)) return;  // don't delete the compass grab or a just-placed magnet
+      var r = canvas.getBoundingClientRect();
+      var i = magnetAt(pt.clientX - r.left, pt.clientY - r.top);
+      if (i < 0) return;
+      magnets.splice(i, 1);
+      gesture = null; tap = null;
+    });
+  }
+
   if (btnClear) btnClear.addEventListener('click', function () { magnets = []; });
   if (btnPreset) btnPreset.addEventListener('click', function () {
     magnets = [];

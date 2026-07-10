@@ -14,6 +14,7 @@ description: "A full-screen, interactive Conway's Game of Life — draw cells, c
   <div class="life-panel" id="life-panel">
     <div class="life-panel__head">
       <a class="life-panel__title" href="https://en.wikipedia.org/wiki/Conway%27s_Game_of_Life" target="_blank" rel="noopener">Conway's Game of Life</a>
+      <button id="life-help" class="gadget-help" type="button" aria-label="Show hint" title="Show hint">?</button>
       <button id="life-collapse" class="life-collapse" type="button" aria-label="Collapse controls" title="Hide / show controls">&ndash;</button>
     </div>
 
@@ -185,4 +186,5 @@ html[data-theme="light"] .life-panel {
 .life-credit { margin: 0; font-size: 0.85em; opacity: 0.8; }
 </style>
 
+<script defer src="{{ '/assets/js/gadget-ui.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/life-page.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>

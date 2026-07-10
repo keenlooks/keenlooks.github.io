@@ -7,6 +7,7 @@ redirect_from:
   - /constrained-gradient-descent/
   - /constrained/
 date: 2022-07-17
+math: true
 venue_short: "ICML'22"
 venue: "Proceedings of the 39th International Conference on Machine Learning"
 type: "Publication"

@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Bad fixture</title>
+<script>(function(){var n=1; // production compression stripped the newline here, so this comment swallows the closing braces n++;})();</script>
+<script>/* this second inline script is fine and must not be flagged */(function(){var ok=true;if(ok){ok=!ok;}})();</script>
+</head><body>
+<p><a href="/missing-page/">broken link, no target in the site</a>
+<a href="/ok/">working link</a>
+<img src="images/nope.png" alt="broken relative asset"></p>
+</body></html>

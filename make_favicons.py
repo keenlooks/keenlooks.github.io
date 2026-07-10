@@ -2,14 +2,19 @@
 which is also just... space) in gold on dark navy.
 
 Writes every icon referenced by _includes/head/custom.html, images/manifest.json,
-and images/browserconfig.xml. Re-run after tweaking the design:
+and images/browserconfig.xml, plus the default Open Graph link-preview card
+(images/og/default-card.png, referenced by og_image in _config.yml).
+Re-run after tweaking the design:
 
     python make_favicons.py
 
-Requires Pillow (pip install pillow).
+Requires Pillow (pip install pillow). The OG card uses local Windows system
+fonts (Segoe UI); the rendered PNG is committed, so that is fine.
 """
 
-from PIL import Image, ImageDraw
+import os
+
+from PIL import Image, ImageDraw, ImageFont
 
 OUT = "images"
 
@@ -98,6 +103,73 @@ def render_wide(w, h):
     return img
 
 
+FONTS_BOLD = (
+    "C:/Windows/Fonts/segoeuib.ttf",
+    "C:/Windows/Fonts/arialbd.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+)
+FONTS_REGULAR = (
+    "C:/Windows/Fonts/segoeui.ttf",
+    "C:/Windows/Fonts/arial.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+)
+
+
+def load_font(candidates, size):
+    """First loadable TrueType font from `candidates` at `size` px."""
+    for path in candidates:
+        try:
+            return ImageFont.truetype(path, size)
+        except OSError:
+            continue
+    raise OSError(f"no usable font among {candidates}")
+
+
+def render_og_card(w=1200, h=630):
+    """The default Open Graph / link-preview card, in the same visual language
+    as the icons: navy gradient, gold Big Dipper low on the left, Polaris
+    sparkle upper-right, name + domain centered. Rendered at 2x, downsampled."""
+    ss = 2
+    W, H = w * ss, h * ss
+    img = Image.new("RGB", (W, H))
+    d = ImageDraw.Draw(img, "RGBA")
+
+    # Vertical gradient background (same stops as the icons).
+    for y in range(H):
+        t = y / (H - 1)
+        col = tuple(round(a + (b - a) * t) for a, b in zip(NAVY_TOP, NAVY_BOTTOM))
+        d.line([(0, y), (W, y)], fill=col)
+
+    # Big Dipper: unit-square coords mapped into a box that sits bottom-left.
+    bx, by, bw, bh = 0.03 * W, 0.42 * H, 0.62 * W, 0.62 * H
+    pts = [(bx + x * bw, by + y * bh) for x, y in DIPPER]
+    lw = max(round(0.0035 * W), 2)
+    for a, b in LINES:
+        d.line([pts[a], pts[b]], fill=GOLD_DIM, width=lw)
+    r = 0.008 * W
+    for cx, cy in pts:
+        d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=GOLD + (255,))
+
+    # Polaris upper-right: a stepped soft glow (a single flat disc reads as a
+    # hard circle at this scale) + four-point sparkle.
+    cx, cy = 0.865 * W, 0.20 * H
+    r_long = 0.030 * W
+    for mult, alpha in ((2.1, 10), (1.6, 14), (1.2, 18)):
+        rg = r_long * mult
+        d.ellipse([cx - rg, cy - rg, cx + rg, cy + rg], fill=GOLD + (alpha,))
+    d.polygon(four_point_star(cx, cy, r_long, r_long * 0.36), fill=GOLD + (255,))
+
+    # Name + domain, centered.
+    name_font = load_font(FONTS_BOLD, round(0.185 * H))
+    site_font = load_font(FONTS_REGULAR, round(0.066 * H))
+    d.text((W / 2, 0.395 * H), "Keane Lucas", font=name_font,
+           fill=(238, 241, 246), anchor="mm")
+    d.text((W / 2, 0.575 * H), "keanelucas.com", font=site_font,
+           fill=GOLD, anchor="mm")
+
+    return img.resize((w, h), Image.LANCZOS)
+
+
 def main():
     for size in (16, 32, 96):
         render(size).save(f"{OUT}/favicon-{size}x{size}.png")
@@ -109,6 +181,8 @@ def main():
         render(size).save(f"{OUT}/mstile-{size}x{size}.png")
     render_wide(310, 150).save(f"{OUT}/mstile-310x150.png")
     render(256).save(f"{OUT}/favicon.ico", sizes=[(16, 16), (32, 32), (48, 48)])
+    os.makedirs(f"{OUT}/og", exist_ok=True)
+    render_og_card().save(f"{OUT}/og/default-card.png", optimize=True)
     print("done")
 
 

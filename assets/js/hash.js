@@ -123,12 +123,17 @@
   function textColor(a) { return effectiveTheme() === 'light' ? 'rgba(38,38,38,' + a + ')' : 'rgba(214,214,214,' + a + ')'; }
 
   function resize() {
+    var ow = W, oh = H;
     dpr = Math.min(window.devicePixelRatio || 1, 2);
     W = canvas.clientWidth; H = canvas.clientHeight;
     if (!W || !H) return;
     canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    if (view === 'collide' && !found) resetSearch();   // point coords depend on size; keep a found collision
+    /* dimension guard (epidemic-style): mobile fires resize on URL-bar
+       show/hide — a height-only nudge must not wipe the running search.
+       A real resize still restarts it (point coords depend on the size). */
+    if (W === ow && Math.abs(H - oh) < 120) return;
+    if (view === 'collide' && !found) resetSearch();   // keep a found collision
   }
 
   /* ===== Avalanche (SHA-256) ===== */
@@ -273,10 +278,22 @@
       if (view === 'collide') { resetSearch(); searching = true; } else { rehash(); }
     });
   });
-  if (elCollapse && elPanel) {
-    elCollapse.addEventListener('click', function () { elPanel.classList.toggle('hash-panel--collapsed'); });
-    if (window.innerWidth < 600) elPanel.classList.add('hash-panel--collapsed');
+  /* panel collapse + first-run hint (shared helper) */
+  if (window.GadgetUI) {
+    var frHint = GadgetUI.firstRunHint('hash', 'Watch the collision search, or switch to Avalanche and type.');
+    GadgetUI.initPanel({
+      panel: elPanel, toggle: elCollapse,
+      collapsedClass: 'hash-panel--collapsed',
+      help: id('hash-help'), hint: frHint
+    });
   }
+
+  /* keyboard: R = re-run the collision search (ignored while typing in the message box) */
+  window.addEventListener('keydown', function (e) {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (window.GadgetUI && GadgetUI.isTyping(e)) return;
+    if ((e.key === 'r' || e.key === 'R') && view === 'collide') { resetSearch(); searching = true; }
+  });
 
   var rt;
   window.addEventListener('resize', function () { clearTimeout(rt); rt = setTimeout(resize, 150); });

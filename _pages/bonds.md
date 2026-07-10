@@ -67,6 +67,8 @@ future-dollars are worth fewer now-dollars. Drag the rate to see the effect on t
       <button id="bond-cut"   class="bond-btn" type="button">Fed cuts rates &#9660;</button>
       <button id="bond-clear" class="bond-btn" type="button" hidden>Standard bond</button>
       <button id="bond-reset" class="bond-btn" type="button">Reset</button>
+      <button id="bond-share" class="bond-btn" type="button" title="Copy a link to this exact bond">Share</button>
+      <button id="bond-snap" class="bond-btn" type="button" title="Download the chart as a PNG">Save image</button>
     </div>
   </div>
 </div>
@@ -146,5 +148,6 @@ html[data-theme="light"] .bond-check input { accent-color: #34568a; }
 </style>
 
 <script defer src="{{ '/assets/js/canvas-edit.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
+<script defer src="{{ '/assets/js/share-hash.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/bonds.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/editable-values.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>

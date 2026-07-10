@@ -70,10 +70,32 @@ a {
   color: $link-color;
 }
 
-/* Apply focus state */
+/* Focus styles — keyboard-visible only (WCAG 2.4.7).
+   Mouse/touch focus stays clean (:focus:not(:focus-visible)); keyboard focus
+   gets a clear 2px accent ring. The `html` prefix nudges specificity just
+   above the theme's own `a:focus` (%tab-focus via _base.scss) and
+   `input:focus { outline: 0 }` (_forms.scss) rules without !important.
+   The light theme overrides outline-color in _color-scheme-light.scss. */
 
-a:focus {
-  @extend %tab-focus;
+html a:focus:not(:focus-visible),
+html button:focus:not(:focus-visible),
+html input:focus:not(:focus-visible),
+html select:focus:not(:focus-visible),
+html textarea:focus:not(:focus-visible),
+html summary:focus:not(:focus-visible),
+html [tabindex]:focus:not(:focus-visible) {
+  outline: 0;
+}
+
+html a:focus-visible,
+html button:focus-visible,
+html input:focus-visible,
+html select:focus-visible,
+html textarea:focus-visible,
+html summary:focus-visible,
+html [tabindex]:focus-visible {
+  outline: 2px solid $primary-color;
+  outline-offset: 2px;
 }
 
 /* Remove outline from links */

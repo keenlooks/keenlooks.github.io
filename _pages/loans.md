@@ -66,6 +66,8 @@ You borrow a lump sum today and pay it back in fixed monthly chunks. If you pay 
       <button id="loan-later" class="loan-btn" type="button">&hellip;but start at year 5</button>
       <button id="loan-clear" class="loan-btn" type="button">Clear placed payments</button>
       <button id="loan-reset" class="loan-btn" type="button">Reset</button>
+      <button id="loan-share" class="loan-btn" type="button" title="Copy a link to this exact scenario">Share</button>
+      <button id="loan-snap" class="loan-btn" type="button" title="Download the chart as a PNG">Save image</button>
     </div>
   </div>
 </div>
@@ -144,5 +146,6 @@ html[data-theme="light"] .loan-slider input[type="range"] { accent-color: #34568
 </style>
 
 <script defer src="{{ '/assets/js/canvas-edit.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
+<script defer src="{{ '/assets/js/share-hash.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/loans.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/editable-values.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>

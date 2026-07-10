@@ -1,13 +1,15 @@
 ---
 layout: single
-title: "Image Studio"
+title: "Resize an Image to an Exact File Size in Your Browser"
 permalink: /imagetools/
 author_profile: false
 excerpt: "Resize an image to a target file size, crop, rotate, strip metadata, and generate a favicon pack — all privately in your browser."
-description: "A private, in-browser image utility by Keane Lucas: resize an image down to a target file size for upload forms, crop, rotate, flip, convert format, strip EXIF/metadata, and generate a full favicon pack as a .zip. Nothing is uploaded — everything runs locally."
+description: "Resize an image to an exact file size (like 500 KB) for upload forms, right in your browser. Also crop, rotate, convert JPEG/PNG/WebP, strip EXIF metadata, and generate a favicon pack as a .zip. Nothing is uploaded; everything runs locally."
 ---
 
 <div class="it-wrap">
+
+  <h1 class="it-title">Image Studio</h1>
 
   <p class="it-intro">
     A small image utility that runs entirely in your browser. Resize a photo down to whatever file
@@ -15,6 +17,8 @@ description: "A private, in-browser image utility by Keane Lucas: resize an imag
     Nothing is uploaded anywhere; the file never leaves your device, and re-saving it strips the EXIF
     metadata (camera model, GPS location, timestamps) along the way.
   </p>
+  <p class="it-privacy" style="margin:0 0 1.1rem">A caveat: this is a personal side project and I have not
+  tested it exhaustively. I make no guarantees; keep your original files.</p>
 
   <div class="it-grid">
     <div class="it-left">
@@ -71,17 +75,58 @@ description: "A private, in-browser image utility by Keane Lucas: resize an imag
       <code>&lt;link&gt;</code> snippet, bundled as a <code>.zip</code>. A square center-crop is used.</p>
       <button id="it-favicon" class="it-btn it-wide" type="button">Generate favicon pack (.zip)</button>
 
-      <p class="it-status" id="it-status"></p>
-      <p class="it-privacy">🔒 100% in-browser. Your image is never uploaded.</p>
+      <p class="it-status" id="it-status" aria-live="polite"></p>
+      <p class="it-privacy">🔒 100% in-browser. Your image is never uploaded. (I use Google Analytics to see whether anyone visits this page, but it cannot see your image.)</p>
     </div>
   </div>
+
+  <div class="it-faq">
+    <h2 class="it-h">FAQ</h2>
+    <details>
+      <summary>How do I resize an image to an exact file size?</summary>
+      <p>Drop the image in, leave the mode on "Hit a target file size", and set the size the form
+      is asking for. The tool searches JPEG or WebP quality settings for the largest output that
+      fits under the limit, and scales the image down if quality alone can't get there.</p>
+    </details>
+    <details>
+      <summary>Does my image get uploaded?</summary>
+      <p>No. The whole tool runs in your browser, and the file never leaves your device.
+      (I use Google Analytics to see whether anyone visits this page, but it cannot see your image.)</p>
+    </details>
+    <details>
+      <summary>What's in the favicon pack?</summary>
+      <p>PNG icons at 16, 32, 48, 96, 192, and 512 pixels, an <code>apple-touch-icon.png</code> at
+      180 pixels, a starter <code>site.webmanifest</code>, and a <code>snippet.html</code> with the
+      <code>&lt;link&gt;</code> tags to paste into your page's head, all in one .zip. The icons are
+      cut from a square center-crop of your image.</p>
+    </details>
+  </div>
 </div>
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Image Studio",
+  "url": "{{ site.url }}{{ site.baseurl }}/imagetools/",
+  "applicationCategory": "MultimediaApplication",
+  "operatingSystem": "Any (runs in the browser)",
+  "browserRequirements": "Requires JavaScript",
+  "isAccessibleForFree": true,
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "author": { "@type": "Person", "name": "Keane Lucas", "url": "{{ site.url }}{{ site.baseurl }}/" },
+  "description": "An in-browser image utility: resize an image to an exact file size, crop, rotate, flip, convert between JPEG, PNG, and WebP, strip EXIF metadata, and generate a favicon pack as a .zip. Nothing is uploaded."
+}
+</script>
 
 <style>
 /* This is a utility, not an article — let it use more width than the reading column. */
 #main { max-width: 1200px; }
 .page { float: none; width: 100%; padding-left: 0; padding-right: 0; }
 .page__inner-wrap, .page__content { max-width: 100%; }
+/* The front-matter title is search-facing; the on-page heading stays "Image Studio". */
+.page__title { display: none; }
+.it-title { margin: 0 0 0.4em; }
 .it-wrap { max-width: 1080px; margin: 0 auto; }
 .it-intro { max-width: 64ch; opacity: 0.9; line-height: 1.6; }
 .it-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 1.5rem; margin-top: 1.5rem; align-items: start; }
@@ -95,7 +140,9 @@ description: "A private, in-browser image utility by Keane Lucas: resize an imag
 .it-drop--over { border-color: #82a6cc; background: rgba(130,166,204,0.10); }
 .it-drop--has { cursor: default; }
 .it-drop--has .it-drop__hint { display: none; }
-.it-canvas { width: 100%; height: 420px; display: block; }
+/* touch-action: none — crop drags and the rotation gizmo use Pointer Events;
+   without it, touch drags fight page scrolling on phones (site playbook). */
+.it-canvas { width: 100%; height: 420px; display: block; touch-action: none; -ms-touch-action: none; }
 #it-file { display: none !important; }   /* the theme styles inputs, overriding the `hidden` attr */
 .it-drop__hint { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; opacity: 0.7; pointer-events: none; line-height: 1.6; }
 
@@ -143,6 +190,11 @@ html[data-theme="light"] .it-rotfield input[type="range"] { accent-color: #34568
 .it-note { font-size: 0.85em; opacity: 0.8; line-height: 1.5; margin: 0 0 0.6rem; }
 .it-status { font-size: 0.88em; opacity: 0.9; min-height: 1.2em; margin: 0.8rem 0 0.4rem; }
 .it-privacy { font-size: 0.82em; opacity: 0.7; margin: 0; }
+
+.it-faq { margin-top: 2.2rem; max-width: 64ch; }
+.it-faq details { margin: 0.5rem 0; }
+.it-faq summary { cursor: pointer; font-weight: 600; }
+.it-faq p { font-size: 0.95em; line-height: 1.6; opacity: 0.9; margin: 0.5rem 0 0.3rem; }
 
 html[data-theme="light"] .it-btn--on, html[data-theme="light"] .it-btn--accent { background: #34568a; border-color: #34568a; }
 html[data-theme="light"] .it-field input[type="range"] { accent-color: #34568a; }

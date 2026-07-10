@@ -13,6 +13,8 @@ layout: compress
 
   <body>
 
+    <a class="skip-link" href="#main">Skip to content</a>
+
     {% include browser-upgrade.html %}
     {% include masthead.html %}
 
@@ -27,6 +29,6 @@ layout: compress
 
     {% include scripts.html %}
 
-    <script src="{{ site.baseurl }}/assets/js/chat-widget.js"></script>
+    <script defer src="{{ site.baseurl }}/assets/js/chat-widget.js?v={{ site.time | date: '%s' }}"></script>
   </body>
 </html>
