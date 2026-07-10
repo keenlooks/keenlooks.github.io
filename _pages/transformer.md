@@ -164,7 +164,7 @@ html[data-theme="light"] .tt-bar__fill { background: #34568a; }
 /* ---- controls panel ---- */
 .tt-panel {
   position: fixed; top: 4.6rem; right: 1rem; z-index: 30;
-  width: 320px; max-width: calc(100vw - 2rem); max-height: calc(100vh - 6rem);
+  width: 320px; max-width: calc(100vw - 2rem); max-height: calc(100vh - 6rem); max-height: calc(100dvh - 6rem);
   overflow: auto; padding: 0.85rem 1rem 1rem;
   border: 1px solid rgba(255,255,255,0.12); border-radius: 10px;
   background: rgba(18,18,18,0.94);
@@ -230,7 +230,7 @@ html[data-theme="light"] .tt-slider input[type="range"] { accent-color: #34568a;
   .tt-stage { padding-right: calc(320px + 2.6rem); }
 }
 @media (max-width: 768px) {
-  .tt-stage { padding-bottom: 4.6rem; }  /* clear the full-width chat bar */
+  .tt-stage { padding-bottom: 1rem; }  /* the chat widget is hidden on phones for .life-app pages */
 }
 @media (max-width: 480px) {
   .tt-bar__pct { display: none; }

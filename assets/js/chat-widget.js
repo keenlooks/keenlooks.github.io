@@ -53,7 +53,7 @@ document.addEventListener('DOMContentLoaded', function() {
             border: 1px solid #2d2d2d;
             border-radius: 8px;
             box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-            z-index: 9999;
+            z-index: 1050; /* above the masthead (20) and floating buttons (1000), below full-screen overlays like the PDF editor (1200) */
             transition: all 0.3s ease;
             display: flex;
             flex-direction: column;
@@ -78,7 +78,7 @@ document.addEventListener('DOMContentLoaded', function() {
             width: 100%;
             height: 100% !important;
             border-radius: 0;
-            z-index: 10000;
+            z-index: 1060;
         }
 
         .chat-header {
@@ -333,6 +333,13 @@ document.addEventListener('DOMContentLoaded', function() {
             
             .chat-widget-container.open {
                 height: 80vh;
+                height: 80dvh;
+            }
+
+            /* Full-screen gadget pages (.life-app): the bottom bar would cover the
+               canvas (lander ground, epidemic curve), so hide the widget on phones. */
+            .chat-widget-container.chat-widget--immersive {
+                display: none;
             }
         }
     `;
@@ -344,6 +351,11 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Inject the chat widget HTML into the body
     document.body.insertAdjacentHTML('beforeend', chatWidgetHTML);
+
+    // Full-screen gadget pages get a class so the mobile CSS can hide the bottom bar
+    if (document.querySelector('.life-app')) {
+        document.getElementById('chat-widget').classList.add('chat-widget--immersive');
+    }
 
     // Constants and state
     const WORKER_URL = 'https://flat-bread-e3e2.keenlooks-cloudflare.workers.dev/';

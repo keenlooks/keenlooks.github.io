@@ -71,11 +71,11 @@ description: "An interactive reinforcement-learning demo by Keane Lucas: a small
 html[data-theme="light"] .land-topfade { background: linear-gradient(to bottom, rgba(219,230,245,0.96) 0%, rgba(219,230,245,0.7) 32%, rgba(219,230,245,0) 100%); }
 @media (prefers-color-scheme: light) { html:not([data-theme="dark"]) .land-topfade { background: linear-gradient(to bottom, rgba(219,230,245,0.96) 0%, rgba(219,230,245,0.7) 32%, rgba(219,230,245,0) 100%); } }
 
-.land-canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 0; background: transparent; cursor: grab; touch-action: none; }
+.land-canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; height: 100dvh; z-index: 0; background: transparent; cursor: grab; touch-action: none; }
 
 .land-panel {
   position: fixed; top: 4.6rem; right: 1rem; z-index: 30;
-  width: 290px; max-width: calc(100vw - 2rem); max-height: calc(100vh - 6rem);
+  width: 290px; max-width: calc(100vw - 2rem); max-height: calc(100vh - 6rem); max-height: calc(100dvh - 6rem);
   overflow: auto; padding: 0.85rem 1rem 1rem;
   border: 1px solid rgba(255,255,255,0.12); border-radius: 10px;
   background: rgba(18,18,18,0.94); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);

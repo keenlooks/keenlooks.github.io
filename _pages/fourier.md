@@ -77,7 +77,7 @@ html[data-theme="light"] .fx-topfade {
 }
 
 .fx-canvas {
-  position: fixed; inset: 0; width: 100vw; height: 100vh;
+  position: fixed; inset: 0; width: 100vw; height: 100vh; height: 100dvh;
   z-index: 0; background: transparent; cursor: crosshair;
   touch-action: none;
 }
@@ -93,7 +93,7 @@ html[data-theme="light"] .fx-topfade {
 
 .fx-panel {
   position: fixed; top: 4.6rem; right: 1rem; z-index: 30;
-  width: 280px; max-width: calc(100vw - 2rem); max-height: calc(100vh - 6rem);
+  width: 280px; max-width: calc(100vw - 2rem); max-height: calc(100vh - 6rem); max-height: calc(100dvh - 6rem);
   overflow: auto; padding: 0.85rem 1rem 1rem;
   border: 1px solid rgba(255,255,255,0.12); border-radius: 10px;
   background: rgba(18,18,18,0.94);

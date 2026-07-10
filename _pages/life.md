@@ -117,6 +117,7 @@ html[data-theme="light"] .life-topfade {
   inset: 0;
   width: 100vw;
   height: 100vh;
+  height: 100dvh;        /* iOS: track the visible viewport, not the area behind Safari's chrome */
   z-index: 0;            /* above page background, below masthead (20) + panel */
   background: transparent;
   cursor: crosshair;
@@ -131,6 +132,7 @@ html[data-theme="light"] .life-topfade {
   width: 290px;
   max-width: calc(100vw - 2rem);
   max-height: calc(100vh - 6rem);
+  max-height: calc(100dvh - 6rem);
   overflow: auto;
   padding: 0.85rem 1rem 1rem;
   border: 1px solid rgba(255, 255, 255, 0.12);
