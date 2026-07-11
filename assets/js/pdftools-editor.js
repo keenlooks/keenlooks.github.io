@@ -34,16 +34,25 @@
   function fontFamily(f) { return f === 'Times' ? 'Georgia, "Times New Roman", serif' : f === 'Courier' ? '"Courier New", monospace' : 'Arial, Helvetica, sans-serif'; }
 
   // ---------- open / render ----------
-  function open(i) {
+  function open(i, keepTool) {
     if (PT.isBusy && PT.isBusy()) return;
     var pages = PT.pages(); if (i < 0 || i >= pages.length) return;
     if (pg) PT.markDirty(pg);          // navigating away — that page's thumbnail may be stale
-    idx = i; pg = pages[i]; selected = null; setTool('move');
+    idx = i; pg = pages[i]; selected = null;
+    // page navigation keeps the active tool (redacting a multi-page doc shouldn't snap
+    // back to Move on every arrow); a fresh open from the grid starts on Move
+    setTool(keepTool ? tool : 'move');
     ed.hidden = false;
     renderPage();
   }
   function close() {
-    if (pg) PT.markDirty(pg);
+    renderSeq++;                       // abandon any in-flight render (it must not touch a null pg)
+    if (pg) {
+      // EVERY close path drops abandoned empty text boxes, not just the Done button —
+      // an invisible {text:''} ghost would otherwise force a rotated page to flatten
+      pg.texts = (pg.texts || []).filter(function (t) { return (t.text || '').trim().length; });
+      PT.markDirty(pg);
+    }
     ed.hidden = true; pg = null; idx = -1;
     PT.renderGrid(); PT.updateToolbar();
   }
@@ -70,11 +79,16 @@
       w = Math.max(220, Math.min(w, 1500));
       return PT.renderPageCanvas(pg, w);
     }).then(function (res) {
-      if (mySeq !== renderSeq) return;   // a newer render owns the layer now (page-identity checks
-                                         // are not enough: going away and BACK reuses the same pg)
+      if (!pg || mySeq !== renderSeq) {  // a newer render owns the layer now, or the editor closed
+                                         // (page-identity checks are not enough: going away and
+                                         // BACK reuses the same pg; close() nulls pg + bumps seq)
+        res.canvas.width = 0;
+        return;
+      }
       var cx = canvas.getContext('2d');
       canvas.width = res.canvas.width; canvas.height = res.canvas.height;
       cx.drawImage(res.canvas, 0, 0);
+      res.canvas.width = 0;              // free the intermediate canvas (up to 1500px wide)
       dispW = canvas.width; dispH = canvas.height; scale = dispW / Wpt;
       // watermarks + page numbers preview (texts/sigs are live DOM elements instead)
       if (PT.drawMarks) PT.drawMarks(cx, pg, dispW, dispH, Wpt, Hpt, idx);
@@ -92,17 +106,13 @@
     $('pt-ed-prev').disabled = atStart; $('pt-ed-next').disabled = atEnd;
     $('pt-ed-arrow-left').disabled = atStart; $('pt-ed-arrow-right').disabled = atEnd;
   }
-  function goPrev() { if (idx > 0) open(idx - 1); }
-  function goNext() { if (idx < PT.pages().length - 1) open(idx + 1); }
+  function goPrev() { if (idx > 0) open(idx - 1, true); }
+  function goNext() { if (idx < PT.pages().length - 1) open(idx + 1, true); }
   $('pt-ed-prev').addEventListener('click', goPrev);
   $('pt-ed-next').addEventListener('click', goNext);
   $('pt-ed-arrow-left').addEventListener('click', goPrev);
   $('pt-ed-arrow-right').addEventListener('click', goNext);
-  $('pt-ed-done').addEventListener('click', function () {
-    // drop empty text boxes
-    pg.texts = (pg.texts || []).filter(function (t) { return (t.text || '').trim().length; });
-    close();
-  });
+  $('pt-ed-done').addEventListener('click', function () { close(); });   // close() drops empty text boxes
 
   // ---------- tools ----------
   function setTool(t) {
@@ -128,6 +138,7 @@
   function removeHandles() { Array.prototype.forEach.call(layer.querySelectorAll('.pt-anno__del,.pt-anno__resize'), function (e) { e.remove(); }); }
   function select(el) {
     deselectAll(); selected = el; if (!el) return; el.classList.add('pt-sel');
+    el.__nudged = false;   // re-arm the one-snapshot-per-selection arrow-key nudge
     var del = document.createElement('button'); del.className = 'pt-anno__del'; del.type = 'button'; del.textContent = '×';
     del.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
     del.addEventListener('click', function (e) { e.stopPropagation(); removeAnno(el); });
@@ -165,7 +176,7 @@
     (pg.sigs || []).forEach(function (s) { layer.appendChild(makeSigEl(s)); });
   }
 
-  function makeTextEl(t, isNew) {
+  function makeTextEl(t, isNew, ownSnap) {
     var el = document.createElement('div'); el.className = 'pt-anno pt-anno--text'; el.__model = t;
     el.style.left = (t.x * dispW) + 'px'; el.style.top = (t.y * dispH) + 'px';
     // the editable content is a separate inner node so handles (×) never become part of the text
@@ -174,12 +185,23 @@
     txt.contentEditable = (tool === 'text'); txt.textContent = t.text || '';
     // one undo snapshot per editing session (a new box is covered by its creation snapshot)
     var armed = !isNew;
+    // ownSnap: this new box took its OWN 'add text' snapshot (i.e. no flatten snapshot
+    // covers it) — if the box is abandoned empty, that snapshot must be dropped or the
+    // next Ctrl+Z becomes a visible no-op
+    var createSeq = (isNew && ownSnap && PT.snapSeq) ? PT.snapSeq() : -1;
     txt.addEventListener('input', function () {
       if (armed) { armed = false; if (PT.snapshot) PT.snapshot('edit text on page ' + (idx + 1)); }
       t.text = txt.innerText;
       PT.markDirty(pg);
     });
-    txt.addEventListener('blur', function () { armed = true; if (!(t.text || '').trim()) removeAnno(el, true); });
+    txt.addEventListener('blur', function () {
+      armed = true;
+      if (!(t.text || '').trim()) {
+        removeAnno(el, true);
+        // only drop the creation snapshot while it is still the top of the stack
+        if (createSeq >= 0 && PT.snapSeq && PT.snapSeq() === createSeq && PT.dropSnapshot) PT.dropSnapshot();
+      }
+    });
     el.appendChild(txt);
     el.addEventListener('pointerdown', function (e) {
       if (e.target.classList.contains('pt-anno__del') || e.target.classList.contains('pt-anno__resize')) return;
@@ -214,11 +236,15 @@
   }
 
   // ---------- drag / resize ----------
+  // pg0 capture: Escape (or arrow-key nav) can close/change the page MID-DRAG; the
+  // pointerup that follows must not touch the old model or markDirty(null) — the same
+  // interleaving startRedactBox already guards against.
   function startDrag(e, el, model) {
     var r = layer.getBoundingClientRect();
     var ox = e.clientX - r.left - model.x * dispW, oy = e.clientY - r.top - model.y * dispH;
-    var sx = e.clientX, sy = e.clientY, moved = false;
+    var sx = e.clientX, sy = e.clientY, moved = false, pg0 = pg;
     function mv(ev) {
+      if (pg !== pg0 || ed.hidden) return;
       if (!moved) {
         if (Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) < 3) return;   // a plain click just selects
         moved = true;
@@ -231,15 +257,16 @@
     }
     function up() {
       window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
-      if (moved) PT.markDirty(pg);
+      if (moved && pg === pg0 && pg) PT.markDirty(pg);
     }
     window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
   }
   function startResize(e, el) {
     e.preventDefault(); e.stopPropagation(); var s = el.__model;
     var r = layer.getBoundingClientRect(), aspect = s.h / s.w;
-    var moved = false;
+    var moved = false, pg0 = pg;
     function mv(ev) {
+      if (pg !== pg0 || ed.hidden) return;
       if (!moved) { moved = true; if (PT.snapshot) PT.snapshot('resize signature on page ' + (idx + 1)); }
       var w = (ev.clientX - r.left) / dispW - s.x; w = Math.max(0.03, Math.min(w, 1 - s.x));
       s.w = w; s.h = w * aspect * (Wpt / Hpt);   // keep image pixel aspect on the page
@@ -247,34 +274,44 @@
     }
     function up() {
       window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
-      if (moved) PT.markDirty(pg);
+      if (moved && pg === pg0 && pg) PT.markDirty(pg);
     }
     window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
   }
 
   // ---------- stage interactions (create text / draw redact) ----------
   function stagePos(e) { var r = layer.getBoundingClientRect(); return { x: (e.clientX - r.left), y: (e.clientY - r.top) }; }
+  // create an empty, focused text box at normalized (nx, ny) — shared by the stage
+  // click and the keyboard path
+  function createTextAt(nx, ny) {
+    var o = { size: parseInt(sizeSel.value, 10) || 14, font: fontSel.value, color: colorInp.value };
+    var myPg = pg;
+    ensureUpright().then(function (flattened) {
+      if (myPg !== pg) return;   // the user navigated away while a rotated page was flattening
+      // the flatten snapshot (if any) already covers this action — one Ctrl+Z undoes both
+      if (!flattened && PT.snapshot) PT.snapshot('add text on page ' + (idx + 1));
+      var t = { x: nx, y: ny, text: '', size: o.size, font: o.font, color: o.color };
+      pg.texts.push(t); var el = makeTextEl(t, true, !flattened); layer.appendChild(el);
+      select(el); setTimeout(function () { el.__txt.focus(); }, 0);
+    });
+  }
   stage.addEventListener('pointerdown', function (e) {
     if (e.button != null && e.button !== 0) return;                               // left button / touch only
-    if (e.target !== canvas && e.target !== stage && e.target !== layer) return;  // clicked an annotation
+    // clicks on annotations are theirs — EXCEPT the text tool over a redaction box:
+    // typing a replacement label over blacked-out content is the natural workflow (the
+    // export already renders texts on top of the black correctly)
+    var onRedactEl = e.target.classList && e.target.classList.contains('pt-anno--redact');
+    if (e.target !== canvas && e.target !== stage && e.target !== layer && !(tool === 'text' && onRedactEl)) return;
     var p = stagePos(e);
     if (tool === 'text') {
-      var nx = p.x / dispW, ny = p.y / dispH;
-      var o = { size: parseInt(sizeSel.value, 10) || 14, font: fontSel.value, color: colorInp.value };
-      var myPg = pg;
-      ensureUpright().then(function (flattened) {
-        if (myPg !== pg) return;   // the user navigated away while a rotated page was flattening
-        // the flatten snapshot (if any) already covers this action — one Ctrl+Z undoes both
-        if (!flattened && PT.snapshot) PT.snapshot('add text on page ' + (idx + 1));
-        var t = { x: nx, y: ny, text: '', size: o.size, font: o.font, color: o.color };
-        pg.texts.push(t); var el = makeTextEl(t, true); layer.appendChild(el);
-        select(el); setTimeout(function () { el.__txt.focus(); }, 0);
-      });
+      createTextAt(p.x / dispW, p.y / dispH);
     } else if (tool === 'redact') {
       startRedactBox(e, p);
     } else { deselectAll(); selected = null; }
   });
 
+  var activeRedactCancel = null;   // set while a redact drag is in flight, so Escape can
+                                   // cancel the BOX instead of closing the whole editor
   function startRedactBox(e, p0) {
     var box = document.createElement('div'); box.className = 'pt-anno pt-anno--redact pt-anno--redact-tmp'; layer.appendChild(box);
     var rec = { x: p0.x / dispW, y: p0.y / dispH, w: 0, h: 0 };
@@ -286,18 +323,20 @@
       rec.x = x / dispW; rec.y = y / dispH; rec.w = w / dispW; rec.h = h / dispH;
     }
     function fin(commit) {
+      activeRedactCancel = null;
       window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', cancel);
       if (!commit || pg !== pg0 || ed.hidden || !(rec.w > 0.008 && rec.h > 0.008)) { box.remove(); return; }
       if (!redactWarned) {
         // hold the first-ever box until the one-time dialog is acknowledged
         pendingBox = { rec: rec, el: box };
-        redactDialog.hidden = false;
+        openRedactDialog();
         return;
       }
       commitRedact(rec, box);
     }
     function up() { fin(true); }
     function cancel() { fin(false); }
+    activeRedactCancel = function () { fin(false); };
     window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', cancel);
   }
 
@@ -311,6 +350,7 @@
     box.remove();
     var el = makeRedactEl(rec); layer.appendChild(el);
     PT.setStatus('Redaction added. The page is flattened to an image on download, which is what actually removes the covered text. Ctrl+Z undoes it.');
+    return el;
   }
 
   // live-update selected text style from the toolbar. One snapshot per styling burst:
@@ -333,6 +373,11 @@
 
   // ---------- redaction dialog (one-time explainer) + download quality ----------
   var redactDialog = $('pt-dialog');
+  function openRedactDialog() {
+    redactDialog.hidden = false;
+    // move focus into the modal (the core Tab trap keeps it there)
+    setTimeout(function () { var b = $('pt-dialog-go'); if (b) b.focus(); }, 0);
+  }
   function dialogCancel() {
     redactDialog.hidden = true;
     if (pendingBox) { pendingBox.el.remove(); pendingBox = null; }
@@ -440,8 +485,13 @@
     PT.setStatus('Signature saved in this browser (it never leaves your device).');
   });
 
+  var sigPlacing = false;   // a double-click must not run the async place chain twice
+                            // (it would stack two identical, invisible-duplicate signatures)
   $('pt-sig-place').addEventListener('click', function () {
-    if (!sigCanvas) return;
+    if (!sigCanvas || sigPlacing) return;
+    sigPlacing = true;
+    var btn = $('pt-sig-place'); btn.disabled = true;
+    function done() { sigPlacing = false; sigReady(); }
     // signatures need an upright page; flatten first if rotated (shared with the text tool)
     var myPg = pg;
     ensureUpright().then(function (flattened) {
@@ -454,7 +504,7 @@
         PT.markDirty(pg);
         setTool('move'); PT.setStatus('Signature placed — drag it where you want.');
       });
-    });
+    }).then(done, done);
   });
 
   // ---------- inline form-field widgets ----------
@@ -507,6 +557,7 @@
               if (armed) { armed = false; if (PT.snapshot) PT.snapshot('fill form field'); }
               if (el.type === 'radio') { if (el.checked) saveFieldValue(di, a.fieldName, el.value); }
               else saveFieldValue(di, a.fieldName, el.type === 'checkbox' ? el.checked : el.value);
+              PT.markDirty(myPg);   // the grid thumbnail previews filled values too
             }
             el.addEventListener('change', commit);
             el.addEventListener('input', commit);
@@ -518,21 +569,75 @@
     });
   }
 
-  // keyboard: Ctrl+Z undoes, Delete removes selected, Escape closes, arrows navigate
+  // ---------- keyboard ----------
+  // nudge the selected annotation with the arrow keys (1% steps, 5% with Shift)
+  function nudgeSelected(key, big) {
+    var m = selected && selected.__model; if (!m) return;
+    if (!selected.__nudged) { selected.__nudged = true; if (PT.snapshot) PT.snapshot('move ' + annoKind(selected) + ' on page ' + (idx + 1)); }
+    var step = big ? 0.05 : 0.01;
+    if (key === 'ArrowLeft') m.x -= step; else if (key === 'ArrowRight') m.x += step;
+    else if (key === 'ArrowUp') m.y -= step; else if (key === 'ArrowDown') m.y += step;
+    m.x = Math.min(Math.max(0, m.x), 1 - (selected.offsetWidth / dispW) * 0.3);
+    m.y = Math.min(Math.max(0, m.y), 1 - (selected.offsetHeight / dispH) * 0.3);
+    selected.style.left = (m.x * dispW) + 'px'; selected.style.top = (m.y * dispH) + 'px';
+    PT.markDirty(pg);
+  }
+  // keyboard path for redaction: drop a default-size box at the page center, then
+  // nudge/resize is arrow keys + Delete (the stage is focusable, see the md markup)
+  function keyboardRedact() {
+    var rec = { x: 0.35, y: 0.44, w: 0.3, h: 0.08 };
+    var box = document.createElement('div'); box.className = 'pt-anno pt-anno--redact pt-anno--redact-tmp';
+    box.style.left = (rec.x * dispW) + 'px'; box.style.top = (rec.y * dispH) + 'px';
+    box.style.width = (rec.w * dispW) + 'px'; box.style.height = (rec.h * dispH) + 'px';
+    layer.appendChild(box);
+    if (!redactWarned) { pendingBox = { rec: rec, el: box }; openRedactDialog(); return; }
+    select(commitRedact(rec, box));
+  }
+  function edFocusables() {
+    return Array.prototype.filter.call(ed.querySelectorAll('button, input, select, [tabindex], [contenteditable="true"]'), function (el) {
+      return !el.disabled && el.tabIndex >= 0 && el.getClientRects().length;
+    });
+  }
+  // Ctrl+Z undoes; Escape is STAGED (cancel a redact drag → end typing → deselect →
+  // close); Delete removes the selection and arrows nudge it / change pages — gated on
+  // "not typing", NOT on body focus (a clicked tool button keeps focus, and Delete/
+  // arrows used to go dead in exactly that state)
   document.addEventListener('keydown', function (e) {
     if (ed.hidden) return;
-    if (!redactDialog.hidden) { if (e.key === 'Escape') dialogCancel(); return; }   // modal traps keys
+    if (!redactDialog.hidden) { if (e.key === 'Escape') dialogCancel(); return; }   // core traps Tab in modals
+    if (PT.modalOpen && PT.modalOpen()) return;
     var a = document.activeElement;
     var typing = a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' || a.isContentEditable);
     if ((e.key === 'z' || e.key === 'Z') && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
       if (typing || (PT.isBusy && PT.isBusy())) return;   // native undo inside inputs
       e.preventDefault(); PT.undo(); return;
     }
-    var onBody = a === document.body;
-    if (e.key === 'Escape') { close(); }
-    else if ((e.key === 'Delete' || e.key === 'Backspace') && selected && onBody) { removeAnno(selected); }
-    else if (e.key === 'ArrowLeft' && onBody) { goPrev(); }
-    else if (e.key === 'ArrowRight' && onBody) { goNext(); }
+    if (e.key === 'Tab') {
+      // keep focus inside the full-screen editor (it covers the whole page)
+      var f = edFocusables(); if (!f.length) return;
+      var fi = f.indexOf(a);
+      if (e.shiftKey) { if (fi <= 0) { e.preventDefault(); f[f.length - 1].focus(); } }
+      else if (fi === -1 || fi === f.length - 1) { e.preventDefault(); f[0].focus(); }
+      return;
+    }
+    if (e.key === 'Escape') {
+      if (activeRedactCancel) { activeRedactCancel(); return; }   // cancel the in-flight box only
+      if (typing) { a.blur(); return; }                           // end the edit, keep the editor open
+      if (selected) { deselectAll(); selected = null; return; }
+      close(); return;
+    }
+    if ((e.key === 'Enter' || e.key === ' ') && a === stage) {
+      // stage focused: create with the current tool at the page center
+      if (tool === 'text') { e.preventDefault(); createTextAt(0.4, 0.44); }
+      else if (tool === 'redact') { e.preventDefault(); keyboardRedact(); }
+      return;
+    }
+    if ((e.key === 'Delete' || e.key === 'Backspace') && selected && !typing) { e.preventDefault(); removeAnno(selected); }
+    else if (/^Arrow(Left|Right|Up|Down)$/.test(e.key) && !typing) {
+      if (selected) { e.preventDefault(); nudgeSelected(e.key, e.shiftKey); }
+      else if (e.key === 'ArrowLeft') { goPrev(); }
+      else if (e.key === 'ArrowRight') { goNext(); }
+    }
   });
 
   // expose the opener for the thumbnail Edit buttons

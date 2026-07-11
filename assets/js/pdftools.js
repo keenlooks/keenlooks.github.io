@@ -125,6 +125,7 @@
       pop: function () { return stack.length ? stack.pop() : null; },
       peek: function () { return stack.length ? stack[stack.length - 1] : null; },
       size: function () { return stack.length; },
+      entries: function () { return stack.slice(); },
       clear: function () { stack.length = 0; }
     };
   };
@@ -136,24 +137,35 @@
   };
 
   // watermark text placement + draw (P = the PDFLib namespace). Rotation-0 math: pages
-  // are flattened upright before a watermark is applied.
+  // are flattened upright before a watermark is applied. The standard fonts are WinAnsi,
+  // so a raw draw is tried first (WinAnsi covers more than the sanitize whitelist), and
+  // on failure the encodable remainder is drawn instead of silently dropping the whole
+  // watermark. Returns true when characters had to be dropped.
   PURE.drawWatermark = function (P, page, font, wm, W, H) {
     var text = String(wm.text || '');
-    if (!text) return;
+    if (!text) return false;
     var size = wm.size || 48;
     var op = wm.opacity == null ? 0.15 : wm.opacity;
     var col = P.rgb(0.5, 0.5, 0.5);
-    var tw = font.widthOfTextAtSize(text, size);
-    if (wm.pos === 'foot') {
-      page.drawText(text, { x: W / 2 - tw / 2, y: 34, size: size, font: font, color: col, opacity: op });
-      return;
+    function draw(t) {
+      var tw = font.widthOfTextAtSize(t, size);
+      if (wm.pos === 'foot') {
+        page.drawText(t, { x: W / 2 - tw / 2, y: 34, size: size, font: font, color: col, opacity: op });
+        return;
+      }
+      // diagonal: centered on the page, rotated along the page diagonal
+      var rad = Math.atan2(H, W);
+      var deg = rad * 180 / Math.PI;
+      var x = W / 2 - (tw / 2) * Math.cos(rad) + 0.35 * size * Math.sin(rad);
+      var y = H / 2 - (tw / 2) * Math.sin(rad) - 0.35 * size * Math.cos(rad);
+      page.drawText(t, { x: x, y: y, size: size, font: font, color: col, opacity: op, rotate: P.degrees(deg) });
     }
-    // diagonal: centered on the page, rotated along the page diagonal
-    var rad = Math.atan2(H, W);
-    var deg = rad * 180 / Math.PI;
-    var x = W / 2 - (tw / 2) * Math.cos(rad) + 0.35 * size * Math.sin(rad);
-    var y = H / 2 - (tw / 2) * Math.sin(rad) - 0.35 * size * Math.cos(rad);
-    page.drawText(text, { x: x, y: y, size: size, font: font, color: col, opacity: op, rotate: P.degrees(deg) });
+    try { draw(text); return false; }
+    catch (e) {
+      var clean = PURE.sanitizeWinAnsi(text);
+      if (clean) { try { draw(clean); } catch (e2) {} }
+      return true;
+    }
   };
 
   // page-number label for output page i (0-based) of `total`, or null to skip
@@ -243,7 +255,9 @@
   var docs = [];             // { name, bytes:Uint8Array (for pdf-lib), js:pdfjsDoc (for rendering), formValues }
   var pages = [];            // page model — see newPage()
   var pageNums = null;       // { fmt:'n'|'nofm', pos:'bc'|'br', start, skipFirst, size } or null
-  var lastFlattened = 0;     // how many pages the last build had to rasterize (encrypted/damaged sources)
+  var lastFlattenedRot = 0;  // pages the last build rasterized because overlays sat on a rotated page
+  var lastFlattenedSrc = 0;  // pages the last build rasterized because the source was encrypted/damaged
+  var lastDropped = 0;       // added texts/watermarks that lost characters (not WinAnsi-encodable)
   var redactDpi = 150;       // render quality used when redacted pages are flattened on download
   var busy = false;          // one long operation at a time
   var undoStack = PURE.makeUndoStack(25);
@@ -269,7 +283,22 @@
   var rangeInput = $('pt-range'), rangeInfo = $('pt-range-info');
   var progWrap = $('pt-progress'), progFill = $('pt-progress-fill');
 
-  function setStatus(msg) { if (statusEl) statusEl.textContent = msg || ''; }
+  function setStatus(msg) {
+    if (!statusEl) return;
+    statusEl.textContent = msg || '';
+    // the status line sits below the grid, which for multi-page docs is below the fold —
+    // bring terminal messages (saved / errors / warnings) into view, never progress ticks
+    if (!msg) return;
+    var edEl = document.getElementById('pt-ed');
+    if (edEl && !edEl.hidden) return;   // the full-screen editor covers the page anyway
+    if (/^(Saved|Error|Couldn|Skipped|No pages)/.test(msg) || msg.indexOf('flattened') >= 0 || msg.indexOf('could not') >= 0) {
+      var r = statusEl.getBoundingClientRect();
+      if (r.top > window.innerHeight - 30 || r.bottom < 0) {
+        try { statusEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+        catch (e) { statusEl.scrollIntoView(); }
+      }
+    }
+  }
 
   // ---------- progress / busy ----------
   // resolves after the browser has had a chance to PAINT (rAF fires before paint, the
@@ -302,7 +331,9 @@
   }
 
   // ---------- undo ----------
+  var snapSeq = 0;   // monotonic push counter — lets callers detect "a snapshot was taken since"
   function snapshot(label) {
+    snapSeq++;
     undoStack.push({
       label: label,
       pages: pages.map(PURE.clonePage),
@@ -313,7 +344,26 @@
       // filled form values live on the docs, not the pages — capture them too
       forms: docs.map(function (d) { return d.formValues ? Object.assign({}, d.formValues) : null; })
     });
+    pruneDocs();     // the bounded stack may just have evicted the last reference to a doc
     updateToolbar();
+  }
+
+  // release source docs nothing can reach any more: a doc whose pages were all deleted
+  // stays pinned only while some undo entry could restore them; once the 25-deep stack
+  // evicts that entry, free the bytes + the pdf.js worker memory. Entries are TOMBSTONED
+  // in place (bytes/js nulled), never spliced — pg.docIndex and snapshot.forms are
+  // positional.
+  function pruneDocs() {
+    if (!docs.length) return;
+    var used = {};
+    function mark(ps) { (ps || []).forEach(function (p) { if (p.docIndex >= 0) used[p.docIndex] = true; }); }
+    mark(pages);
+    undoStack.entries().forEach(function (e) { mark(e.pages); });
+    docs.forEach(function (d, i) {
+      if (!d || used[i] || !d.bytes) return;
+      d.bytes = null;
+      if (d.js) { try { d.js.destroy(); } catch (e) {} d.js = null; }
+    });
   }
   function dropSnapshot() { undoStack.pop(); updateToolbar(); }
   function undo() {
@@ -333,6 +383,11 @@
   function openDialog(el) {
     if (!el || busy || modalOpen()) return false;
     el.hidden = false;
+    // move focus into the dialog (first field, else the primary button) so keyboard and
+    // screen-reader users land inside it, not on the obscured page behind the backdrop
+    var pick = el.querySelector('input:not([type=hidden]):not([disabled]), select, textarea') ||
+               el.querySelector('.pt-btn--accent, .pt-btn--danger') || el.querySelector('button');
+    if (pick) setTimeout(function () { try { pick.focus(); } catch (e) {} }, 0);
     return true;
   }
 
@@ -342,7 +397,8 @@
   function isPdf(f) { return f.type === 'application/pdf' || /\.pdf$/i.test(f.name); }
 
   function addFiles(fileList) {
-    if (busy) return;
+    // a drop while a load is running must not vanish silently — say so
+    if (busy) { setStatus('Still busy with the current operation — add those files again in a moment.'); return; }
     var arr = Array.prototype.slice.call(fileList).filter(function (f) { return isPdf(f) || isImage(f); });
     var rejectedTypes = Array.prototype.slice.call(fileList).length - arr.length;
     if (!arr.length) { if (rejectedTypes) setStatus('Those files aren’t PDFs or images.'); return; }
@@ -497,10 +553,18 @@
   }
 
   function renderThumbInto(canvas, pg, gridIdx, done) {
+    // per-page render token: two quick rotates can race two pdf.js renders on the same
+    // cached canvas (the second resizes/wipes it mid-render → a garbled thumb that never
+    // self-corrects). Only the LATEST render may finish; an abandoned/failed one re-marks
+    // the page dirty so the next renderGrid repaints it.
+    var mySeq = pg._rseq = (pg._rseq || 0) + 1;
+    function stale() { return pg._rseq !== mySeq; }
+    if (pg._rtask) { try { pg._rtask.cancel(); } catch (e) {} pg._rtask = null; }
     function finish(Wpt, Hpt) {
       drawThumbOverlays(canvas.getContext('2d'), pg, canvas.width, canvas.height, Wpt, Hpt, gridIdx);
       if (done) done();
     }
+    function bail() { if (!stale()) pg._tdirty = true; if (done) done(); }
     if (pg.blank) {
       var sw = (pg.rot % 180) !== 0;
       var bw = sw ? pg.blank.hPt : pg.blank.wPt, bh = sw ? pg.blank.wPt : pg.blank.hPt;
@@ -511,23 +575,34 @@
     }
     if (pg.raster) {
       rasterToCanvas(pg, 150).then(function (c) {
+        if (stale()) { if (done) done(); return; }
         canvas.width = c.width; canvas.height = c.height;
         canvas.getContext('2d').drawImage(c, 0, 0);
         var sw2 = (pg.rot % 180) !== 0;
         finish(sw2 ? pg.raster.hPt : pg.raster.wPt, sw2 ? pg.raster.wPt : pg.raster.hPt);
-      }).catch(function () { if (done) done(); });
+      }).catch(bail);
       return;
     }
     docs[pg.docIndex].js.getPage(pg.pageIndex + 1).then(function (page) {
+      if (stale()) { if (done) done(); return; }
       var rot = totalRotation(page, pg.rot);
       var base = page.getViewport({ scale: 1, rotation: rot });
       var scale = 150 / base.width;
       var vp = page.getViewport({ scale: scale, rotation: rot });
       canvas.width = Math.floor(vp.width); canvas.height = Math.floor(vp.height);
-      page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise.then(function () {
-        finish(base.width, base.height);
-      }, function () { if (done) done(); });
-    }).catch(function () { if (done) done(); });
+      var task = page.render({ canvasContext: canvas.getContext('2d'), viewport: vp });
+      pg._rtask = task;
+      task.promise.then(function () {
+        if (pg._rtask === task) pg._rtask = null;
+        if (stale()) { if (done) done(); return; }
+        // filled form values show on every other surface (editor, export, shrink) —
+        // paint them here too, before the overlays so a redaction box can cover them
+        paintFormValues(canvas, pg).then(function () {
+          if (stale()) { if (done) done(); return; }
+          finish(base.width, base.height);
+        });
+      }, function () { if (pg._rtask === task) pg._rtask = null; bail(); });
+    }).catch(bail);
   }
 
   // black out the page's redaction boxes on a canvas (normalized rects of the effective
@@ -549,8 +624,10 @@
     drawMarks(ctx, pg, tw, th, Wpt, Hpt, gridIdx);
     (pg.texts || []).forEach(function (t) {
       var px = Math.max(3, t.size * tw / Wpt);
-      ctx.fillStyle = t.color || '#111'; ctx.font = px + 'px ' + (t.font || 'Helvetica'); ctx.textBaseline = 'top'; ctx.textAlign = 'left';
-      (t.text || '').split('\n').forEach(function (line, i) { ctx.fillText(line, t.x * tw, t.y * th + i * px * 1.2); });
+      // alphabetic baseline at y + 0.82em — the same construction the export uses, so
+      // preview and exported ink land at the same height
+      ctx.fillStyle = t.color || '#111'; ctx.font = px + 'px ' + (t.font || 'Helvetica'); ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
+      (t.text || '').split('\n').forEach(function (line, i) { ctx.fillText(line, t.x * tw, t.y * th + px * 0.82 + i * px * 1.2); });
     });
     (pg.sigs || []).forEach(function (s) {
       var im = new Image();
@@ -636,12 +713,14 @@
         pg.redacts = PURE.rotateRects(pg.redacts, 90);   // boxes + OCR words follow the content
         pg.ocrWords = PURE.rotateWords(pg.ocrWords, 90);
         markDirty(pg); renderGrid();
+        setStatus('Rotated page ' + (idx + 1) + '.');
       });
       var db = document.createElement('button'); db.className = 'pt-thumb__act'; db.type = 'button'; db.title = 'Delete page'; db.textContent = '×';
       db.addEventListener('click', function (e) {
         e.stopPropagation(); if (busy) return;
         snapshot('delete page ' + (idx + 1));
         pages.splice(idx, 1); orderChanged(); renderGrid(); updateToolbar();
+        setStatus('Deleted page ' + (idx + 1) + '.');
       });
       acts.appendChild(eb); acts.appendChild(rb); acts.appendChild(db);
       bar.appendChild(acts);
@@ -740,11 +819,20 @@
       if (isNaN(to) || to === from || to === from + 1) return;
       snapshot('move page ' + (from + 1));
       var moved = pages.splice(from, 1)[0];
-      pages.splice(from < to ? to - 1 : to, 0, moved);
+      var insertAt = from < to ? to - 1 : to;
+      pages.splice(insertAt, 0, moved);
       lastSelIdx = -1;
       orderChanged(); renderGrid(); updateToolbar();
+      setStatus('Moved page ' + (from + 1) + ' to position ' + (insertAt + 1) + '.');
     }
-    function cancel(ev) { if (ev.pointerId !== pid) return; cleanup(); }
+    function cancel(ev) {
+      if (ev.pointerId !== pid) return;
+      var was = engaged;
+      cleanup();
+      // mirror up(): a pointercancel after the drag engaged (second finger, pinch) must
+      // not leave suppressClick armed — it would eat the next tap on any thumbnail
+      if (was) setTimeout(function () { suppressClick = false; }, 0);
+    }
     window.addEventListener('pointermove', mv);
     window.addEventListener('pointerup', up);
     window.addEventListener('pointercancel', cancel);
@@ -805,6 +893,7 @@
     }
     if (btnSelAll) btnSelAll.textContent = (sel === pages.length && pages.length > 0) ? 'Select none' : 'Select all';
     Array.prototype.forEach.call(document.querySelectorAll('[data-pt-needs-pages]'), function (b) { b.disabled = !has; });
+    updateRangeInfo();   // the "→ N pages"/"invalid" label must re-validate when the page count changes
   }
 
   // ---------- toolbar actions ----------
@@ -812,9 +901,22 @@
   fileInput.addEventListener('change', function () { addFiles(fileInput.files); fileInput.value = ''; });
 
   drop.addEventListener('click', function (e) { if (busy) return; if (pages.length === 0 && e.target === drop || e.target.classList.contains('pt-drop__hint') || (e.target.parentNode && e.target.parentNode.classList && e.target.parentNode.classList.contains('pt-drop__hint'))) fileInput.click(); });
+  // keyboard path into the tool: the empty state has no other focusable "add" control
+  drop.addEventListener('keydown', function (e) {
+    if (busy) return;
+    if ((e.key === 'Enter' || e.key === ' ') && pages.length === 0) { e.preventDefault(); fileInput.click(); }
+  });
   ['dragenter', 'dragover'].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); if (e.dataTransfer && Array.prototype.some.call(e.dataTransfer.types || [], function (t) { return t === 'Files'; })) drop.classList.add('pt-drop--over'); }); });
   ['dragleave', 'drop'].forEach(function (ev) { drop.addEventListener(ev, function (e) { if (ev === 'dragleave' && e.target !== drop) return; drop.classList.remove('pt-drop--over'); }); });
-  drop.addEventListener('drop', function (e) { e.preventDefault(); if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) addFiles(e.dataTransfer.files); });
+  drop.addEventListener('drop', function (e) { e.preventDefault(); e.stopPropagation(); if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) addFiles(e.dataTransfer.files); });
+  // while busy the drop zone is pointer-events:none, so a drop would land on the document
+  // and NAVIGATE the tab to the file — losing the whole session. Catch it here instead
+  // (addFiles then explains it's busy, or just adds the files anywhere on the page).
+  document.addEventListener('dragover', function (e) { e.preventDefault(); });
+  document.addEventListener('drop', function (e) {
+    e.preventDefault();
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
+  });
 
   btnSelAll.addEventListener('click', function () {
     if (busy) return;
@@ -833,6 +935,7 @@
       markDirty(pages[i]);
     });
     renderGrid();
+    setStatus('Rotated ' + sel.length + ' page' + (sel.length > 1 ? 's' : '') + '.');
   }
   btnRotate.addEventListener('click', function () { rotateSelected(90, 'rotate'); });
   if (btnRotCcw) btnRotCcw.addEventListener('click', function () { rotateSelected(270, 'rotate'); });
@@ -843,6 +946,7 @@
     pages = pages.filter(function (p) { return !p.sel; });
     lastSelIdx = -1;
     orderChanged(); renderGrid(); updateToolbar();
+    setStatus('Deleted ' + n + ' page' + (n > 1 ? 's' : '') + '.');
   });
   if (btnDup) btnDup.addEventListener('click', function () {
     if (busy) return;
@@ -890,13 +994,34 @@
       var ed2 = $('pt-ed'); if (ed2 && !ed2.hidden) return;   // the editor handles its own Escape
       var m = document.querySelector('.pt-modal:not([hidden])');
       if (m) m.hidden = true;
+    } else if (e.key === 'Tab') {
+      // focus trap for any open modal — without it Tab wanders into the obscured page
+      // (theme toggle, chat widget) behind the backdrop
+      var mm = document.querySelector('.pt-modal:not([hidden])');
+      if (mm) {
+        var f = Array.prototype.filter.call(mm.querySelectorAll('button, input, select, textarea, [tabindex]'), function (el) {
+          return !el.disabled && !el.hidden && el.tabIndex >= 0 && el.getClientRects().length;
+        });
+        if (f.length) {
+          var fi = f.indexOf(document.activeElement);
+          if (e.shiftKey) { if (fi <= 0) { e.preventDefault(); f[f.length - 1].focus(); } }
+          else if (fi === -1 || fi === f.length - 1) { e.preventDefault(); f[0].focus(); }
+        }
+      }
     }
+  });
+
+  // warn before a reflexive F5 / tab close discards a whole editing session — all state
+  // is in-memory only. Checking live state in the handler avoids add/remove bookkeeping.
+  window.addEventListener('beforeunload', function (e) {
+    if (pages.length) { e.preventDefault(); e.returnValue = ''; }
   });
 
   // ---------- build / download ----------
   function getLibDoc(cache, docIndex) {
     if (cache[docIndex]) return cache[docIndex];
     var d = docs[docIndex];
+    if (!d || !d.bytes) return (cache[docIndex] = Promise.reject(new Error('source PDF is no longer available')));   // tombstoned by pruneDocs
     cache[docIndex] = PDFLib.PDFDocument.load(d.bytes, { ignoreEncryption: true }).then(function (doc) {
       // apply any filled form values, then flatten so the values bake into page content
       if (d.formValues && Object.keys(d.formValues).length) {
@@ -951,15 +1076,11 @@
     }
     (pg.wms || []).forEach(function (wm) {
       chain = chain.then(function () {
-        return helv().then(function (font) { PURE.drawWatermark(PDFLib, info.page, font, wm, info.w, info.h); })
-          .catch(function (e) { if (window.console) console.warn('pdftools: a watermark could not be drawn.', e); });
-      });
-    });
-    (pg.sigs || []).forEach(function (sig) {
-      chain = chain.then(function () {
-        return out.embedPng(sig.png).then(function (img) {
-          info.page.drawImage(img, { x: sig.x * info.w, y: info.h - (sig.y + sig.h) * info.h, width: sig.w * info.w, height: sig.h * info.h });
-        }).catch(function (e) { if (window.console) console.warn('pdftools: a signature could not be drawn.', e); });
+        return helv().then(function (font) {
+          // drawWatermark falls back to the WinAnsi-encodable remainder itself and
+          // reports whether characters had to be dropped — surface that in the status
+          if (PURE.drawWatermark(PDFLib, info.page, font, wm, info.w, info.h)) lastDropped++;
+        }).catch(function (e) { lastDropped++; if (window.console) console.warn('pdftools: a watermark could not be drawn.', e); });
       });
     });
     (pg.texts || []).forEach(function (t) {
@@ -968,11 +1089,30 @@
         var fp = fontCache[key] || (fontCache[key] = out.embedFont(STD_FONTS[key] || PDFLib.StandardFonts.Helvetica));
         return Promise.resolve(fp).then(function (font) {
           var c = hexToRgb(t.color), col = PDFLib.rgb(c.r, c.g, c.b);
+          var dropped = false;
           (t.text || '').split('\n').forEach(function (line, i) {
             if (!line) return;
-            info.page.drawText(line, { x: t.x * info.w, y: info.h - t.y * info.h - t.size * 0.82 - i * t.size * 1.2, size: t.size, font: font, color: col });
+            var opts = { x: t.x * info.w, y: info.h - t.y * info.h - t.size * 0.82 - i * t.size * 1.2, size: t.size, font: font, color: col };
+            // per-line try: one unencodable char (emoji, CJK) must not silently drop
+            // this line AND every line after it — draw the encodable remainder instead
+            try { info.page.drawText(line, opts); }
+            catch (e0) {
+              dropped = true;
+              var clean = PURE.sanitizeWinAnsi(line);
+              try { if (clean) info.page.drawText(clean, opts); } catch (e1) {}
+            }
           });
-        }).catch(function (e) { if (window.console) console.warn('pdftools: a text box could not be drawn.', e); });
+          if (dropped) lastDropped++;
+        }).catch(function (e) { lastDropped++; if (window.console) console.warn('pdftools: a text box could not be drawn.', e); });
+      });
+    });
+    // signatures AFTER texts: the editor, thumbnails, and Shrink/images previews all
+    // stack a signature on top of overlapping text, so the export must match
+    (pg.sigs || []).forEach(function (sig) {
+      chain = chain.then(function () {
+        return out.embedPng(sig.png).then(function (img) {
+          info.page.drawImage(img, { x: sig.x * info.w, y: info.h - (sig.y + sig.h) * info.h, width: sig.w * info.w, height: sig.h * info.h });
+        }).catch(function (e) { if (window.console) console.warn('pdftools: a signature could not be drawn.', e); });
       });
     });
     if (pg.ocrWords && pg.ocrWords.length) {
@@ -999,10 +1139,12 @@
       return renderPageCanvas(pg, Math.max(1, sz.w * 150 / 72)).then(function (r) {
         var c = document.createElement('canvas'); c.width = r.canvas.width; c.height = r.canvas.height;
         var cx = c.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, c.width, c.height); cx.drawImage(r.canvas, 0, 0);
+        r.canvas.width = 0;   // free the intermediate canvas
         return paintFormValues(c, pg).then(function () {
           paintRedacts(cx, pg, c.width, c.height);   // after the values, so a box can black out a filled field
           return canvasToBytes(c, 'image/jpeg', 0.85);
         }).then(function (jpg) {
+          c.width = 0;   // free the canvas
           return out.embedJpg(jpg).then(function (img) {
             var p = out.addPage([sz.w, sz.h]); p.drawImage(img, { x: 0, y: 0, width: sz.w, height: sz.h });
             return { page: p, w: sz.w, h: sz.h };
@@ -1012,10 +1154,14 @@
     });
   }
 
-  // flatten a page into the output as a lossless PNG image page at `dpi`, with its
+  // flatten a page into the output as a high-quality JPEG image page at `dpi`, with its
   // redaction boxes painted on. This is where redaction actually happens: boxes live as
   // annotations while editing (cheap, fully undoable, no quality loss no matter how many
   // are drawn) and the page is rasterized exactly ONCE, here, on download.
+  // JPEG (q 0.92), not PNG: the page is opaque (white composited under), and pdf-lib's
+  // PNG embedder decodes to raw RGBA channel buffers held until save() — ~7 MB of heap
+  // PER redacted page (a 60-page redacted export peaked past 400 MB). embedJpg stores
+  // the compressed bytes as-is, so peak memory stays flat.
   function bakedPage(out, pg, dpi) {
     return effPointSize(pg).then(function (sz) {
       var scale = Math.min(dpi / 72, 4000 / sz.w, 4000 / sz.h);   // stay inside canvas limits
@@ -1026,10 +1172,10 @@
           cx.globalCompositeOperation = 'destination-over';
           cx.fillStyle = '#fff'; cx.fillRect(0, 0, c.width, c.height);
           cx.globalCompositeOperation = 'source-over';
-          return canvasToBytes(c, 'image/png');
-        }).then(function (png) {
+          return canvasToBytes(c, 'image/jpeg', 0.92);
+        }).then(function (jpg) {
           c.width = 0;   // free the canvas
-          return out.embedPng(png).then(function (img) {
+          return out.embedJpg(jpg).then(function (img) {
             var p = out.addPage([sz.w, sz.h]);
             p.drawImage(img, { x: 0, y: 0, width: sz.w, height: sz.h });
             return { page: p, w: sz.w, h: sz.h };
@@ -1044,14 +1190,17 @@
   // Extract/Split subsets — the thumbnails preview them there, so the export must match.
   function buildPdf(pageList, onTick, numMap) {
     var cache = {}, fontCache = {}, failures = 0;
-    lastFlattened = 0;
+    lastFlattenedRot = 0; lastFlattenedSrc = 0; lastDropped = 0;
     return PDFLib.PDFDocument.create().then(function (out) {
       var chain = Promise.resolve();
       pageList.forEach(function (pg, i) {
         chain = chain.then(function () {
           // overlays (text/sigs/marks) are drawn with rotation-0 math; if the page was
-          // rotated AFTER they were added, flatten it so the export matches the preview
-          var overlaid = (pg.texts && pg.texts.length) || (pg.sigs && pg.sigs.length) ||
+          // rotated AFTER they were added, flatten it so the export matches the preview.
+          // Empty text boxes (abandoned in the editor) draw nothing — they must never
+          // trigger a flatten on their own.
+          var overlaid = (pg.texts && pg.texts.some(function (t) { return (t.text || '').trim().length; })) ||
+                         (pg.sigs && pg.sigs.length) ||
                          (pg.wms && pg.wms.length) || (pg.ocrWords && pg.ocrWords.length) || !!pageNums;
           var mustBakeP = hasRedacts(pg) ? Promise.resolve(true)
             : (!overlaid || pg.blank) ? Promise.resolve(false)
@@ -1059,7 +1208,7 @@
           return mustBakeP.then(function (mustBake) {
             var added;
             if (mustBake) {
-              if (!hasRedacts(pg)) lastFlattened++;
+              if (!hasRedacts(pg)) lastFlattenedRot++;
               added = bakedPage(out, pg, hasRedacts(pg) ? redactDpi : 150);
             } else if (pg.blank) {
               var sw = (pg.rot % 180) !== 0;
@@ -1092,7 +1241,7 @@
                 });
               }).catch(function (e) {
                 if (window.console) console.warn('pdftools: could not copy a page, rasterizing it instead.', e);
-                lastFlattened++;
+                lastFlattenedSrc++;
                 return rasterFallback(out, pg);
               });
             }
@@ -1164,8 +1313,8 @@
     if (!idxs || !idxs.length) return;
     setBusy(true);
     var list = idxs.map(function (i) { return pages[i]; });
-    progress(0, list.length, 'Extracting ' + list.length + ' page' + (list.length > 1 ? 's' : '') + '…');
-    buildPdf(list, buildTick('Extracting'), { idx: idxs, total: pages.length }).then(function (bytes) {
+    progress(0, list.length, 'Downloading ' + list.length + ' page' + (list.length > 1 ? 's' : '') + '…');
+    buildPdf(list, buildTick('Downloading'), { idx: idxs, total: pages.length }).then(function (bytes) {
       var name = exportName('extract');
       downloadBytes(bytes, name);
       setStatus('Saved ' + name + ' (' + list.length + ' page' + (list.length > 1 ? 's' : '') + ', ' + fmtSize(bytes.length) + ').' + flattenNote());
@@ -1199,7 +1348,15 @@
   });
 
   function fmtSize(n) { return n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(0) + ' KB' : (n / 1048576).toFixed(2) + ' MB'; }
-  function flattenNote() { return lastFlattened ? ' ' + lastFlattened + ' page(s) were flattened to images (rotated after content was added, or from an encrypted/damaged PDF).' : ''; }
+  // per-cause notes, so the status never blames the wrong thing (an intrinsically-
+  // rotated source page with page numbers on is neither "rotated by you" nor "damaged")
+  function flattenNote() {
+    var parts = [];
+    if (lastFlattenedRot) parts.push(lastFlattenedRot + ' page(s) were flattened to images so added content (text, signatures, watermarks, or page numbers) renders correctly on rotated pages');
+    if (lastFlattenedSrc) parts.push(lastFlattenedSrc + ' page(s) from an encrypted or damaged PDF were flattened to images');
+    if (lastDropped) parts.push(lastDropped + ' added text/watermark item(s) contained characters the built-in PDF fonts can’t encode (like emoji or non-Latin scripts) — those characters were left out');
+    return parts.length ? ' ' + parts.join('. ') + '.' : '';
+  }
 
   // ---------- shared page-render helpers (used by sign / compress / redact-bake / OCR) ----------
   function canvasToBytes(canvas, type, quality) {
@@ -1260,6 +1417,7 @@
         return paintFormValues(r.canvas, pg).then(function () {
           return canvasToBytes(r.canvas, 'image/png');
         }).then(function (png) {
+          r.canvas.width = 0;   // free the canvas
           pg.raster = { png: png, wPt: sz.w, hPt: sz.h };
           pg.rot = 0; pg.blank = null;
           markDirty(pg);
@@ -1330,8 +1488,8 @@
       (pg.texts || []).forEach(function (t) {
         var px = Math.max(1, t.size * tw / sz.w);
         ctx.fillStyle = t.color || '#111'; ctx.font = px + 'px ' + (t.font || 'Helvetica');
-        ctx.textBaseline = 'top'; ctx.textAlign = 'left';
-        (t.text || '').split('\n').forEach(function (line, i) { ctx.fillText(line, t.x * tw, t.y * th + i * px * 1.2); });
+        ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';   // same baseline math as the export
+        (t.text || '').split('\n').forEach(function (line, i) { ctx.fillText(line, t.x * tw, t.y * th + px * 0.82 + i * px * 1.2); });
       });
       return Promise.all((pg.sigs || []).map(function (s) {
         return new Promise(function (res) {
@@ -1398,7 +1556,7 @@
       });
     });
   }
-  function inputSize() { return docs.reduce(function (a, d) { return a + d.bytes.length; }, 0); }
+  function inputSize() { return docs.reduce(function (a, d) { return a + (d.bytes ? d.bytes.length : 0); }, 0); }
 
   // ---------- shared API for the editor + tools modules ----------
   window.__PT = {
@@ -1434,6 +1592,7 @@
     orderChanged: orderChanged,
     snapshot: snapshot,
     dropSnapshot: dropSnapshot,
+    snapSeq: function () { return snapSeq; },
     undo: undo,
     isBusy: function () { return busy; },
     setBusy: setBusy,

@@ -55,7 +55,7 @@ description: "Free private PDF tools that run entirely in your browser: merge an
 
   <div class="pt-progress" id="pt-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden><div class="pt-progress__fill" id="pt-progress-fill"></div></div>
 
-  <div id="pt-drop" class="pt-drop">
+  <div id="pt-drop" class="pt-drop" tabindex="0" role="button" aria-label="Add PDF or image files">
     <input id="pt-file" type="file" accept="application/pdf,.pdf,image/*" multiple hidden style="display:none!important">
     <div class="pt-grid" id="pt-grid"></div>
     <div class="pt-drop__hint" id="pt-hint"><strong>Drop PDFs or images here</strong><br>or click to choose</div>
@@ -63,7 +63,7 @@ description: "Free private PDF tools that run entirely in your browser: merge an
 
   <p class="pt-status" id="pt-status" role="status" aria-live="polite"></p>
   <p class="pt-engine" id="pt-engine" hidden>Loading the PDF engine…</p>
-  <p class="pt-note">Double-click a page (or click its ✎) to open it for editing: add text, a signature,
+  <p class="pt-note">Double-click a page — double-tap on a phone — or click its ✎ to open it for editing: add text, a signature,
   redactions, or fill form fields. A single click selects; drag a thumbnail to reorder (press and hold on
   a phone). Shift-click selects a run of pages, and the Pages box takes a range like 1-5,9,12- for the
   selected-pages download and Split. <strong>Download all</strong> saves the whole document as one PDF;
@@ -86,7 +86,7 @@ description: "Free private PDF tools that run entirely in your browser: merge an
     <h2>Common questions</h2>
     <details>
       <summary>How do I redact a PDF without uploading it?</summary>
-      <p>Add your PDF above, click the page, choose the Redact tool, and draw boxes over anything you
+      <p>Add your PDF above, double-click the page (or click its ✎ button), choose the Redact tool, and draw boxes over anything you
       want removed. The boxes apply as soon as you draw them and stay with the page while you work
       (move them, delete them, or undo with Ctrl+Z). Real redaction cannot just draw a black rectangle,
       because the text underneath would still be in the file — so when you download, every page with
@@ -147,7 +147,8 @@ description: "Free private PDF tools that run entirely in your browser: merge an
     <div class="pt-dialog__body">
       <p>This shrinks the file by <strong>rendering every page to an image</strong> at the chosen
         quality and rebuilding the PDF from those images. It's most effective on scans and image-heavy
-        documents.</p>
+        documents. <strong>On text-only or already-optimized PDFs the result can come out larger, not
+        smaller</strong> — the status line reports the size change either way.</p>
       <p class="pt-dialog__tradeoff"><strong>Trade-off:</strong> like redaction, the pages become images,
         so text is no longer selectable or searchable. (Your original file is untouched; this downloads a copy.)</p>
       <label class="pt-field"><span>Quality</span>
@@ -243,7 +244,8 @@ description: "Free private PDF tools that run entirely in your browser: merge an
         </select></label>
       <label class="pt-check pt-field--row"><input type="checkbox" id="pt-pn-skip"> Skip the first page (cover)</label>
       <p class="pt-modal__hint">Numbers follow the page order shown in the grid, update automatically if
-        you reorder, and are drawn into the PDF on download.</p>
+        you reorder, and are drawn into the PDF on download. Rotated pages are flattened upright first.
+        Ctrl+Z removes it again.</p>
     </div>
     <div class="pt-modal__foot">
       <button id="pt-pn-cancel" class="pt-btn" type="button">Cancel</button>
@@ -388,7 +390,8 @@ description: "Free private PDF tools that run entirely in your browser: merge an
   </div>
 
   <div class="pt-ed__scroll" id="pt-ed-scroll">
-    <div class="pt-ed__stage" id="pt-ed-stage">
+    <div class="pt-ed__stage" id="pt-ed-stage" tabindex="0" role="application"
+         aria-label="Page preview. With the Text or Redact tool active, press Enter to add one at the page center; arrow keys nudge the selected item, Delete removes it.">
       <canvas id="pt-ed-canvas" class="pt-ed__canvas"></canvas>
       <div class="pt-ed__layer" id="pt-ed-layer"></div>
     </div>
@@ -424,6 +427,13 @@ description: "Free private PDF tools that run entirely in your browser: merge an
 .pt-btn--danger:hover:not(:disabled) { background: #b04438; }
 html[data-theme="light"] .pt-btn--accent { background: #34568a; border-color: #34568a; }
 @media (prefers-color-scheme: light) { html:not([data-theme="dark"]) .pt-btn--accent { background: #34568a; border-color: #34568a; } }
+/* the ACTIVE tool/tab must keep an accent fill on hover — the generic grey .pt-btn hover
+   out-specified the --on rules and left white labels on pale grey in light mode */
+.pt-btn.pt-tool--on:hover:not(:disabled), .pt-btn.pt-tab--on:hover:not(:disabled) { background: #6f97c2; border-color: #6f97c2; }
+html[data-theme="light"] .pt-btn.pt-tool--on:hover:not(:disabled), html[data-theme="light"] .pt-btn.pt-tab--on:hover:not(:disabled) { background: #25406b; border-color: #25406b; }
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .pt-btn.pt-tool--on:hover:not(:disabled), html:not([data-theme="dark"]) .pt-btn.pt-tab--on:hover:not(:disabled) { background: #25406b; border-color: #25406b; }
+}
 
 .pt-toolbar { display: flex; flex-direction: column; gap: 0.45rem; margin-bottom: 0.7rem; }
 .pt-toolbar[hidden] { display: none !important; }   /* the hidden attr loses to display:flex otherwise */
@@ -462,6 +472,7 @@ html[data-theme="light"] .pt-range { color: #1f2430; background: #fff; border-co
   transition: border-color 0.15s ease, background 0.15s ease;
 }
 .pt-drop--over { border-color: #82a6cc; background: rgba(130,166,204,0.10); }
+.pt-drop:focus-visible { border-color: #82a6cc; outline: 2px solid #82a6cc; outline-offset: 2px; }
 .pt-drop--has { cursor: default; }
 .pt-drop--has .pt-drop__hint { display: none; }
 #pt-file { display: none !important; }
@@ -492,6 +503,18 @@ html[data-theme="light"] .pt-thumb.pt-sel { border-color: #34568a; box-shadow: 0
 .pt-thumb__acts { display: flex; gap: 0.2rem; }
 .pt-thumb__act { font: inherit; font-size: 0.85em; line-height: 1; cursor: pointer; color: inherit; border: 1px solid rgba(127,127,127,0.4); background: rgba(127,127,127,0.14); border-radius: 4px; padding: 0.15em 0.35em; }
 .pt-thumb__act:hover { background: rgba(127,127,127,0.3); }
+/* fingers need bigger targets than mouse pointers (the ✎ ⟳ × row was ~19x15px) */
+@media (pointer: coarse) {
+  .pt-thumb__act { font-size: 1.05em; padding: 0.4em 0.55em; min-width: 24px; box-sizing: border-box; }   /* the × glyph is narrow */
+  .pt-thumb__acts { gap: 0.45rem; }
+}
+/* the site's floating theme toggle (fixed, bottom-left, raised on mobile) lands exactly
+   on this page's tall wrapped toolbar at natural scroll positions and steals taps from
+   enabled buttons — hide it here on small screens (theme still follows the OS setting,
+   and the toggle is on every other page) */
+@media (max-width: 768px) {
+  #theme-toggle { display: none; }
+}
 
 .pt-status { font-size: 0.9em; opacity: 0.9; min-height: 1.2em; margin: 0.9rem 0 0.2rem; }
 .pt-engine { font-size: 0.85em; opacity: 0.7; margin: 0.2rem 0; }
@@ -581,20 +604,31 @@ html[data-theme="light"] .pt-ed__opts select { color: #1f2430; background: #fff;
 .pt-signbar__src { display: inline-flex; align-items: center; gap: 0.5rem; }
 .pt-signbar__src[hidden] { display: none !important; }   /* the hidden attr loses to display:inline-flex otherwise */
 .pt-ed__scroll { flex: 1 1 auto; overflow: auto; display: flex; justify-content: center; align-items: flex-start; padding: 1rem; }
-.pt-ed__stage { position: relative; box-shadow: 0 6px 30px rgba(0,0,0,0.4); background: #fff; touch-action: none; }
-.pt-ed__canvas { display: block; touch-action: none; }
-.pt-ed__layer { position: absolute; inset: 0; touch-action: none; }
+/* touch-action pinch-zoom, NOT none: single-finger drags still reach the pointer
+   handlers (drawing boxes, dragging annotations), but a two-finger pinch falls through
+   to native browser zoom — the editor has no zoom of its own, and redacting 6px text
+   at phone scale needs one */
+.pt-ed__stage { position: relative; box-shadow: 0 6px 30px rgba(0,0,0,0.4); background: #fff; touch-action: pinch-zoom; }
+.pt-ed__canvas { display: block; touch-action: pinch-zoom; }
+.pt-ed__layer { position: absolute; inset: 0; touch-action: pinch-zoom; }
 .pt-ed__hintbar { padding: 0.4rem 0.8rem; font-size: 0.82rem; opacity: 0.7; min-height: 1.2em; border-top: 1px solid rgba(127,127,127,0.2); }
 .pt-ed__arrow { position: absolute; top: 50%; transform: translateY(-50%); z-index: 5; width: 46px; height: 70px; border: none; border-radius: 10px; background: rgba(127,127,127,0.28); color: #fff; font-size: 2.2rem; line-height: 1; cursor: pointer; opacity: 0.55; transition: opacity 0.15s ease, background 0.15s ease; }
 .pt-ed__arrow:hover:not(:disabled) { opacity: 1; background: rgba(130,166,204,0.6); }
 .pt-ed__arrow:disabled { opacity: 0; pointer-events: none; }
 .pt-ed__arrow--left { left: 12px; }
 .pt-ed__arrow--right { right: 12px; }
+/* light mode: a white chevron on the pale grey pill was unreadable at rest */
+html[data-theme="light"] .pt-ed__arrow { color: #1f2430; }
+@media (prefers-color-scheme: light) { html:not([data-theme="dark"]) .pt-ed__arrow { color: #1f2430; } }
 
 /* annotations live inside .pt-ed__layer */
 .pt-anno { position: absolute; box-sizing: border-box; }
 .pt-anno--text { cursor: text; }
-.pt-anno__txt { min-width: 1ch; padding: 0; line-height: 1.2; white-space: pre; outline: none; }
+/* margin-top -0.13em: the CSS line box puts the first baseline ~0.95em below the top
+   (half-leading + ascent) while the export draws it at 0.82em — shift the ink up so the
+   editor preview lands where drawText will put it (the wrapper position/model y are
+   untouched, so drags stay exact) */
+.pt-anno__txt { min-width: 1ch; padding: 0; line-height: 1.2; white-space: pre; outline: none; margin-top: -0.13em; }
 .pt-anno--text.pt-sel, .pt-anno--sig.pt-sel, .pt-anno--redact.pt-sel { outline: 1px dashed #82a6cc; outline-offset: 1px; }
 .pt-anno--sig { cursor: move; }
 .pt-anno--sig img { width: 100%; height: 100%; display: block; pointer-events: none; }
@@ -608,6 +642,7 @@ html[data-theme="light"] .pt-ed__opts select { color: #1f2430; background: #fff;
 .pt-formwidget { position: absolute; box-sizing: border-box; font: inherit; border: 1px solid #82a6cc; background: rgba(130,166,204,0.18); color: #111; padding: 0 2px; }
 .pt-formwidget[type="checkbox"], .pt-formwidget[type="radio"] { background: #fff; accent-color: #34568a; }
 .pt-stage--text { cursor: text; }
+.pt-stage--text .pt-anno--redact { cursor: text; }   /* the text tool can place a label on a black box */
 .pt-stage--redact { cursor: crosshair; }
 </style>
 

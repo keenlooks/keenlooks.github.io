@@ -98,14 +98,18 @@
         opacity: Math.max(0.02, Math.min(0.9, (parseInt(wmOp.value, 10) || 15) / 100)),
         size: Math.max(6, Math.min(200, parseInt(wmSize.value, 10) || 48))
       };
+      var wmFlat = 0;
       eachPage(idxs, function (pg) {
-        return ensureUprightPage(pg).then(function () {
+        return ensureUprightPage(pg).then(function (flattened) {
+          if (flattened) wmFlat++;
           (pg.wms || (pg.wms = [])).push({ text: wm.text, pos: wm.pos, opacity: wm.opacity, size: wm.size });
           PT.markDirty(pg);
         });
       }, 'Watermarking').then(function () {
         PT.renderGrid();
-        PT.setStatus('Watermarked ' + idxs.length + ' page' + (idxs.length > 1 ? 's' : '') + '. Download to save the result.');
+        PT.setStatus('Watermarked ' + idxs.length + ' page' + (idxs.length > 1 ? 's' : '') + '.' +
+          (wmFlat ? ' ' + wmFlat + ' rotated page' + (wmFlat > 1 ? 's were' : ' was') + ' flattened upright first (Ctrl+Z undoes it).' : '') +
+          ' Download to save the result.');
       }).catch(function (e) { PT.setStatus('Watermark failed: ' + (e && e.message || e)); })
         .then(function () { PT.setBusy(false); });
     });
@@ -155,12 +159,15 @@
       };
       PT.setBusy(true);
       PT.snapshot('page numbers');
-      // numbers are drawn with rotation-0 math, so flatten any rotated pages first
-      eachPage(allIdx(), function (pg) { return ensureUprightPage(pg); }, 'Preparing').then(function () {
+      // numbers are drawn with rotation-0 math, so flatten any rotated pages first —
+      // and SAY so (the watermark flow discloses the same flatten; this one must too)
+      var pnFlat = 0;
+      eachPage(allIdx(), function (pg) { return ensureUprightPage(pg).then(function (f) { if (f) pnFlat++; }); }, 'Preparing').then(function () {
         PT.setPageNums(cfg);
         PT.markAllDirty();
         PT.renderGrid();
-        PT.setStatus('Page numbers on. They follow the current page order and are added on download.');
+        PT.setStatus('Page numbers on. They follow the current page order and are added on download.' +
+          (pnFlat ? ' ' + pnFlat + ' rotated page' + (pnFlat > 1 ? 's were' : ' was') + ' flattened upright first (Ctrl+Z undoes it).' : ''));
       }).catch(function (e) { PT.setStatus('Page numbering failed: ' + (e && e.message || e)); })
         .then(function () { PT.setBusy(false); });
     });
