@@ -70,12 +70,51 @@
       rot: pg.rot || 0, sel: !!pg.sel,
       raster: pg.raster || null,
       blank: pg.blank ? { wPt: pg.blank.wPt, hPt: pg.blank.hPt } : null,
-      redacted: !!pg.redacted, ocr: !!pg.ocr,
+      ocr: !!pg.ocr,
+      redacts: (pg.redacts || []).map(function (r) { return { x: r.x, y: r.y, w: r.w, h: r.h }; }),
       sigs: (pg.sigs || []).map(function (s) { return { png: s.png, x: s.x, y: s.y, w: s.w, h: s.h }; }),
       texts: (pg.texts || []).map(function (t) { return { x: t.x, y: t.y, text: t.text, size: t.size, font: t.font, color: t.color }; }),
       wms: (pg.wms || []).map(function (w) { return { text: w.text, pos: w.pos, opacity: w.opacity, size: w.size }; }),
       ocrWords: pg.ocrWords ? pg.ocrWords.slice() : null
     };
+  };
+
+  // rotate normalized {x,y,w,h} rects (fractions of the effective page) by a multiple of
+  // 90°, so redaction boxes keep covering the same CONTENT when a page is rotated.
+  PURE.rotateRects = function (rects, delta) {
+    var d = ((delta % 360) + 360) % 360;
+    return (rects || []).map(function (r) {
+      if (d === 90) return { x: 1 - r.y - r.h, y: r.x, w: r.h, h: r.w };
+      if (d === 180) return { x: 1 - r.x - r.w, y: 1 - r.y - r.h, w: r.w, h: r.h };
+      if (d === 270) return { x: r.y, y: 1 - r.x - r.w, w: r.h, h: r.w };
+      return { x: r.x, y: r.y, w: r.w, h: r.h };
+    });
+  };
+
+  // rotate OCR word bboxes ({text,x0,y0,x1,y1} normalized, y down) with the page, same
+  // frame as rotateRects — if the words stayed in the old frame while the redaction
+  // rects rotated, the overlap filter below would stop matching and redacted text
+  // could survive in the invisible text layer
+  PURE.rotateWords = function (words, delta) {
+    if (!words) return words;
+    var d = ((delta % 360) + 360) % 360;
+    return words.map(function (w) {
+      if (d === 90) return { text: w.text, x0: 1 - w.y1, y0: w.x0, x1: 1 - w.y0, y1: w.x1 };
+      if (d === 180) return { text: w.text, x0: 1 - w.x1, y0: 1 - w.y1, x1: 1 - w.x0, y1: 1 - w.y0 };
+      if (d === 270) return { text: w.text, x0: w.y0, y0: 1 - w.x1, x1: w.y1, y1: 1 - w.x0 };
+      return { text: w.text, x0: w.x0, y0: w.y0, x1: w.x1, y1: w.y1 };
+    });
+  };
+
+  // drop OCR words whose box overlaps any redaction rect — the invisible text layer
+  // must never resurrect content the user blacked out
+  PURE.filterOcrWords = function (words, rects) {
+    if (!words || !rects || !rects.length) return words;
+    return words.filter(function (w) {
+      return !rects.some(function (r) {
+        return w.x0 < r.x + r.w && w.x1 > r.x && w.y0 < r.y + r.h && w.y1 > r.y;
+      });
+    });
   };
 
   // bounded LIFO used for undo
@@ -205,6 +244,7 @@
   var pages = [];            // page model — see newPage()
   var pageNums = null;       // { fmt:'n'|'nofm', pos:'bc'|'br', start, skipFirst, size } or null
   var lastFlattened = 0;     // how many pages the last build had to rasterize (encrypted/damaged sources)
+  var redactDpi = 150;       // render quality used when redacted pages are flattened on download
   var busy = false;          // one long operation at a time
   var undoStack = PURE.makeUndoStack(25);
   var lastSelIdx = -1;       // shift-click anchor
@@ -213,10 +253,11 @@
   function newPage(docIndex, pageIndex) {
     return {
       docIndex: docIndex, pageIndex: pageIndex, rot: 0, sel: false,
-      raster: null, blank: null, redacted: false, ocr: false,
-      sigs: [], texts: [], wms: [], ocrWords: null
+      raster: null, blank: null, ocr: false,
+      redacts: [], sigs: [], texts: [], wms: [], ocrWords: null
     };
   }
+  function hasRedacts(pg) { return !!(pg.redacts && pg.redacts.length); }
 
   // ---- elements ----
   var drop = $('pt-drop'), grid = $('pt-grid'), fileInput = $('pt-file'), toolbar = $('pt-toolbar');
@@ -268,7 +309,9 @@
       pageNums: pageNums ? {
         fmt: pageNums.fmt, pos: pageNums.pos, start: pageNums.start,
         skipFirst: pageNums.skipFirst, size: pageNums.size
-      } : null
+      } : null,
+      // filled form values live on the docs, not the pages — capture them too
+      forms: docs.map(function (d) { return d.formValues ? Object.assign({}, d.formValues) : null; })
     });
     updateToolbar();
   }
@@ -279,9 +322,11 @@
     if (!e) return;
     pages = e.pages;
     pageNums = e.pageNums;
+    if (e.forms) e.forms.forEach(function (fv, i) { if (docs[i]) docs[i].formValues = fv; });
     lastSelIdx = -1;
     renderGrid(); updateToolbar();
     setStatus('Undid: ' + e.label + '.');
+    if (window.__PT && window.__PT.onUndo) window.__PT.onUndo();
   }
 
   function modalOpen() { return !!document.querySelector('.pt-modal:not([hidden])'); }
@@ -485,9 +530,22 @@
     }).catch(function () { if (done) done(); });
   }
 
+  // black out the page's redaction boxes on a canvas (normalized rects of the effective
+  // page). Painted FIRST, before texts/sigs, so replacement text typed over a redacted
+  // area stays visible — and painted in EVERY rasterizing path (thumbnails, shrink,
+  // images export, OCR input, final build) so the covered content can never leak.
+  function paintRedacts(ctx, pg, w, h) {
+    if (!hasRedacts(pg)) return;
+    ctx.save();
+    ctx.fillStyle = '#000';
+    pg.redacts.forEach(function (r) { ctx.fillRect(r.x * w, r.y * h, r.w * w, r.h * h); });
+    ctx.restore();
+  }
+
   // signature/text annotations + watermarks + page numbers on a thumbnail or preview canvas.
   // The placement math mirrors the export math in drawOverlays/PURE.draw*.
   function drawThumbOverlays(ctx, pg, tw, th, Wpt, Hpt, gridIdx) {
+    paintRedacts(ctx, pg, tw, th);
     drawMarks(ctx, pg, tw, th, Wpt, Hpt, gridIdx);
     (pg.texts || []).forEach(function (t) {
       var px = Math.max(3, t.size * tw / Wpt);
@@ -563,7 +621,7 @@
       var bar = document.createElement('div');
       bar.className = 'pt-thumb__bar';
       bar.innerHTML = '<span class="pt-thumb__num">' + (idx + 1) +
-        (pg.redacted ? ' <span class="pt-thumb__redacted" title="Redacted &amp; flattened">▮</span>' : '') +
+        (hasRedacts(pg) ? ' <span class="pt-thumb__redacted" title="Redacted (flattened to an image on download)">▮</span>' : '') +
         (pg.sigs && pg.sigs.length ? ' <span class="pt-thumb__signed" title="Signed">✎</span>' : '') +
         (pg.ocr ? ' <span class="pt-thumb__ocr" title="Searchable text layer added">abc</span>' : '') + '</span>';
       var acts = document.createElement('div');
@@ -574,7 +632,10 @@
       rb.addEventListener('click', function (e) {
         e.stopPropagation(); if (busy) return;
         snapshot('rotate page ' + (idx + 1));
-        pg.rot = (pg.rot + 90) % 360; markDirty(pg); renderGrid();
+        pg.rot = (pg.rot + 90) % 360;
+        pg.redacts = PURE.rotateRects(pg.redacts, 90);   // boxes + OCR words follow the content
+        pg.ocrWords = PURE.rotateWords(pg.ocrWords, 90);
+        markDirty(pg); renderGrid();
       });
       var db = document.createElement('button'); db.className = 'pt-thumb__act'; db.type = 'button'; db.title = 'Delete page'; db.textContent = '×';
       db.addEventListener('click', function (e) {
@@ -723,10 +784,25 @@
       var top = undoStack.peek();
       btnUndo.title = top ? ('Undo: ' + top.label + ' (Ctrl+Z)') : 'Undo (Ctrl+Z)';
     }
+    var edUndo = $('pt-ed-undo');   // the page editor's own Undo button mirrors the stack
+    if (edUndo) {
+      edUndo.disabled = undoStack.size() === 0;
+      var top2 = undoStack.peek();
+      edUndo.title = top2 ? ('Undo: ' + top2.label + ' (Ctrl+Z)') : 'Undo (Ctrl+Z)';
+    }
     var st = rangeState();
-    if (btnExtract) btnExtract.disabled = st.empty ? sel === 0 : !(st.idx && st.idx.length);
+    if (btnExtract) {
+      btnExtract.disabled = st.empty ? sel === 0 : !(st.idx && st.idx.length);
+      // same verb as the main button, scope is the only difference: "Download all (12)"
+      // vs "Download selected" / "Download 3 pages" (selection or the typed range)
+      var exN = st.empty ? sel : (st.idx ? st.idx.length : 0);
+      btnExtract.textContent = exN ? ('Download ' + exN + ' page' + (exN > 1 ? 's' : '')) : 'Download selected';
+    }
     if (btnSplit) btnSplit.disabled = !has || (!st.empty && !st.idx);
-    if (btnDownload) btnDownload.disabled = !has;
+    if (btnDownload) {
+      btnDownload.disabled = !has;
+      btnDownload.textContent = has ? ('Download all (' + pages.length + ')') : 'Download all';
+    }
     if (btnSelAll) btnSelAll.textContent = (sel === pages.length && pages.length > 0) ? 'Select none' : 'Select all';
     Array.prototype.forEach.call(document.querySelectorAll('[data-pt-needs-pages]'), function (b) { b.disabled = !has; });
   }
@@ -750,7 +826,12 @@
     if (busy) return;
     var sel = selectedIdx(); if (!sel.length) return;
     snapshot(label + ' ' + sel.length + ' page' + (sel.length > 1 ? 's' : ''));
-    sel.forEach(function (i) { pages[i].rot = (pages[i].rot + delta) % 360; markDirty(pages[i]); });
+    sel.forEach(function (i) {
+      pages[i].rot = (pages[i].rot + delta) % 360;
+      pages[i].redacts = PURE.rotateRects(pages[i].redacts, delta);   // boxes + OCR words follow the content
+      pages[i].ocrWords = PURE.rotateWords(pages[i].ocrWords, delta);
+      markDirty(pages[i]);
+    });
     renderGrid();
   }
   btnRotate.addEventListener('click', function () { rotateSelected(90, 'rotate'); });
@@ -896,7 +977,9 @@
     });
     if (pg.ocrWords && pg.ocrWords.length) {
       chain = chain.then(function () {
-        return helv().then(function (font) { PURE.drawOcrWords(PDFLib, info.page, font, pg.ocrWords, info.w, info.h); })
+        // never let the invisible text layer resurrect redacted content
+        var words = PURE.filterOcrWords(pg.ocrWords, pg.redacts);
+        return helv().then(function (font) { PURE.drawOcrWords(PDFLib, info.page, font, words, info.w, info.h); })
           .catch(function (e) { if (window.console) console.warn('pdftools: the OCR text layer could not be drawn.', e); });
       });
     }
@@ -916,7 +999,10 @@
       return renderPageCanvas(pg, Math.max(1, sz.w * 150 / 72)).then(function (r) {
         var c = document.createElement('canvas'); c.width = r.canvas.width; c.height = r.canvas.height;
         var cx = c.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, c.width, c.height); cx.drawImage(r.canvas, 0, 0);
-        return canvasToBytes(c, 'image/jpeg', 0.85).then(function (jpg) {
+        return paintFormValues(c, pg).then(function () {
+          paintRedacts(cx, pg, c.width, c.height);   // after the values, so a box can black out a filled field
+          return canvasToBytes(c, 'image/jpeg', 0.85);
+        }).then(function (jpg) {
           return out.embedJpg(jpg).then(function (img) {
             var p = out.addPage([sz.w, sz.h]); p.drawImage(img, { x: 0, y: 0, width: sz.w, height: sz.h });
             return { page: p, w: sz.w, h: sz.h };
@@ -926,52 +1012,95 @@
     });
   }
 
-  // onTick(done, total) is awaited after each page so the progress bar can paint
-  function buildPdf(pageList, onTick) {
+  // flatten a page into the output as a lossless PNG image page at `dpi`, with its
+  // redaction boxes painted on. This is where redaction actually happens: boxes live as
+  // annotations while editing (cheap, fully undoable, no quality loss no matter how many
+  // are drawn) and the page is rasterized exactly ONCE, here, on download.
+  function bakedPage(out, pg, dpi) {
+    return effPointSize(pg).then(function (sz) {
+      var scale = Math.min(dpi / 72, 4000 / sz.w, 4000 / sz.h);   // stay inside canvas limits
+      return renderPageCanvas(pg, Math.max(1, sz.w * scale)).then(function (r) {
+        var c = r.canvas, cx = c.getContext('2d');
+        return paintFormValues(c, pg).then(function () {
+          paintRedacts(cx, pg, c.width, c.height);   // after the values, so a box can black out a filled field
+          cx.globalCompositeOperation = 'destination-over';
+          cx.fillStyle = '#fff'; cx.fillRect(0, 0, c.width, c.height);
+          cx.globalCompositeOperation = 'source-over';
+          return canvasToBytes(c, 'image/png');
+        }).then(function (png) {
+          c.width = 0;   // free the canvas
+          return out.embedPng(png).then(function (img) {
+            var p = out.addPage([sz.w, sz.h]);
+            p.drawImage(img, { x: 0, y: 0, width: sz.w, height: sz.h });
+            return { page: p, w: sz.w, h: sz.h };
+          });
+        });
+      });
+    });
+  }
+
+  // onTick(done, total) is awaited after each page so the progress bar can paint.
+  // numMap ({idx:[gridIdx...], total:n}) keeps page NUMBERS at their grid positions for
+  // Extract/Split subsets — the thumbnails preview them there, so the export must match.
+  function buildPdf(pageList, onTick, numMap) {
     var cache = {}, fontCache = {}, failures = 0;
     lastFlattened = 0;
     return PDFLib.PDFDocument.create().then(function (out) {
       var chain = Promise.resolve();
       pageList.forEach(function (pg, i) {
         chain = chain.then(function () {
-          var added;
-          if (pg.blank) {
-            var sw = (pg.rot % 180) !== 0;
-            var bw = sw ? pg.blank.hPt : pg.blank.wPt, bh = sw ? pg.blank.wPt : pg.blank.hPt;
-            var bp = out.addPage([bw, bh]);
-            added = Promise.resolve({ page: bp, w: bw, h: bh });
-          } else if (pg.raster) {
-            added = out.embedPng(pg.raster.png).then(function (img) {
-              var p = out.addPage([pg.raster.wPt, pg.raster.hPt]);
-              p.drawImage(img, { x: 0, y: 0, width: pg.raster.wPt, height: pg.raster.hPt });
-              if (pg.rot) { try { p.setRotation(PDFLib.degrees(((pg.rot % 360) + 360) % 360)); } catch (e) {} }
-              return { page: p, w: pg.raster.wPt, h: pg.raster.hPt };
-            });
-          } else {
-            added = Promise.resolve(getLibDoc(cache, pg.docIndex)).then(function (src) {
-              // pdf-lib loads encrypted PDFs (ignoreEncryption) but does NOT decrypt their streams,
-              // so copyPages would copy encrypted garbage → blank/corrupt pages. pdf.js decrypts and
-              // renders fine, so route encrypted sources through the rasterize fallback instead.
-              if (src && src.isEncrypted) throw new Error('encrypted source PDF; rasterizing to preserve content');
-              return out.copyPages(src, [pg.pageIndex]).then(function (cps) {
-                var cp = cps && cps[0];
-                if (!cp) throw new Error('copyPages returned no page');
-                if (pg.rot) {
-                  var base = (cp.getRotation && cp.getRotation().angle) || 0;
-                  cp.setRotation(PDFLib.degrees((base + pg.rot) % 360));
-                }
-                out.addPage(cp);
-                var sz = cp.getSize();
-                return { page: cp, w: sz.width, h: sz.height };
+          // overlays (text/sigs/marks) are drawn with rotation-0 math; if the page was
+          // rotated AFTER they were added, flatten it so the export matches the preview
+          var overlaid = (pg.texts && pg.texts.length) || (pg.sigs && pg.sigs.length) ||
+                         (pg.wms && pg.wms.length) || (pg.ocrWords && pg.ocrWords.length) || !!pageNums;
+          var mustBakeP = hasRedacts(pg) ? Promise.resolve(true)
+            : (!overlaid || pg.blank) ? Promise.resolve(false)
+            : pageEffRotation(pg).then(function (r) { return r !== 0; });
+          return mustBakeP.then(function (mustBake) {
+            var added;
+            if (mustBake) {
+              if (!hasRedacts(pg)) lastFlattened++;
+              added = bakedPage(out, pg, hasRedacts(pg) ? redactDpi : 150);
+            } else if (pg.blank) {
+              var sw = (pg.rot % 180) !== 0;
+              var bw = sw ? pg.blank.hPt : pg.blank.wPt, bh = sw ? pg.blank.wPt : pg.blank.hPt;
+              var bp = out.addPage([bw, bh]);
+              added = Promise.resolve({ page: bp, w: bw, h: bh });
+            } else if (pg.raster) {
+              added = out.embedPng(pg.raster.png).then(function (img) {
+                var p = out.addPage([pg.raster.wPt, pg.raster.hPt]);
+                p.drawImage(img, { x: 0, y: 0, width: pg.raster.wPt, height: pg.raster.hPt });
+                if (pg.rot) { try { p.setRotation(PDFLib.degrees(((pg.rot % 360) + 360) % 360)); } catch (e) {} }
+                return { page: p, w: pg.raster.wPt, h: pg.raster.hPt };
               });
-            }).catch(function (e) {
-              if (window.console) console.warn('pdftools: could not copy a page, rasterizing it instead.', e);
-              lastFlattened++;
-              return rasterFallback(out, pg);
+            } else {
+              added = Promise.resolve(getLibDoc(cache, pg.docIndex)).then(function (src) {
+                // pdf-lib loads encrypted PDFs (ignoreEncryption) but does NOT decrypt their streams,
+                // so copyPages would copy encrypted garbage → blank/corrupt pages. pdf.js decrypts and
+                // renders fine, so route encrypted sources through the rasterize fallback instead.
+                if (src && src.isEncrypted) throw new Error('encrypted source PDF; rasterizing to preserve content');
+                return out.copyPages(src, [pg.pageIndex]).then(function (cps) {
+                  var cp = cps && cps[0];
+                  if (!cp) throw new Error('copyPages returned no page');
+                  if (pg.rot) {
+                    var base = (cp.getRotation && cp.getRotation().angle) || 0;
+                    cp.setRotation(PDFLib.degrees((base + pg.rot) % 360));
+                  }
+                  out.addPage(cp);
+                  var sz = cp.getSize();
+                  return { page: cp, w: sz.width, h: sz.height };
+                });
+              }).catch(function (e) {
+                if (window.console) console.warn('pdftools: could not copy a page, rasterizing it instead.', e);
+                lastFlattened++;
+                return rasterFallback(out, pg);
+              });
+            }
+            return added.then(function (info) {
+              return drawOverlays(out, info, pg, fontCache,
+                numMap ? numMap.idx[i] : i, numMap ? numMap.total : pageList.length);
             });
-          }
-          return added.then(function (info) { return drawOverlays(out, info, pg, fontCache, i, pageList.length); })
-            .catch(function (e) { failures++; if (window.console) console.warn('pdftools: a page failed and was skipped.', e); })
+          }).catch(function (e) { failures++; if (window.console) console.warn('pdftools: a page failed and was skipped.', e); })
             .then(function () { return onTick ? onTick(i + 1, pageList.length) : null; });
         });
       });
@@ -1036,7 +1165,7 @@
     setBusy(true);
     var list = idxs.map(function (i) { return pages[i]; });
     progress(0, list.length, 'Extracting ' + list.length + ' page' + (list.length > 1 ? 's' : '') + '…');
-    buildPdf(list, buildTick('Extracting')).then(function (bytes) {
+    buildPdf(list, buildTick('Extracting'), { idx: idxs, total: pages.length }).then(function (bytes) {
       var name = exportName('extract');
       downloadBytes(bytes, name);
       setStatus('Saved ' + name + ' (' + list.length + ' page' + (list.length > 1 ? 's' : '') + ', ' + fmtSize(bytes.length) + ').' + flattenNote());
@@ -1055,7 +1184,7 @@
       chain = chain.then(function () {
         return progress(k, idxs.length, 'Splitting page ' + (k + 1) + ' of ' + idxs.length + '…');
       }).then(function () {
-        return buildPdf([pages[pi]]).then(function (bytes) {
+        return buildPdf([pages[pi]], null, { idx: [pi], total: pages.length }).then(function (bytes) {
           files.push({ name: 'page-' + String(pi + 1).padStart(3, '0') + '.pdf', data: bytes });
         });
       });
@@ -1070,7 +1199,7 @@
   });
 
   function fmtSize(n) { return n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(0) + ' KB' : (n / 1048576).toFixed(2) + ' MB'; }
-  function flattenNote() { return lastFlattened ? ' ' + lastFlattened + ' page(s) from an encrypted or damaged PDF were flattened to images.' : ''; }
+  function flattenNote() { return lastFlattened ? ' ' + lastFlattened + ' page(s) were flattened to images (rotated after content was added, or from an encrypted/damaged PDF).' : ''; }
 
   // ---------- shared page-render helpers (used by sign / compress / redact-bake / OCR) ----------
   function canvasToBytes(canvas, type, quality) {
@@ -1127,7 +1256,10 @@
   function bakePageToRaster(pg, dpi) {
     return effPointSize(pg).then(function (sz) {
       return renderPageCanvas(pg, Math.max(1, sz.w * dpi / 72)).then(function (r) {
-        return canvasToBytes(r.canvas, 'image/png').then(function (png) {
+        // fill-ins must survive the flatten (the raster page has no live fields afterwards)
+        return paintFormValues(r.canvas, pg).then(function () {
+          return canvasToBytes(r.canvas, 'image/png');
+        }).then(function (png) {
           pg.raster = { png: png, wPt: sz.w, hPt: sz.h };
           pg.rot = 0; pg.blank = null;
           markDirty(pg);
@@ -1135,6 +1267,54 @@
         });
       });
     });
+  }
+
+  // paint the user's filled form values onto a rendered page canvas. Every rasterizing
+  // path (redact bake, rotated-overlay bake, encrypted/damaged fallback, Shrink,
+  // Pages→images, ensureUpright) renders via pdf.js, which draws the fields' stored
+  // appearances but knows nothing about our unflattened fill-ins — without this the
+  // values silently vanish from any flattened page. Reads formValues at call time, so
+  // it always matches the undo state. convertToViewportRectangle handles rotation.
+  function paintFormValues(canvas, pg) {
+    if (pg.docIndex < 0 || pg.raster || pg.blank) return Promise.resolve();
+    var d = docs[pg.docIndex];
+    if (!d || !d.formValues || !Object.keys(d.formValues).length) return Promise.resolve();
+    return d.js.getPage(pg.pageIndex + 1).then(function (page) {
+      return page.getAnnotations().then(function (annots) {
+        var rot = totalRotation(page, pg.rot);
+        var v1 = page.getViewport({ scale: 1, rotation: rot });
+        var vp = page.getViewport({ scale: canvas.width / v1.width, rotation: rot });
+        var s = canvas.width / v1.width;
+        var ctx = canvas.getContext('2d');
+        annots.forEach(function (a) {
+          if (a.subtype !== 'Widget' || !a.fieldName || !(a.fieldName in d.formValues) || !a.rect) return;
+          var val = d.formValues[a.fieldName];
+          if (val == null || val === '' || val === false) return;
+          var r = vp.convertToViewportRectangle(a.rect);
+          var x0 = Math.min(r[0], r[2]), y0 = Math.min(r[1], r[3]), w = Math.abs(r[2] - r[0]), h = Math.abs(r[1] - r[3]);
+          ctx.save();
+          ctx.fillStyle = '#111';
+          if (a.fieldType === 'Btn' && a.radioButton) {
+            if (String(val) === String(a.buttonValue)) {
+              ctx.beginPath(); ctx.arc(x0 + w / 2, y0 + h / 2, Math.max(1.5, Math.min(w, h) * 0.28), 0, Math.PI * 2); ctx.fill();
+            }
+          } else if (a.fieldType === 'Btn') {
+            if (val === true) {
+              ctx.strokeStyle = '#111'; ctx.lineWidth = Math.max(1.5, h * 0.12);
+              ctx.beginPath();
+              ctx.moveTo(x0 + w * 0.22, y0 + h * 0.52); ctx.lineTo(x0 + w * 0.42, y0 + h * 0.74); ctx.lineTo(x0 + w * 0.8, y0 + h * 0.26);
+              ctx.stroke();
+            }
+          } else {
+            ctx.font = Math.max(6 * s, h * 0.55) + 'px Arial, Helvetica, sans-serif';
+            ctx.textBaseline = 'middle';
+            ctx.beginPath(); ctx.rect(x0, y0, w, h); ctx.clip();
+            ctx.fillText(String(val), x0 + 2 * s, y0 + h / 2);
+          }
+          ctx.restore();
+        });
+      });
+    }).catch(function () {});
   }
 
   // draw a page's live decorations (watermarks, page number, texts, signatures) onto a
@@ -1145,6 +1325,7 @@
   function drawDecor(canvas, pg, gridIdx) {
     return effPointSize(pg).then(function (sz) {
       var ctx = canvas.getContext('2d'), tw = canvas.width, th = canvas.height;
+      paintRedacts(ctx, pg, tw, th);
       drawMarks(ctx, pg, tw, th, sz.w, sz.h, gridIdx);
       (pg.texts || []).forEach(function (t) {
         var px = Math.max(1, t.size * tw / sz.w);
@@ -1194,9 +1375,11 @@
               var c = document.createElement('canvas'); c.width = r.canvas.width; c.height = r.canvas.height;
               var cx = c.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, c.width, c.height); cx.drawImage(r.canvas, 0, 0);
               r.canvas.width = 0;   // free the intermediate canvas
-              // keep the user's watermarks / page numbers / texts / signatures — the raw
-              // render has only the source page content
-              return drawDecor(c, pg, i).then(function () {
+              // keep the user's form fill-ins, watermarks / page numbers / texts /
+              // signatures — the raw render has only the source page content
+              return paintFormValues(c, pg).then(function () {
+                return drawDecor(c, pg, i);
+              }).then(function () {
                 return canvasToBytes(c, 'image/jpeg', quality);
               }).then(function (jpg) {
                 c.width = 0;
@@ -1240,6 +1423,12 @@
     pdfjsPage: function (pg) { return docs[pg.docIndex].js.getPage(pg.pageIndex + 1); },
     drawMarks: drawMarks,
     drawDecor: drawDecor,
+    paintRedacts: paintRedacts,
+    paintFormValues: paintFormValues,
+    hasRedacts: hasRedacts,
+    setRedactDpi: function (d) { redactDpi = Math.max(72, Math.min(300, d || 150)); },
+    getRedactDpi: function () { return redactDpi; },
+    onUndo: null,   // the editor sets this to rebind its page after an undo
     markDirty: markDirty,
     markAllDirty: markAllDirty,
     orderChanged: orderChanged,
@@ -1301,7 +1490,7 @@
       var name = enc.encode(f.name), data = f.data, crc = crc32(data);
       var lh = new Uint8Array(30 + name.length);
       var dv = new DataView(lh.buffer);
-      dv.setUint32(0, 0x04034b50, true); dv.setUint16(4, 20, true); dv.setUint16(6, 0, true);
+      dv.setUint32(0, 0x04034b50, true); dv.setUint16(4, 20, true); dv.setUint16(6, 0x0800, true);   /* bit 11: names are UTF-8 */
       dv.setUint16(8, 0, true); dv.setUint16(10, 0, true); dv.setUint16(12, 0, true);
       dv.setUint32(14, crc, true); dv.setUint32(18, data.length, true); dv.setUint32(22, data.length, true);
       dv.setUint16(26, name.length, true); dv.setUint16(28, 0, true);
@@ -1309,7 +1498,7 @@
       locals.push(lh, data);
       var ch = new Uint8Array(46 + name.length); var cv = new DataView(ch.buffer);
       cv.setUint32(0, 0x02014b50, true); cv.setUint16(4, 20, true); cv.setUint16(6, 20, true);
-      cv.setUint16(8, 0, true); cv.setUint16(10, 0, true); cv.setUint16(12, 0, true); cv.setUint16(14, 0, true);
+      cv.setUint16(8, 0x0800, true); cv.setUint16(10, 0, true); cv.setUint16(12, 0, true); cv.setUint16(14, 0, true);   /* bit 11: names are UTF-8 */
       cv.setUint32(16, crc, true); cv.setUint32(20, data.length, true); cv.setUint32(24, data.length, true);
       cv.setUint16(28, name.length, true); cv.setUint32(42, offset, true);
       ch.set(name, 46);

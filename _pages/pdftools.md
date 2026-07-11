@@ -35,11 +35,11 @@ description: "Free private PDF tools that run entirely in your browser: merge an
       <span class="pt-sep"></span>
       <button id="pt-undo" class="pt-btn" type="button" disabled title="Undo (Ctrl+Z)">↶ Undo</button>
       <span class="pt-spacer"></span>
-      <input id="pt-range" class="pt-range" type="text" placeholder="Pages: 1-5, 9, 12-" title="Page range for Extract and Split, e.g. 1-5,9,12-" autocomplete="off">
+      <input id="pt-range" class="pt-range" type="text" placeholder="Pages: 1-5, 9, 12-" title="Page range for the selected-pages download and Split, e.g. 1-5,9,12-" autocomplete="off">
       <span class="pt-range-info" id="pt-range-info"></span>
-      <button id="pt-extract" class="pt-btn" type="button" disabled title="Save the selected pages (or the range above) as one PDF">Extract</button>
+      <button id="pt-extract" class="pt-btn" type="button" disabled title="Download ONLY the selected pages (or the range in the Pages box) as their own PDF. The document here stays as it is.">Download selected</button>
       <button id="pt-split" class="pt-btn" type="button" title="Save every page (or the range above) as its own PDF, bundled in a .zip">Split → .zip</button>
-      <button id="pt-download" class="pt-btn pt-btn--accent" type="button" disabled>Download PDF</button>
+      <button id="pt-download" class="pt-btn pt-btn--accent" type="button" disabled title="Download the whole document: every page shown above, in this order, with all edits applied">Download all</button>
     </div>
     <div class="pt-toolbar__row">
       <button id="pt-ocr" class="pt-btn" type="button" data-pt-needs-pages disabled title="Add an invisible, searchable text layer to scanned pages (OCR)">Make searchable (OCR)…</button>
@@ -65,8 +65,10 @@ description: "Free private PDF tools that run entirely in your browser: merge an
   <p class="pt-engine" id="pt-engine" hidden>Loading the PDF engine…</p>
   <p class="pt-note">Double-click a page (or click its ✎) to open it for editing: add text, a signature,
   redactions, or fill form fields. A single click selects; drag a thumbnail to reorder (press and hold on
-  a phone). Shift-click selects a run of pages, and the Pages box takes a range like 1-5,9,12- for Extract
-  and Split. Images are turned
+  a phone). Shift-click selects a run of pages, and the Pages box takes a range like 1-5,9,12- for the
+  selected-pages download and Split. <strong>Download all</strong> saves the whole document as one PDF;
+  <strong>Download selected</strong> saves just the selected pages (or the typed range) as their own PDF
+  and leaves the document here untouched. Images are turned
   into pages; adding several files merges them into one document, in the order shown. Ctrl+Z (or the
   Undo button) reverses the last change.</p>
   <p class="pt-credit">Built on open-source libraries:
@@ -85,11 +87,12 @@ description: "Free private PDF tools that run entirely in your browser: merge an
     <details>
       <summary>How do I redact a PDF without uploading it?</summary>
       <p>Add your PDF above, click the page, choose the Redact tool, and draw boxes over anything you
-      want removed. Real redaction cannot just draw a black rectangle, because the text underneath
-      would still be in the file. This tool re-renders the page as an image with the boxes painted on
-      and replaces the original page, so the hidden text is actually gone. You can verify it yourself:
-      try to select or search the redacted area in the downloaded file. Nothing is uploaded at any
-      point.</p>
+      want removed. The boxes apply as soon as you draw them and stay with the page while you work
+      (move them, delete them, or undo with Ctrl+Z). Real redaction cannot just draw a black rectangle,
+      because the text underneath would still be in the file — so when you download, every page with
+      boxes is re-rendered as an image with the boxes painted on, replacing the original page. The
+      hidden text is actually gone. You can verify it yourself: try to select or search the redacted
+      area in the downloaded file. Nothing is uploaded at any point.</p>
     </details>
     <details>
       <summary>How do I make a scanned PDF searchable?</summary>
@@ -115,29 +118,24 @@ description: "Free private PDF tools that run entirely in your browser: merge an
   </div>
 </div>
 
-<!-- Redaction confirm dialog (reused by the page editor's Redact tool) -->
+<!-- One-time redaction explainer, shown before the first box is applied -->
 <div class="pt-modal" id="pt-dialog" hidden>
   <div class="pt-modal__box pt-modal__box--narrow" role="dialog" aria-modal="true">
-    <div class="pt-modal__head"><strong>Permanently redact this page?</strong></div>
+    <div class="pt-modal__head"><strong>How redaction works here</strong></div>
     <div class="pt-dialog__body">
-      <p>Real redaction can't just draw a black box: the text underneath would still sit in the file and
-        could be copied straight back out. To actually remove it, this tool <strong>rasterizes the
-        page</strong> — it renders the page to an image, paints the black boxes onto that image, and
-        replaces the page with the flat image. The hidden content is then gone.</p>
-      <p class="pt-dialog__tradeoff"><strong>Trade-off:</strong> the redacted page becomes an image, so
-        its text is no longer selectable or searchable, and the file may be a little larger.</p>
-      <label class="pt-field"><span>Render quality</span>
-        <select id="pt-redact-dpi">
-          <option value="150">Standard — 150 DPI</option>
-          <option value="220">High — 220 DPI (crisper, larger)</option>
-          <option value="100">Smaller file — 100 DPI</option>
-        </select>
-      </label>
+      <p>Real redaction can't just draw a black box on top: the text underneath would still sit in the
+        file and could be copied straight back out. So when you <strong>download</strong>, every page
+        that has redaction boxes is re-rendered as an image with the boxes painted on, and that image
+        replaces the page. The covered content is then actually gone from the file.</p>
+      <p class="pt-dialog__tradeoff">Until you download, the boxes are just marks on the page: draw as
+        many as you like, move them, delete them, or press Ctrl+Z. The page keeps its full quality no
+        matter how many boxes you add, and stays untouched if you remove them all. A redacted page in
+        the downloaded file is an image, so its text is no longer selectable or searchable.</p>
     </div>
     <div class="pt-modal__foot">
       <button id="pt-dialog-cancel" class="pt-btn" type="button">Cancel</button>
       <span class="pt-spacer"></span>
-      <button id="pt-dialog-go" class="pt-btn pt-btn--danger" type="button">Redact &amp; flatten</button>
+      <button id="pt-dialog-go" class="pt-btn pt-btn--danger" type="button">Got it — redact</button>
     </div>
   </div>
 </div>
@@ -337,6 +335,7 @@ description: "Free private PDF tools that run entirely in your browser: merge an
 <div class="pt-ed" id="pt-ed" hidden>
   <div class="pt-ed__bar">
     <button id="pt-ed-done" class="pt-btn pt-btn--accent" type="button">Done</button>
+    <button id="pt-ed-undo" class="pt-btn" type="button" disabled title="Undo (Ctrl+Z)">↶ Undo</button>
     <span class="pt-ed__page" id="pt-ed-page"></span>
     <span class="pt-ed__tools">
       <button id="pt-tool-move" class="pt-btn pt-tool pt-tool--on" type="button" title="Move / select (V)">↖ Move</button>
@@ -354,7 +353,12 @@ description: "Free private PDF tools that run entirely in your browser: merge an
       <input id="pt-text-color" type="color" value="#111111" title="Text color">
     </span>
     <span class="pt-ed__opts" id="pt-redact-opts" hidden>
-      <button id="pt-ed-redact-apply" class="pt-btn pt-btn--danger" type="button" disabled>Apply redaction</button>
+      <label class="pt-ed__optlabel" for="pt-redact-dpi">Download quality</label>
+      <select id="pt-redact-dpi" title="Render quality used when redacted pages are flattened to images on download">
+        <option value="150" selected>Standard — 150 DPI</option>
+        <option value="220">High — 220 DPI</option>
+        <option value="100">Smaller file — 100 DPI</option>
+      </select>
     </span>
     <span class="pt-spacer"></span>
     <button id="pt-ed-prev" class="pt-btn" type="button" title="Previous page">‹</button>
@@ -422,6 +426,7 @@ html[data-theme="light"] .pt-btn--accent { background: #34568a; border-color: #3
 @media (prefers-color-scheme: light) { html:not([data-theme="dark"]) .pt-btn--accent { background: #34568a; border-color: #34568a; } }
 
 .pt-toolbar { display: flex; flex-direction: column; gap: 0.45rem; margin-bottom: 0.7rem; }
+.pt-toolbar[hidden] { display: none !important; }   /* the hidden attr loses to display:flex otherwise */
 .pt-toolbar__row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; }
 .pt-sep { width: 1px; align-self: stretch; background: rgba(127,127,127,0.3); margin: 0 0.2rem; }
 .pt-spacer { flex: 1 1 auto; }
@@ -574,6 +579,7 @@ html[data-theme="light"] .pt-ed__opts select { color: #1f2430; background: #fff;
 .pt-ed__signbar { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; padding: 0.5rem 0.8rem; border-bottom: 1px solid rgba(127,127,127,0.25); }
 .pt-ed__signbar[hidden] { display: none; }
 .pt-signbar__src { display: inline-flex; align-items: center; gap: 0.5rem; }
+.pt-signbar__src[hidden] { display: none !important; }   /* the hidden attr loses to display:inline-flex otherwise */
 .pt-ed__scroll { flex: 1 1 auto; overflow: auto; display: flex; justify-content: center; align-items: flex-start; padding: 1rem; }
 .pt-ed__stage { position: relative; box-shadow: 0 6px 30px rgba(0,0,0,0.4); background: #fff; touch-action: none; }
 .pt-ed__canvas { display: block; touch-action: none; }
@@ -589,12 +595,16 @@ html[data-theme="light"] .pt-ed__opts select { color: #1f2430; background: #fff;
 .pt-anno { position: absolute; box-sizing: border-box; }
 .pt-anno--text { cursor: text; }
 .pt-anno__txt { min-width: 1ch; padding: 0; line-height: 1.2; white-space: pre; outline: none; }
-.pt-anno--text.pt-sel, .pt-anno--sig.pt-sel { outline: 1px dashed #82a6cc; outline-offset: 1px; }
+.pt-anno--text.pt-sel, .pt-anno--sig.pt-sel, .pt-anno--redact.pt-sel { outline: 1px dashed #82a6cc; outline-offset: 1px; }
 .pt-anno--sig { cursor: move; }
 .pt-anno--sig img { width: 100%; height: 100%; display: block; pointer-events: none; }
-.pt-anno__del { position: absolute; top: -10px; right: -10px; width: 18px; height: 18px; line-height: 16px; text-align: center; font-size: 12px; border-radius: 50%; border: none; background: #c4574a; color: #fff; cursor: pointer; padding: 0; }
+.pt-anno__del { position: absolute; top: -10px; right: -10px; width: 18px; height: 18px; line-height: 16px; text-align: center; font-size: 12px; border-radius: 50%; border: none; background: #c4574a; color: #fff; cursor: pointer; padding: 0; z-index: 2; }
 .pt-anno__resize { position: absolute; right: -6px; bottom: -6px; width: 12px; height: 12px; background: #82a6cc; border: 1px solid #fff; border-radius: 2px; cursor: nwse-resize; }
-.pt-anno--redact { background: rgba(20,20,20,0.82); border: 1px solid #c4574a; }
+/* a committed redaction is solid black (it IS what the download will look like);
+   a box still being drawn is translucent with a red edge */
+.pt-anno--redact { background: #0d0d0d; cursor: move; }
+.pt-anno--redact-tmp { background: rgba(20,20,20,0.55); border: 1px dashed #c4574a; }
+.pt-ed__optlabel { font-size: 0.8rem; opacity: 0.75; }
 .pt-formwidget { position: absolute; box-sizing: border-box; font: inherit; border: 1px solid #82a6cc; background: rgba(130,166,204,0.18); color: #111; padding: 0 2px; }
 .pt-formwidget[type="checkbox"], .pt-formwidget[type="radio"] { background: #fff; accent-color: #34568a; }
 .pt-stage--text { cursor: text; }

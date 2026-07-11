@@ -206,9 +206,11 @@
           var scale = Math.min(dpi / 72, 4000 / sz.w, 4000 / sz.h);
           return PT.renderPageCanvas(pg, Math.max(1, sz.w * scale));
         }).then(function (r) {
-          // keep the user's watermarks / page numbers / texts / signatures — the raw
-          // render has only the source page content
-          return PT.drawDecor(r.canvas, pg, pi).then(function () { return r; });
+          // keep the user's form fill-ins, watermarks / page numbers / texts /
+          // signatures — the raw render has only the source page content
+          return PT.paintFormValues(r.canvas, pg)
+            .then(function () { return PT.drawDecor(r.canvas, pg, pi); })
+            .then(function () { return r; });
         }).then(function (r) {
           var c = r.canvas;
           if (fmt === 'jpeg') {
@@ -313,6 +315,9 @@
             return PT.renderPageCanvas(pg, Math.max(1, sz.w * scale));
           }).then(function (r) {
             var c = r.canvas;
+            // black out redaction boxes BEFORE recognition, so the invisible text layer
+            // can never contain what the user is redacting
+            PT.paintRedacts(c.getContext('2d'), pg, c.width, c.height);
             return worker.recognize(c).then(function (res) {
               var out = [];
               flattenWords(res && res.data).forEach(function (w) {
