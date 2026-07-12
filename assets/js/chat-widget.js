@@ -438,7 +438,9 @@ document.addEventListener('DOMContentLoaded', function() {
         isLoading = true;
         sendButton.disabled = true;
         if (!text) userInput.disabled = true;
-        
+
+        // Declared outside the try so the catch can remove it on fetch failure
+        let loadingMessage = null;
         try {
             // Hide suggestions
             document.getElementById('suggestion-chips').style.display = 'none';
@@ -450,7 +452,7 @@ document.addEventListener('DOMContentLoaded', function() {
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
 
             // Show loading indicator
-            const loadingMessage = document.createElement('div');
+            loadingMessage = document.createElement('div');
             loadingMessage.className = 'message loading-message';
             loadingMessage.innerHTML = `
                 <span>Thinking</span>

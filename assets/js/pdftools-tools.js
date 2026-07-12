@@ -54,8 +54,8 @@
 
   function wireCancel(dialog, btnId) {
     var b = $(btnId);
-    if (b) b.addEventListener('click', function () { dialog.hidden = true; });
-    dialog.addEventListener('click', function (e) { if (e.target === dialog) dialog.hidden = true; });
+    if (b) b.addEventListener('click', function () { PT.closeDialog(dialog); });
+    dialog.addEventListener('click', function (e) { if (e.target === dialog) PT.closeDialog(dialog); });
   }
 
   // ==================================================================================
@@ -88,7 +88,7 @@
       var text = wmText.value.trim();
       if (!text) { wmText.focus(); return; }
       var idxs = scopeIdx(wmScope);
-      wmDialog.hidden = true;
+      PT.closeDialog(wmDialog);
       if (!idxs.length || PT.isBusy()) return;
       PT.setBusy(true);
       PT.snapshot('watermark ' + idxs.length + ' page' + (idxs.length > 1 ? 's' : ''));
@@ -115,7 +115,7 @@
     });
 
     wmRemove.addEventListener('click', function () {
-      wmDialog.hidden = true;
+      PT.closeDialog(wmDialog);
       if (PT.isBusy()) return;
       PT.snapshot('remove watermarks');
       var n = 0;
@@ -148,7 +148,7 @@
     wireCancel(pnDialog, 'pt-pn-cancel');
 
     $('pt-pn-go').addEventListener('click', function () {
-      pnDialog.hidden = true;
+      PT.closeDialog(pnDialog);
       if (!PT.pages().length || PT.isBusy()) return;
       var cfg = {
         fmt: pnFmt.value === 'nofm' ? 'nofm' : 'n',
@@ -157,6 +157,12 @@
         skipFirst: !!pnSkip.checked,
         size: Math.max(6, Math.min(36, parseInt(pnSize.value, 10) || 10))
       };
+      /* honesty check: with "Skip the first page" on a 1-page document, no page gets a
+         label — announcing plain success there would be a lie */
+      var pnTotal = PT.pages().length, pnAny = false;
+      for (var pnI = 0; pnI < pnTotal; pnI++) {
+        if (PURE.pageNumText(cfg, pnI, pnTotal) != null) { pnAny = true; break; }
+      }
       PT.setBusy(true);
       PT.snapshot('page numbers');
       // numbers are drawn with rotation-0 math, so flatten any rotated pages first —
@@ -166,14 +172,16 @@
         PT.setPageNums(cfg);
         PT.markAllDirty();
         PT.renderGrid();
-        PT.setStatus('Page numbers on. They follow the current page order and are added on download.' +
+        PT.setStatus((pnAny
+          ? 'Page numbers on. They follow the current page order and are added on download.'
+          : 'Page numbering is set, but with “Skip the first page” checked this 1-page document gets no visible number; pages added later will be numbered.') +
           (pnFlat ? ' ' + pnFlat + ' rotated page' + (pnFlat > 1 ? 's were' : ' was') + ' flattened upright first (Ctrl+Z undoes it).' : ''));
       }).catch(function (e) { PT.setStatus('Page numbering failed: ' + (e && e.message || e)); })
         .then(function () { PT.setBusy(false); });
     });
 
     pnRemove.addEventListener('click', function () {
-      pnDialog.hidden = true;
+      PT.closeDialog(pnDialog);
       if (PT.isBusy()) return;
       PT.snapshot('remove page numbers');
       PT.setPageNums(null);
@@ -201,7 +209,7 @@
       var dpi = parseInt(imgDpi.value, 10) || 150;
       var fmt = imgFmt.value === 'jpeg' ? 'jpeg' : 'png';
       var idxs = scopeIdx(imgScope);
-      imgDialog.hidden = true;
+      PT.closeDialog(imgDialog);
       if (!idxs.length || PT.isBusy()) return;
       PT.setBusy(true);
       var docs = PT.docs();
@@ -290,7 +298,7 @@
     PT.setBusy(true);
     ocrCurPage = -1; ocrTotal = idxs.length;
     PT.progress(0, idxs.length, 'Loading the OCR engine (about 6 MB on first use, then cached)…');
-    var worker = null, totalWords = 0, okPages = 0, failedPages = 0;
+    var worker = null, totalWords = 0, okPages = 0, failedPages = 0, ocrFlat = 0;
     loadTesseract().then(function (T) {
       return T.createWorker('eng', 1, {
         workerPath: PT.jsBase + 'tesseractlib/worker.min.js',
@@ -314,7 +322,10 @@
           return PT.progress(k, idxs.length, 'Reading page ' + (k + 1) + ' of ' + idxs.length + '…');
         }).then(function () {
           var pg = PT.pages()[pi];
-          return ensureUprightPage(pg).then(function () {
+          return ensureUprightPage(pg).then(function (flattened) {
+            /* count it — the flatten must be disclosed in the final status, same as
+               the watermark and page-numbers flows */
+            if (flattened) ocrFlat++;
             return PT.effPointSize(pg);
           }).then(function (sz) {
             // ~300 DPI, capped so huge pages stay inside browser canvas limits
@@ -361,6 +372,7 @@
       } else {
         msg = 'No text was recognized. OCR reads printed English and works best on clean scans; handwriting usually does not work.';
       }
+      if (ocrFlat) msg += ' ' + ocrFlat + ' rotated page' + (ocrFlat > 1 ? 's were' : ' was') + ' flattened upright first (Ctrl+Z undoes it).';
       if (failedPages) msg += ' ' + failedPages + ' page' + (failedPages === 1 ? '' : 's') + ' could not be read.';
       PT.setStatus(msg);
     }).catch(function (e) {
@@ -381,7 +393,7 @@
     wireCancel(ocrDialog, 'pt-ocr-cancel');
     $('pt-ocr-go').addEventListener('click', function () {
       var idxs = scopeIdx(ocrScope);
-      ocrDialog.hidden = true;
+      PT.closeDialog(ocrDialog);
       runOcr(idxs);
     });
   }
@@ -454,7 +466,7 @@
       if (!pw) { protErr.textContent = 'Enter a password.'; protPw.focus(); return; }
       if (pw !== pw2) { protErr.textContent = 'The passwords don’t match.'; protPw2.focus(); return; }
       protErr.textContent = '';
-      protDialog.hidden = true;
+      PT.closeDialog(protDialog);
       protPw.value = ''; protPw2.value = '';
       if (!PT.pages().length || PT.isBusy()) return;
       PT.setBusy(true);

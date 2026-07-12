@@ -370,10 +370,12 @@
     if (busy) return;
     var e = undoStack.pop();
     if (!e) return;
+    snapSeq++;   // invalidate snapSeq top-of-stack guards held across the undo (stale createSeq etc.)
     pages = e.pages;
     pageNums = e.pageNums;
     if (e.forms) e.forms.forEach(function (fv, i) { if (docs[i]) docs[i].formValues = fv; });
     lastSelIdx = -1;
+    pruneDocs();   // the popped entry may have held the last reference to a source doc
     renderGrid(); updateToolbar();
     setStatus('Undid: ' + e.label + '.');
     if (window.__PT && window.__PT.onUndo) window.__PT.onUndo();
@@ -382,6 +384,7 @@
   function modalOpen() { return !!document.querySelector('.pt-modal:not([hidden])'); }
   function openDialog(el) {
     if (!el || busy || modalOpen()) return false;
+    el.__opener = document.activeElement;   // so closeDialog can hand focus back
     el.hidden = false;
     // move focus into the dialog (first field, else the primary button) so keyboard and
     // screen-reader users land inside it, not on the obscured page behind the backdrop
@@ -389,6 +392,14 @@
                el.querySelector('.pt-btn--accent, .pt-btn--danger') || el.querySelector('button');
     if (pick) setTimeout(function () { try { pick.focus(); } catch (e) {} }, 0);
     return true;
+  }
+  // every dialog close path routes through here: without the focus restore, closing a
+  // modal drops focus to <body> and a keyboard/SR user restarts from the top of the page
+  function closeDialog(el) {
+    if (!el) return;
+    el.hidden = true;
+    var op = el.__opener; el.__opener = null;
+    if (op) { try { op.focus(); } catch (e) {} }
   }
 
   // ---------- loading source PDFs / images ----------
@@ -405,6 +416,7 @@
     setBusy(true);
     var beforeLen = pages.length;
     snapshot('add ' + arr.length + ' file' + (arr.length > 1 ? 's' : ''));
+    var addSeq = snapSeq;   // guards the trailing dropSnapshot below (top-of-stack check)
     var failed = [], skipped = [];
     var chain = Promise.resolve();
     arr.forEach(function (f, fi) {
@@ -427,7 +439,10 @@
       });
     });
     chain.then(function () {
-      if (pages.length === beforeLen) dropSnapshot();   // nothing was actually added
+      // nothing was actually added — drop the "add N files" snapshot, but ONLY while it
+      // is still top-of-stack (editor edits made during the load are not gated on busy,
+      // so a user snapshot may have landed on top; popping that one corrupts the stack)
+      if (pages.length === beforeLen && snapSeq === addSeq) dropSnapshot();
       setBusy(false);
       renderGrid(); updateToolbar();
       var msg = [];
@@ -436,6 +451,8 @@
       if (failed.length) msg.push('Couldn’t read: ' + failed.join(', ') + ' (the file may be corrupted or an unsupported format).');
       if (skipped.length) msg.push('Skipped (password not provided): ' + skipped.join(', ') + '.');
       setStatus(msg.join(' '));
+      // let the open editor refresh its page label / nav arrows for the new pages
+      if (added > 0 && window.__PT && window.__PT.onPagesChanged) window.__PT.onPagesChanged();
     });
   }
 
@@ -471,13 +488,14 @@
       if (passMsg) passMsg.textContent = (again ? 'That password didn’t work. ' : '') +
         '“' + name + '” is password-protected. Enter its password to open it, or cancel to skip this file.';
       if (passInput) passInput.value = '';
+      if (passDialog.hidden) passDialog.__opener = document.activeElement;   // opened directly, not via openDialog
       passDialog.hidden = false;
       setTimeout(function () { if (passInput) passInput.focus(); }, 0);
     });
   }
   function passDone(val) {
     if (!passResolve) return;
-    passDialog.hidden = true;
+    closeDialog(passDialog);
     var r = passResolve; passResolve = null;
     r(val);
   }
@@ -486,7 +504,7 @@
     $('pt-pass-cancel').addEventListener('click', function () { passDone(null); });
     passInput.addEventListener('keydown', function (e) {
       if (e.key === 'Enter') { e.preventDefault(); passDone(passInput.value); }
-      else if (e.key === 'Escape') { e.preventDefault(); passDone(null); }
+      else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); passDone(null); }
     });
     passDialog.addEventListener('click', function (e) { if (e.target === passDialog) passDone(null); });
   }
@@ -545,6 +563,10 @@
         cx.rotate(rot * Math.PI / 180);
         cx.scale(s, s);
         cx.drawImage(im, -im.width / 2, -im.height / 2);
+        // reset the context — consumers (redact bake, OCR pre-paint, decor) draw through
+        // this same context, and a leftover translate/rotate/scale would displace
+        // everything they paint (redaction boxes landed in the corner, off the content)
+        cx.setTransform(1, 0, 0, 1, 0, 0);
         res(c);
       };
       im.onerror = function () { rej(new Error('could not load page image')); };
@@ -595,7 +617,7 @@
       task.promise.then(function () {
         if (pg._rtask === task) pg._rtask = null;
         if (stale()) { if (done) done(); return; }
-        // filled form values show on every other surface (editor, export, shrink) —
+        // filled form values must show on the thumbnails like on the export surfaces —
         // paint them here too, before the overlays so a redaction box can cover them
         paintFormValues(canvas, pg).then(function () {
           if (stale()) { if (done) done(); return; }
@@ -680,10 +702,30 @@
     grid.innerHTML = '';
     thumbEls = [];
     drop.classList.toggle('pt-drop--has', pages.length > 0);
+    // the drop zone is a labeled ARIA button only while EMPTY — once pages exist it
+    // wraps the whole grid (button children are presentational to screen readers) and
+    // its Enter/Space handler is gated off, so drop the button semantics until it empties
+    if (pages.length > 0) {
+      if (drop.getAttribute('role') === 'button') {
+        drop.__ptAriaLabel = drop.getAttribute('aria-label');
+        drop.removeAttribute('role');
+        drop.removeAttribute('aria-label');
+        drop.setAttribute('tabindex', '-1');
+      }
+    } else if (drop.getAttribute('role') !== 'button') {
+      drop.setAttribute('role', 'button');
+      if (drop.__ptAriaLabel) drop.setAttribute('aria-label', drop.__ptAriaLabel);
+      drop.setAttribute('tabindex', '0');
+    }
     pages.forEach(function (pg, idx) {
       var t = document.createElement('div');
       t.className = 'pt-thumb' + (pg.sel ? ' pt-sel' : '');
       t.dataset.idx = idx;
+      // keyboard path to page selection. Deliberately NO role=button/checkbox: the thumb
+      // contains its own real buttons (✎ ⟳ ×), and a widget role would make its children
+      // presentational to screen readers.
+      t.setAttribute('tabindex', '0');
+      t.setAttribute('aria-label', 'Page ' + (idx + 1) + (pg.sel ? ', selected' : ''));
 
       var c = pg._tc;
       if (!c) { c = pg._tc = document.createElement('canvas'); c.width = 150; c.height = 194; pg._tdirty = true; }
@@ -727,10 +769,9 @@
       t.appendChild(bar);
 
       // click selects (shift-click selects a range); double-click opens the editor
-      t.addEventListener('click', function (ev) {
-        if (suppressClick) { suppressClick = false; return; }
+      function toggleSel(shift) {
         if (busy) return;
-        if (ev.shiftKey && lastSelIdx >= 0 && lastSelIdx < pages.length) {
+        if (shift && lastSelIdx >= 0 && lastSelIdx < pages.length) {
           var a = Math.min(lastSelIdx, idx), b = Math.max(lastSelIdx, idx);
           for (var i = a; i <= b; i++) pages[i].sel = true;
         } else {
@@ -738,6 +779,17 @@
           lastSelIdx = idx;
         }
         refreshSel();
+      }
+      t.addEventListener('click', function (ev) {
+        if (suppressClick) { suppressClick = false; return; }
+        toggleSel(ev.shiftKey);
+      });
+      // Enter/Space toggle selection from the keyboard (the ✎ ⟳ × buttons keep their own keys)
+      t.addEventListener('keydown', function (ev) {
+        if (ev.target !== t) return;
+        if (ev.key !== 'Enter' && ev.key !== ' ') return;
+        ev.preventDefault();
+        toggleSel(ev.shiftKey);
       });
       t.addEventListener('dblclick', function (e) { e.preventDefault(); if (!busy && window.__PT.openEditor) window.__PT.openEditor(idx); });
 
@@ -751,7 +803,11 @@
 
   // light-weight selection refresh (no thumbnail re-render)
   function refreshSel() {
-    thumbEls.forEach(function (t, i) { if (pages[i]) t.classList.toggle('pt-sel', !!pages[i].sel); });
+    thumbEls.forEach(function (t, i) {
+      if (!pages[i]) return;
+      t.classList.toggle('pt-sel', !!pages[i].sel);
+      t.setAttribute('aria-label', 'Page ' + (i + 1) + (pages[i].sel ? ', selected' : ''));
+    });
     updateToolbar();
   }
 
@@ -770,6 +826,7 @@
     if (e.target && e.target.closest && e.target.closest('.pt-thumb__act')) return;
     var coarse = e.pointerType === 'touch' || e.pointerType === 'pen';
     var pid = e.pointerId, sx = e.clientX, sy = e.clientY;
+    var pg0 = pages[idx];   // capture the page OBJECT — pages[] can be replaced mid-drag
     var engaged = false, timer = 0, curOver = null, insBefore = false;
 
     function engage() {
@@ -815,8 +872,13 @@
       // a stuck flag when NO click follows the drag
       if (was) setTimeout(function () { suppressClick = false; }, 0);
       if (!was || !target) return;
-      var from = idx, to = parseInt(target.dataset.idx, 10) + (before ? 0 : 1);
-      if (isNaN(to) || to === from || to === from + 1) return;
+      // pages[] may have been replaced under this drag (an undo re-renders the grid) —
+      // re-find the grabbed page by identity and no-op if it's gone; the drop target's
+      // dataset.idx may also belong to a re-rendered grid, so bounds-check it too
+      // (same capture-the-object pattern the editor drags use)
+      var from = pages.indexOf(pg0);
+      var to = parseInt(target.dataset.idx, 10) + (before ? 0 : 1);
+      if (from < 0 || isNaN(to) || to < 0 || to > pages.length || to === from || to === from + 1) return;
       snapshot('move page ' + (from + 1));
       var moved = pages.splice(from, 1)[0];
       var insertAt = from < to ? to - 1 : to;
@@ -915,7 +977,13 @@
   document.addEventListener('dragover', function (e) { e.preventDefault(); });
   document.addEventListener('drop', function (e) {
     e.preventDefault();
-    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
+    if (!(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length)) return;
+    // while the full-screen editor is open, offer it the drop first (e.g. an image
+    // dropped on the Sign tool becomes the signature, not a surprise appended page)
+    var edEl = $('pt-ed');
+    if (edEl && !edEl.hidden && window.__PT && window.__PT.onEditorDrop &&
+        window.__PT.onEditorDrop(e.dataTransfer.files)) return;
+    addFiles(e.dataTransfer.files);
   });
 
   btnSelAll.addEventListener('click', function () {
@@ -984,16 +1052,24 @@
     if ((e.key === 'z' || e.key === 'Z') && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
       var ed = $('pt-ed'); if (ed && !ed.hidden) return;
       if (modalOpen()) return;
+      // an undo would re-render the grid under an in-flight reorder; preventDefault so the
+      // browser's NATIVE undo can't replay edits into a stale editor contenteditable instead
+      if (dragActive) { e.preventDefault(); return; }
       var a = document.activeElement;
       if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' || a.isContentEditable)) return;
-      if (busy || !undoStack.size()) return;
+      // no focused input here, so native undo has no legit target — suppress it (same
+      // stale-contenteditable hazard) even when there is nothing to app-undo
+      if (busy || !undoStack.size()) { e.preventDefault(); return; }
       e.preventDefault();
       undo();
     } else if (e.key === 'Escape') {
-      if (passResolve) { passDone(null); return; }
+      // consume the event when it dismisses the password modal — the editor's own
+      // document-level keydown fires next on the SAME event, and its modalOpen() check
+      // would see the just-hidden modal and run a staged Escape (closing the editor)
+      if (passResolve) { e.preventDefault(); e.stopImmediatePropagation(); passDone(null); return; }
       var ed2 = $('pt-ed'); if (ed2 && !ed2.hidden) return;   // the editor handles its own Escape
       var m = document.querySelector('.pt-modal:not([hidden])');
-      if (m) m.hidden = true;
+      if (m) closeDialog(m);
     } else if (e.key === 'Tab') {
       // focus trap for any open modal — without it Tab wanders into the obscured page
       // (theme toggle, chat widget) behind the backdrop
@@ -1083,6 +1159,15 @@
         }).catch(function (e) { lastDropped++; if (window.console) console.warn('pdftools: a watermark could not be drawn.', e); });
       });
     });
+    // page number BEFORE texts/sigs: every preview (drawMarks in thumbnails, Shrink,
+    // Pages→images, the editor) paints the number under overlapping annotations, so
+    // the export must stack the same way
+    if (pageNums) {
+      chain = chain.then(function () {
+        return helv().then(function (font) { PURE.drawPageNum(PDFLib, info.page, font, pageNums, outIdx, outTotal, info.w, info.h); })
+          .catch(function (e) { if (window.console) console.warn('pdftools: a page number could not be drawn.', e); });
+      });
+    }
     (pg.texts || []).forEach(function (t) {
       chain = chain.then(function () {
         var key = t.font || 'Helvetica';
@@ -1123,12 +1208,6 @@
           .catch(function (e) { if (window.console) console.warn('pdftools: the OCR text layer could not be drawn.', e); });
       });
     }
-    if (pageNums) {
-      chain = chain.then(function () {
-        return helv().then(function (font) { PURE.drawPageNum(PDFLib, info.page, font, pageNums, outIdx, outTotal, info.w, info.h); })
-          .catch(function (e) { if (window.console) console.warn('pdftools: a page number could not be drawn.', e); });
-      });
-    }
     return chain;
   }
 
@@ -1166,7 +1245,12 @@
     return effPointSize(pg).then(function (sz) {
       var scale = Math.min(dpi / 72, 4000 / sz.w, 4000 / sz.h);   // stay inside canvas limits
       return renderPageCanvas(pg, Math.max(1, sz.w * scale)).then(function (r) {
-        var c = r.canvas, cx = c.getContext('2d');
+        // copy into a fresh identity-transform canvas before painting the boxes —
+        // the same belt-and-suspenders compress() and rasterFallback() use, so a
+        // dirty context on the render canvas can never displace a redaction
+        var c = document.createElement('canvas'); c.width = r.canvas.width; c.height = r.canvas.height;
+        var cx = c.getContext('2d'); cx.drawImage(r.canvas, 0, 0);
+        r.canvas.width = 0;   // free the intermediate canvas
         return paintFormValues(c, pg).then(function () {
           paintRedacts(cx, pg, c.width, c.height);   // after the values, so a box can black out a filled field
           cx.globalCompositeOperation = 'destination-over';
@@ -1261,6 +1345,18 @@
     });
   }
 
+  // docs[] entries are tombstoned in place, never removed (docIndex is positional), so
+  // docs[0] may belong to a file whose pages were ALL deleted — the export identity
+  // (filename base, "-merged" suffix, carried-over metadata) must come from the source
+  // docs that still have live pages, or a fully-deleted first file haunts the output.
+  function liveDocIndices() {
+    var seen = {}, out = [];
+    pages.forEach(function (p) {
+      if (p.docIndex >= 0 && !seen[p.docIndex]) { seen[p.docIndex] = true; out.push(p.docIndex); }
+    });
+    return out.sort(function (a, b) { return a - b; });
+  }
+
   function applyMetadata(out, cache) {
     if (chkStrip.checked) {
       out.setTitle(''); out.setAuthor(''); out.setSubject(''); out.setKeywords([]);
@@ -1268,9 +1364,11 @@
       try { out.setCreationDate(new Date(0)); out.setModificationDate(new Date(0)); } catch (e) {}
       return Promise.resolve();
     }
-    // not stripping: carry over title/author/subject from the FIRST source doc, best-effort
-    if (!docs.length) return Promise.resolve();
-    return Promise.resolve(getLibDoc(cache, 0)).then(function (src) {
+    // not stripping: carry over title/author/subject from the first source doc that
+    // still has live pages, best-effort (skip entirely if none — e.g. all blank pages)
+    var live = liveDocIndices();
+    if (!live.length) return Promise.resolve();
+    return Promise.resolve(getLibDoc(cache, live[0])).then(function (src) {
       try {
         if (src.getTitle && src.getTitle()) out.setTitle(src.getTitle());
         if (src.getAuthor && src.getAuthor()) out.setAuthor(src.getAuthor());
@@ -1280,7 +1378,8 @@
   }
 
   function exportName(kind) {
-    return PURE.deriveExportName(docs.length ? docs[0].name : '', docs.length, kind);
+    var live = liveDocIndices();
+    return PURE.deriveExportName(live.length ? docs[live[0]].name : '', live.length, kind);
   }
 
   function downloadBytes(bytes, name, mime) {
@@ -1381,8 +1480,11 @@
     if (pg.raster) return Promise.resolve(((pg.rot || 0) % 360 + 360) % 360);
     return docs[pg.docIndex].js.getPage(pg.pageIndex + 1).then(function (page) { return totalRotation(page, pg.rot); });
   }
-  // render `pg` (raster, blank, or vector, at its effective rotation) to a canvas `targetPxWidth` wide
-  function renderPageCanvas(pg, targetPxWidth) {
+  // render `pg` (raster, blank, or vector, at its effective rotation) to a canvas `targetPxWidth` wide.
+  // opts.onTask (optional) receives the pdf.js RenderTask synchronously on the vector
+  // branch, so a caller that supersedes a render (the editor's page nav) can cancel it —
+  // export/bake callers pass no opts and must never be cancelled.
+  function renderPageCanvas(pg, targetPxWidth, opts) {
     if (pg.blank) {
       var sw = (pg.rot % 180) !== 0;
       var bw = sw ? pg.blank.hPt : pg.blank.wPt, bh = sw ? pg.blank.wPt : pg.blank.hPt;
@@ -1403,7 +1505,9 @@
       var v1 = page.getViewport({ scale: 1, rotation: rot });
       var vp = page.getViewport({ scale: targetPxWidth / v1.width, rotation: rot });
       var c = document.createElement('canvas'); c.width = Math.round(vp.width); c.height = Math.round(vp.height);
-      return page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise.then(function () {
+      var task = page.render({ canvasContext: c.getContext('2d'), viewport: vp });
+      if (opts && opts.onTask) opts.onTask(task);
+      return task.promise.then(function () {
         return { canvas: c, wPt: v1.width, hPt: v1.height };
       });
     });
@@ -1587,6 +1691,8 @@
     setRedactDpi: function (d) { redactDpi = Math.max(72, Math.min(300, d || 150)); },
     getRedactDpi: function () { return redactDpi; },
     onUndo: null,   // the editor sets this to rebind its page after an undo
+    onEditorDrop: null,   // the editor sets this to claim file drops while it is open (return truthy = consumed)
+    onPagesChanged: null, // the editor sets this to refresh its nav after addFiles adds pages
     markDirty: markDirty,
     markAllDirty: markAllDirty,
     orderChanged: orderChanged,
@@ -1601,6 +1707,7 @@
     nextFrame: nextFrame,
     modalOpen: modalOpen,
     openDialog: openDialog,
+    closeDialog: closeDialog,
     exportName: exportName,
     downloadBytes: downloadBytes,
     fmtSize: fmtSize,
@@ -1612,10 +1719,10 @@
   // ---------- compress dialog ----------
   var shrinkDialog = $('pt-shrink-dialog'), shrinkSel = $('pt-shrink-dpi');
   if (btnShrink) btnShrink.addEventListener('click', function () { if (pages.length) openDialog(shrinkDialog); });
-  var shrinkCancel = $('pt-shrink-cancel'); if (shrinkCancel) shrinkCancel.addEventListener('click', function () { shrinkDialog.hidden = true; });
+  var shrinkCancel = $('pt-shrink-cancel'); if (shrinkCancel) shrinkCancel.addEventListener('click', function () { closeDialog(shrinkDialog); });
   var shrinkGo = $('pt-shrink-go');
   if (shrinkGo) shrinkGo.addEventListener('click', function () {
-    shrinkDialog.hidden = true;
+    closeDialog(shrinkDialog);
     if (!pages.length || busy) return;
     setBusy(true);
     var parts = (shrinkSel.value || '150,0.7').split(','), dpi = parseInt(parts[0], 10) || 150, q = parseFloat(parts[1]) || 0.7;
@@ -1629,7 +1736,7 @@
     }).catch(function (e) { setStatus('Error: ' + (e && e.message || e)); })
       .then(function () { setBusy(false); });
   });
-  if (shrinkDialog) shrinkDialog.addEventListener('click', function (e) { if (e.target === shrinkDialog) shrinkDialog.hidden = true; });
+  if (shrinkDialog) shrinkDialog.addEventListener('click', function (e) { if (e.target === shrinkDialog) closeDialog(shrinkDialog); });
 
   // ---------- store-only ZIP writer (no deps) ----------
   var CRC_TABLE = (function () {

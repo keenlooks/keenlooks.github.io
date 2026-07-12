@@ -120,8 +120,8 @@ description: "Free private PDF tools that run entirely in your browser: merge an
 
 <!-- One-time redaction explainer, shown before the first box is applied -->
 <div class="pt-modal" id="pt-dialog" hidden>
-  <div class="pt-modal__box pt-modal__box--narrow" role="dialog" aria-modal="true">
-    <div class="pt-modal__head"><strong>How redaction works here</strong></div>
+  <div class="pt-modal__box pt-modal__box--narrow" role="dialog" aria-modal="true" aria-labelledby="pt-dialog-head">
+    <div class="pt-modal__head" id="pt-dialog-head"><strong>How redaction works here</strong></div>
     <div class="pt-dialog__body">
       <p>Real redaction can't just draw a black box on top: the text underneath would still sit in the
         file and could be copied straight back out. So when you <strong>download</strong>, every page
@@ -142,8 +142,8 @@ description: "Free private PDF tools that run entirely in your browser: merge an
 
 <!-- Shrink (compress) dialog -->
 <div class="pt-modal" id="pt-shrink-dialog" hidden>
-  <div class="pt-modal__box pt-modal__box--narrow" role="dialog" aria-modal="true">
-    <div class="pt-modal__head"><strong>Shrink the PDF</strong></div>
+  <div class="pt-modal__box pt-modal__box--narrow" role="dialog" aria-modal="true" aria-labelledby="pt-shrink-head">
+    <div class="pt-modal__head" id="pt-shrink-head"><strong>Shrink the PDF</strong></div>
     <div class="pt-dialog__body">
       <p>This shrinks the file by <strong>rendering every page to an image</strong> at the chosen
         quality and rebuilding the PDF from those images. It's most effective on scans and image-heavy
@@ -188,8 +188,8 @@ description: "Free private PDF tools that run entirely in your browser: merge an
 
 <!-- Watermark dialog -->
 <div class="pt-modal" id="pt-wm-dialog" hidden>
-  <div class="pt-modal__box pt-modal__box--narrow" role="dialog" aria-modal="true">
-    <div class="pt-modal__head"><strong>Add a watermark</strong></div>
+  <div class="pt-modal__box pt-modal__box--narrow" role="dialog" aria-modal="true" aria-labelledby="pt-wm-head">
+    <div class="pt-modal__head" id="pt-wm-head"><strong>Add a watermark</strong></div>
     <div class="pt-dialog__body">
       <label class="pt-field"><span>Text</span>
         <input id="pt-wm-text" type="text" value="DRAFT" maxlength="80" autocomplete="off"></label>
@@ -218,8 +218,8 @@ description: "Free private PDF tools that run entirely in your browser: merge an
 
 <!-- Page numbers dialog -->
 <div class="pt-modal" id="pt-pn-dialog" hidden>
-  <div class="pt-modal__box pt-modal__box--narrow" role="dialog" aria-modal="true">
-    <div class="pt-modal__head"><strong>Page numbers</strong></div>
+  <div class="pt-modal__box pt-modal__box--narrow" role="dialog" aria-modal="true" aria-labelledby="pt-pn-head">
+    <div class="pt-modal__head" id="pt-pn-head"><strong>Page numbers</strong></div>
     <div class="pt-dialog__body">
       <label class="pt-field"><span>Format</span>
         <select id="pt-pn-fmt">
@@ -258,8 +258,8 @@ description: "Free private PDF tools that run entirely in your browser: merge an
 
 <!-- Export pages as images dialog -->
 <div class="pt-modal" id="pt-img-dialog" hidden>
-  <div class="pt-modal__box pt-modal__box--narrow" role="dialog" aria-modal="true">
-    <div class="pt-modal__head"><strong>Export pages as images</strong></div>
+  <div class="pt-modal__box pt-modal__box--narrow" role="dialog" aria-modal="true" aria-labelledby="pt-img-head">
+    <div class="pt-modal__head" id="pt-img-head"><strong>Export pages as images</strong></div>
     <div class="pt-dialog__body">
       <p>Renders pages to image files. One page downloads as a single image; several pages are bundled
         in a .zip.</p>
@@ -287,8 +287,8 @@ description: "Free private PDF tools that run entirely in your browser: merge an
 
 <!-- OCR (make searchable) dialog -->
 <div class="pt-modal" id="pt-ocr-dialog" hidden>
-  <div class="pt-modal__box pt-modal__box--narrow" role="dialog" aria-modal="true">
-    <div class="pt-modal__head"><strong>Make pages searchable (OCR)</strong></div>
+  <div class="pt-modal__box pt-modal__box--narrow" role="dialog" aria-modal="true" aria-labelledby="pt-ocr-head">
+    <div class="pt-modal__head" id="pt-ocr-head"><strong>Make pages searchable (OCR)</strong></div>
     <div class="pt-dialog__body">
       <p>This reads the text on your pages with an OCR engine that runs <strong>in your browser</strong>
         (tesseract.js) and adds an invisible text layer on top. The pages look exactly the same, but the
@@ -310,8 +310,8 @@ description: "Free private PDF tools that run entirely in your browser: merge an
 
 <!-- Password-protect (encrypt) dialog -->
 <div class="pt-modal" id="pt-protect-dialog" hidden>
-  <div class="pt-modal__box pt-modal__box--narrow" role="dialog" aria-modal="true">
-    <div class="pt-modal__head"><strong>Password-protect the PDF</strong></div>
+  <div class="pt-modal__box pt-modal__box--narrow" role="dialog" aria-modal="true" aria-labelledby="pt-protect-head">
+    <div class="pt-modal__head" id="pt-protect-head"><strong>Password-protect the PDF</strong></div>
     <div class="pt-dialog__body">
       <p>Builds the document and encrypts it with <strong>AES-256</strong> using qpdf running in your
         browser, then downloads it. Opening the file will require the password. The first use downloads
@@ -334,7 +334,7 @@ description: "Free private PDF tools that run entirely in your browser: merge an
 </div>
 
 <!-- ===================== Unified page editor ===================== -->
-<div class="pt-ed" id="pt-ed" hidden>
+<div class="pt-ed" id="pt-ed" role="dialog" aria-modal="true" aria-label="Page editor" hidden>
   <div class="pt-ed__bar">
     <button id="pt-ed-done" class="pt-btn pt-btn--accent" type="button">Done</button>
     <button id="pt-ed-undo" class="pt-btn" type="button" disabled title="Undo (Ctrl+Z)">↶ Undo</button>
@@ -621,29 +621,48 @@ html[data-theme="light"] .pt-ed__opts select { color: #1f2430; background: #fff;
 html[data-theme="light"] .pt-ed__arrow { color: #1f2430; }
 @media (prefers-color-scheme: light) { html:not([data-theme="dark"]) .pt-ed__arrow { color: #1f2430; } }
 
-/* annotations live inside .pt-ed__layer */
+/* annotations live inside .pt-ed__layer. Fixed z-indexes (redact under text under sig,
+   in-flight box on top) so a FRESH edit paints in the same order as reopen (buildAnnoEls)
+   and export (drawOverlays) — insertion order used to decide, and the preview lied. */
 .pt-anno { position: absolute; box-sizing: border-box; }
-.pt-anno--text { cursor: text; }
+.pt-anno--text { cursor: text; z-index: 2; }
 /* margin-top -0.13em: the CSS line box puts the first baseline ~0.95em below the top
    (half-leading + ascent) while the export draws it at 0.82em — shift the ink up so the
    editor preview lands where drawText will put it (the wrapper position/model y are
    untouched, so drags stay exact) */
 .pt-anno__txt { min-width: 1ch; padding: 0; line-height: 1.2; white-space: pre; outline: none; margin-top: -0.13em; }
 .pt-anno--text.pt-sel, .pt-anno--sig.pt-sel, .pt-anno--redact.pt-sel { outline: 1px dashed #82a6cc; outline-offset: 1px; }
-.pt-anno--sig { cursor: move; }
+.pt-anno--sig { cursor: move; z-index: 3; }
 .pt-anno--sig img { width: 100%; height: 100%; display: block; pointer-events: none; }
 .pt-anno__del { position: absolute; top: -10px; right: -10px; width: 18px; height: 18px; line-height: 16px; text-align: center; font-size: 12px; border-radius: 50%; border: none; background: #c4574a; color: #fff; cursor: pointer; padding: 0; z-index: 2; }
 .pt-anno__resize { position: absolute; right: -6px; bottom: -6px; width: 12px; height: 12px; background: #82a6cc; border: 1px solid #fff; border-radius: 2px; cursor: nwse-resize; }
 /* a committed redaction is solid black (it IS what the download will look like);
    a box still being drawn is translucent with a red edge */
-.pt-anno--redact { background: #0d0d0d; cursor: move; }
-.pt-anno--redact-tmp { background: rgba(20,20,20,0.55); border: 1px dashed #c4574a; }
+.pt-anno--redact { background: #0d0d0d; cursor: move; z-index: 1; }
+.pt-anno--redact-tmp { background: rgba(20,20,20,0.55); border: 1px dashed #c4574a; z-index: 4; }
 .pt-ed__optlabel { font-size: 0.8rem; opacity: 0.75; }
 .pt-formwidget { position: absolute; box-sizing: border-box; font: inherit; border: 1px solid #82a6cc; background: rgba(130,166,204,0.18); color: #111; padding: 0 2px; }
 .pt-formwidget[type="checkbox"], .pt-formwidget[type="radio"] { background: #fff; accent-color: #34568a; }
 .pt-stage--text { cursor: text; }
 .pt-stage--text .pt-anno--redact { cursor: text; }   /* the text tool can place a label on a black box */
+.pt-stage--text .pt-anno--sig { cursor: text; }      /* ...or a date/name on a signature */
 .pt-stage--redact { cursor: crosshair; }
+/* redacting: form widgets stay visible to aim at, but must not swallow the drag —
+   a box drawn over a filled field is exactly the workflow this tool exists for */
+.pt-stage--redact .pt-formwidget { pointer-events: none; }
+/* narrow editors have no room for the reserved arrow gutters — hide the overlay
+   arrows (the toolbar's ‹ › and the arrow keys still change pages) */
+@media (max-width: 639px) {
+  .pt-ed__arrow { display: none; }
+}
+/* fingers need bigger targets: the editor's annotation handles were 18px (×) and
+   12px (resize grip). This block must come AFTER the base rules above — same
+   specificity, so an earlier media block would lose the cascade. */
+@media (pointer: coarse) {
+  .pt-anno__del { width: 26px; height: 26px; line-height: 24px; font-size: 15px; top: -13px; right: -13px; }
+  .pt-anno__resize { width: 24px; height: 24px; right: -12px; bottom: -12px; }
+  .pt-sigsaved__del { min-width: 24px; min-height: 24px; padding: 0.4em 0.55em; box-sizing: border-box; }
+}
 </style>
 
 <script type="application/ld+json">
