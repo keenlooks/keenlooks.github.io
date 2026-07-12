@@ -444,9 +444,11 @@
       // so a user snapshot may have landed on top; popping that one corrupts the stack)
       if (pages.length === beforeLen && snapSeq === addSeq) dropSnapshot();
       setBusy(false);
+      var added = pages.length - beforeLen;
+      // the page count grew, so existing thumbs' "n of m" page-number totals are stale
+      if (added > 0) orderChanged();
       renderGrid(); updateToolbar();
       var msg = [];
-      var added = pages.length - beforeLen;
       if (added > 0) msg.push('Added ' + added + ' page' + (added > 1 ? 's' : '') + '.');
       if (failed.length) msg.push('Couldn’t read: ' + failed.join(', ') + ' (the file may be corrupted or an unsupported format).');
       if (skipped.length) msg.push('Skipped (password not provided): ' + skipped.join(', ') + '.');
@@ -529,7 +531,17 @@
   function blobToPngBytes(file) {
     return new Promise(function (res, rej) {
       var url = URL.createObjectURL(file), im = new Image();
-      im.onload = function () { URL.revokeObjectURL(url); var c = document.createElement('canvas'); c.width = im.naturalWidth; c.height = im.naturalHeight; c.getContext('2d').drawImage(im, 0, 0); canvasToBytes(c, 'image/png').then(res); };
+      im.onload = function () {
+        URL.revokeObjectURL(url);
+        // everything in here must settle the promise — a dropped canvasToBytes rejection
+        // (toBlob → null past the browser canvas size limit, e.g. a 20000px WebP) or a
+        // drawImage throw would leave addFiles stuck busy forever with the toolbar inert
+        try {
+          var c = document.createElement('canvas'); c.width = im.naturalWidth; c.height = im.naturalHeight;
+          c.getContext('2d').drawImage(im, 0, 0);
+          canvasToBytes(c, 'image/png').then(function (png) { c.width = 0; res(png); }, rej);
+        } catch (e) { rej(e); }
+      };
       im.onerror = function () { URL.revokeObjectURL(url); rej(new Error('could not decode image')); };
       im.src = url;
     });
@@ -571,6 +583,26 @@
       };
       im.onerror = function () { rej(new Error('could not load page image')); };
       pngUrlInto(im, pg.raster.png);
+    });
+  }
+
+  // decode a stored PNG raster and re-encode as JPEG on white — for embedding upright-
+  // flattened pages without pdf-lib's PNG-embedder RGBA heap cost (see bakedPage's note)
+  function rasterPngToJpg(png) {
+    return new Promise(function (res, rej) {
+      var url = URL.createObjectURL(new Blob([png], { type: 'image/png' })), im = new Image();
+      im.onload = function () {
+        URL.revokeObjectURL(url);
+        try {
+          var c = document.createElement('canvas'); c.width = im.naturalWidth; c.height = im.naturalHeight;
+          var cx = c.getContext('2d');
+          cx.fillStyle = '#fff'; cx.fillRect(0, 0, c.width, c.height);
+          cx.drawImage(im, 0, 0);
+          canvasToBytes(c, 'image/jpeg', 0.92).then(function (jpg) { c.width = 0; res(jpg); }, rej);
+        } catch (e) { rej(e); }
+      };
+      im.onerror = function () { URL.revokeObjectURL(url); rej(new Error('could not decode the stored page image')); };
+      im.src = url;
     });
   }
 
@@ -1300,12 +1332,20 @@
               var bp = out.addPage([bw, bh]);
               added = Promise.resolve({ page: bp, w: bw, h: bh });
             } else if (pg.raster) {
-              added = out.embedPng(pg.raster.png).then(function (img) {
-                var p = out.addPage([pg.raster.wPt, pg.raster.hPt]);
-                p.drawImage(img, { x: 0, y: 0, width: pg.raster.wPt, height: pg.raster.hPt });
-                if (pg.rot) { try { p.setRotation(PDFLib.degrees(((pg.rot % 360) + 360) % 360)); } catch (e) {} }
-                return { page: p, w: pg.raster.wPt, h: pg.raster.hPt };
-              });
+              // transcode the stored PNG to JPEG-on-white first: the page is opaque, and
+              // pdf-lib's PNG embedder holds raw RGBA until save() (~7 MB per page — the
+              // same blowup the redact bake avoids with embedJpg; page numbers flatten
+              // EVERY rotated page this way, so a big scan would hit it at scale). If the
+              // transcode fails, embed the PNG after all: correctness over memory.
+              added = rasterPngToJpg(pg.raster.png)
+                .then(function (jpg) { return out.embedJpg(jpg); },
+                      function () { return out.embedPng(pg.raster.png); })
+                .then(function (img) {
+                  var p = out.addPage([pg.raster.wPt, pg.raster.hPt]);
+                  p.drawImage(img, { x: 0, y: 0, width: pg.raster.wPt, height: pg.raster.hPt });
+                  if (pg.rot) { try { p.setRotation(PDFLib.degrees(((pg.rot % 360) + 360) % 360)); } catch (e) {} }
+                  return { page: p, w: pg.raster.wPt, h: pg.raster.hPt };
+                });
             } else {
               added = Promise.resolve(getLibDoc(cache, pg.docIndex)).then(function (src) {
                 // pdf-lib loads encrypted PDFs (ignoreEncryption) but does NOT decrypt their streams,
@@ -1608,7 +1648,9 @@
 
   // ---------- form fields ----------
   function getFormFields(docIndex) {
-    return PDFLib.PDFDocument.load(docs[docIndex].bytes, { ignoreEncryption: true }).then(function (doc) {
+    var d = docs[docIndex];
+    if (!d || !d.bytes) return Promise.resolve([]);   // tombstoned by pruneDocs
+    return PDFLib.PDFDocument.load(d.bytes, { ignoreEncryption: true }).then(function (doc) {
       var out = [];
       try {
         doc.getForm().getFields().forEach(function (f) {
@@ -1709,6 +1751,7 @@
     openDialog: openDialog,
     closeDialog: closeDialog,
     exportName: exportName,
+    liveDocIndices: liveDocIndices,
     downloadBytes: downloadBytes,
     fmtSize: fmtSize,
     getPageNums: function () { return pageNums; },

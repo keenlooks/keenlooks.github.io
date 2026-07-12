@@ -72,7 +72,13 @@
     return PT.pageEffRotation(pg).then(function (r) {
       if (r === 0) return false;
       if (PT.snapshot) PT.snapshot('flatten page ' + (idx + 1) + ' upright');
-      return PT.bakePageToRaster(pg, 150).then(function () { return renderPage(); }).then(function () { return true; });
+      var mySnap = PT.snapSeq ? PT.snapSeq() : -1;
+      return PT.bakePageToRaster(pg, 150).then(null, function (e) {
+        // the flatten failed, so its snapshot covers nothing — drop it, but only while
+        // it is still top-of-stack (the usual ledger guard)
+        if (mySnap >= 0 && PT.snapSeq && PT.snapSeq() === mySnap && PT.dropSnapshot) PT.dropSnapshot();
+        throw e;
+      }).then(function () { return renderPage(); }).then(function () { return true; });
     });
   }
 
@@ -375,6 +381,10 @@
       var t = { x: nx, y: ny, text: '', size: o.size, font: o.font, color: o.color };
       pg.texts.push(t); var el = makeTextEl(t, true, !flattened); layer.appendChild(el);
       select(el); setTimeout(function () { el.__txt.focus(); }, 0);
+    }).catch(function () {
+      // the upright flatten failed (render/encode error on an unusual page) — say so
+      // instead of a click that silently does nothing
+      if (myPg === pg) edNotice('Could not prepare this page for text.');
     });
   }
   stage.addEventListener('pointerdown', function (e) {
@@ -631,7 +641,10 @@
         setTool('move'); select(el);
         PT.setStatus('Signature placed — drag it where you want.');
       });
-    }).then(done, done);
+    }).then(done, function () {
+      if (myPg === pg) edNotice('Could not place the signature on this page.');
+      done();
+    });
   });
 
   // ---------- inline form-field widgets ----------

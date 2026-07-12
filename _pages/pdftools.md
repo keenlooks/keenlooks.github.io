@@ -635,6 +635,10 @@ html[data-theme="light"] .pt-ed__arrow { color: #1f2430; }
 .pt-anno--sig { cursor: move; z-index: 3; }
 .pt-anno--sig img { width: 100%; height: 100%; display: block; pointer-events: none; }
 .pt-anno__del { position: absolute; top: -10px; right: -10px; width: 18px; height: 18px; line-height: 16px; text-align: center; font-size: 12px; border-radius: 50%; border: none; background: #c4574a; color: #fff; cursor: pointer; padding: 0; z-index: 2; }
+/* keep the x badge off the last characters of a short one-line text box: it intrudes
+   ~8px (13px coarse) into the top-right corner, so pad the SELECTED box past it.
+   Padding-right never moves the ink (left/top anchored) — export parity untouched. */
+.pt-anno--text.pt-sel { padding-right: 12px; }
 .pt-anno__resize { position: absolute; right: -6px; bottom: -6px; width: 12px; height: 12px; background: #82a6cc; border: 1px solid #fff; border-radius: 2px; cursor: nwse-resize; }
 /* a committed redaction is solid black (it IS what the download will look like);
    a box still being drawn is translucent with a red edge */
@@ -662,6 +666,7 @@ html[data-theme="light"] .pt-ed__arrow { color: #1f2430; }
   .pt-anno__del { width: 26px; height: 26px; line-height: 24px; font-size: 15px; top: -13px; right: -13px; }
   .pt-anno__resize { width: 24px; height: 24px; right: -12px; bottom: -12px; }
   .pt-sigsaved__del { min-width: 24px; min-height: 24px; padding: 0.4em 0.55em; box-sizing: border-box; }
+  .pt-anno--text.pt-sel { padding-right: 16px; }
 }
 </style>
 

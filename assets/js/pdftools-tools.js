@@ -213,7 +213,10 @@
       if (!idxs.length || PT.isBusy()) return;
       PT.setBusy(true);
       var docs = PT.docs();
-      var base = PURE.sanitizeBaseName(docs.length ? docs[0].name : '');
+      // per-file names must come from a doc that still has live pages, like the zip name
+      // does — docs[0] may be fully deleted (tombstoned) and would haunt the filenames
+      var live = PT.liveDocIndices();
+      var base = PURE.sanitizeBaseName(live.length ? docs[live[0]].name : '');
       var ext = fmt === 'jpeg' ? 'jpg' : 'png';
       var files = [];
       eachPage(idxs, function (pg, pi) {
