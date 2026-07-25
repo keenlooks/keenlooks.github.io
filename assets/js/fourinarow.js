@@ -472,8 +472,10 @@
       bx = CW * 0.06; bw = CW * 0.88;
       by = topPad; bh = (CH - topPad - botPad) * 0.52;
     } else {
+      /* thinking hidden: the board would otherwise fill the height and leave
+         the robot nowhere to stand but on top of it, so keep a row free */
       bx = CW * 0.10; bw = CW * 0.80;
-      by = topPad; bh = CH - topPad - botPad;
+      by = topPad; bh = CH - topPad - botPad - 58;
     }
     /* The stacked branches must respect the panel too: between 600 and 1000px
        wide with the panel open (a tablet in portrait), an unclamped board runs
@@ -509,6 +511,12 @@
       /* stop short of the corner-button band, not the viewport edge */
       geo.th = (CH - botPad) - geo.ty;
     }
+  }
+
+  /* the drawn board includes a frame that overhangs the cell area */
+  function boardRect() {
+    var pad = geo.s * 0.25;
+    return { x: geo.bx - pad, y: geo.by - pad, w: geo.bw + pad * 2, h: geo.bh + pad * 2 };
   }
 
   function cellX(c) { return geo.bx + c * geo.s + geo.s / 2; }
@@ -885,11 +893,13 @@
     ctx.restore();
   }
 
-  /* Speech bubble to the right of the robot (flips left if it would overflow). */
-  function drawBubble(rx, ry, now) {
+  /* Speech bubble beside the robot. It is placed from the robot's OWN edge
+     (half its drawn width) plus a gap, on whichever side has room, so it can
+     never end up over the robot's face. */
+  function drawBubble(cx, cy, half, now) {
     if (!st.bubble) return;
     var age = now - st.bubble.t0;
-    if (age > 6000) { st.bubble = null; return; }
+    if (age > 6000) { st.bubble = null; st.bubbleBox = null; return; }
     var a = reduceMotion ? 1 : Math.min(1, age / 180) * Math.min(1, (6000 - age) / 500);
     ctx.font = '400 12.5px "Source Sans 3", system-ui, sans-serif';
     var pad = 8, maxW = Math.min(190, CW - 40);
@@ -911,16 +921,48 @@
     }
     var lines = st.bubble.lines, wBox = st.bubble.boxW;
     var hBox = lines.length * 16 + pad * 2 - 4;
-    var by = ry - hBox / 2;
+    var by = cy - hBox / 2;
     if (by < 4) by = 4;
     /* the control panel is a DOM element painted OVER the canvas, so the bubble
        has to stop at its edge rather than slide underneath it */
-    var right = CW - 8;
+    var right = CW - 8, left = 6;
     var p = geo.panel;
     if (p && by < p.y + p.h && by + hBox > p.y) right = Math.min(right, p.x - 8);
-    var bx = rx + 24, flip = false;
-    if (bx + wBox > right) { bx = rx - 24 - wBox; flip = true; }
-    if (bx < 6) { bx = 6; }
+    /* Try beside, then below, then above, and take the first placement that is
+       on screen and clear of BOTH the robot and the board. Whichever it picks,
+       the tail below points at the robot. */
+    var GAP = 10;
+    var rightEdge = cx + half, leftEdge = cx - half;
+    var board = boardRect();
+    var robot = { x: leftEdge, y: cy - half * 1.5, w: half * 2, h: half * 3 };
+    var cands = [
+      { x: rightEdge + GAP, y: by, flip: false },
+      { x: leftEdge - GAP - wBox, y: by, flip: true },
+      { x: cx - wBox / 2, y: cy + half + 10, flip: false },
+      { x: cx - wBox / 2, y: cy - half - 10 - hBox, flip: false }
+    ];
+    function hits(a, b, tol) {
+      return a.x < b.x + b.w - tol && a.x + a.w - tol > b.x &&
+             a.y < b.y + b.h - tol && a.y + a.h - tol > b.y;
+    }
+    var bx = cands[0].x, flip = false, chosen = null;
+    for (var ci = 0; ci < cands.length; ci++) {
+      var c = cands[ci];
+      var box = { x: c.x, y: c.y, w: wBox, h: hBox };
+      if (box.x < left || box.x + box.w > right) continue;
+      if (box.y < 4 || box.y + box.h > CH - 4) continue;
+      if (hits(box, robot, 1)) continue;
+      if (hits(box, board, 2)) continue;
+      chosen = c;
+      break;
+    }
+    if (!chosen) {
+      /* nothing clean: keep it on screen and off the robot at least */
+      chosen = { x: Math.max(left, Math.min(cx - wBox / 2, right - wBox)),
+                 y: Math.min(CH - 4 - hBox, cy + half + 10), flip: false };
+    }
+    bx = chosen.x; by = chosen.y; flip = chosen.flip;
+    st.bubbleBox = { x: bx, y: by, w: wBox, h: hBox };
     ctx.globalAlpha = a;
     ctx.fillStyle = TH.light ? 'rgba(255,255,255,0.96)' : 'rgba(30,32,38,0.96)';
     ctx.strokeStyle = TH.line;
@@ -928,13 +970,14 @@
     roundRect(bx, by, wBox, hBox, 8);
     ctx.fill();
     ctx.stroke();
-    /* tail */
+    /* tail, pointing back at the robot (only when the bubble is beside it) */
     ctx.beginPath();
     var tipX = flip ? bx + wBox : bx;
     var dir = flip ? 1 : -1;
-    ctx.moveTo(tipX, ry - 5);
-    ctx.lineTo(tipX + dir * 7, ry);
-    ctx.lineTo(tipX, ry + 5);
+    var tipY = Math.max(by + 8, Math.min(cy, by + hBox - 8));
+    ctx.moveTo(tipX, tipY - 5);
+    ctx.lineTo(tipX + dir * 7, tipY);
+    ctx.lineTo(tipX, tipY + 5);
     ctx.closePath();
     ctx.fillStyle = TH.light ? 'rgba(255,255,255,0.96)' : 'rgba(30,32,38,0.96)';
     ctx.fill();
@@ -1465,17 +1508,34 @@
       rx = geo.tx + geo.tw - size * 0.55;
       ry = geo.ty + size * 0.62;
     } else {
-      /* thinking hidden: sit under the board's RIGHT end, below the column
-         labels and above the fixed corner buttons on the left */
+      /* thinking hidden: under the board's RIGHT end, below the column labels
+         and above the fixed corner buttons. If the board is tall enough that
+         there is no room below it, tuck the robot into the margin beside it
+         rather than letting it sit on the board. */
       size = 40;
       var labelBot = geo.by + geo.bh + geo.s * 0.28 + 14;
-      rx = geo.bx + geo.bw - size * 0.6;
-      ry = Math.min(labelBot + size * 0.62, CH - (geo.botPad || 96) - size * 0.2);
+      var floor = CH - (geo.botPad || 96) - size * 0.2;
+      var br = boardRect();
+      var boardRight = br.x + br.w;
+      var rightLimit = (geo.panel && geo.panel.y < CH * 0.6) ? geo.panel.x - 8 : CW - 8;
+      if (labelBot + size * 0.62 <= floor) {
+        rx = boardRight - size * 0.6;
+        ry = labelBot + size * 0.62;
+      } else if (rightLimit - boardRight >= size * 1.05) {
+        rx = boardRight + Math.min(rightLimit - boardRight - size * 0.5, size * 0.85);
+        ry = Math.min(br.y + br.h - size * 0.7, floor);
+      } else {
+        rx = boardRight - size * 0.6;
+        ry = Math.min(labelBot + size * 0.62, floor);
+      }
     }
     var mood = robotMood();
     if (mood === 'happy' && celebrating(now)) sparkle(rx, ry, now);
     drawRobot(rx, ry, size, mood, now);
-    drawBubble(rx + size * 0.42, ry, now);
+    /* half-width of the drawn robot: the arms reach +/-13 units of 34 */
+    var half = size * 0.42;
+    st.robotBox = { x: rx - half, y: ry - size * 0.62, w: half * 2, h: size * 1.24 };
+    drawBubble(rx, ry, half, now);
     return ry + size * 0.62;
   }
 
@@ -1703,7 +1763,14 @@
     get phase() { return st.phase; },
     get moves() { return st.moves.slice(); },
     get result() { return st.result; },
-    get geo() { return { bx: geo.bx, by: geo.by, bw: geo.bw, bh: geo.bh, s: geo.s }; }
+    get geo() { return { bx: geo.bx, by: geo.by, bw: geo.bw, bh: geo.bh, s: geo.s }; },
+    /* laid-out boxes so overlap can be asserted in tests rather than eyeballed */
+    get boxes() {
+      return { robot: st.robotBox || null, bubble: st.bubbleBox || null,
+               panel: geo.panel || null, think: geo.tw
+                 ? { x: geo.tx, y: geo.ty, w: geo.tw, h: geo.th } : null };
+    },
+    say: function (t) { say(String(t || '')); }
   };
 
   if (!tryRestore()) {
