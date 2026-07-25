@@ -284,6 +284,11 @@ html[data-theme="light"] .comp-memedit { color: #1e2732; background: #ffffff; bo
   html:not([data-theme="dark"]) .comp-memedit { color: #1e2732; background: #ffffff; border-color: #34568a; }
 }
 .comp-blurb { margin: 0; font-size: 0.82em; opacity: 0.75; line-height: 1.45; }
+/* the fixed #theme-toggle / #life-link buttons float over the bottom-left of
+   every .life-app page (~130px wide, ~78px tall band), so the last line of the
+   code pane's blurb has to sit above them */
+.comp-pane--code .comp-blurb:last-child { padding-bottom: 3.4rem; }
+@media (max-width: 768px) { .comp-pane--code .comp-blurb:last-child { padding-bottom: 0; } }
 
 /* ---- instruction reference slide-over ---- */
 .comp-ref {
