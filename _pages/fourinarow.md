@@ -3,7 +3,7 @@ layout: single
 title: "Four in a Row"
 permalink: /fourinarow/
 author_profile: false
-excerpt: "Play the classic four-in-a-row game against a neural network, and watch it think: the search tree grows in real time as it considers lines."
+excerpt: "Play the classic four-in-a-row game against a neural network refined by self-play, and watch it think: the search tree grows in real time as it considers lines."
 description: "Play four in a row against an AlphaZero-style neural network by Keane Lucas. The AI runs entirely in your browser, and its thinking is visible: a live search tree, its raw instinct versus what the search concludes, and a win-probability bar."
 ---
 
@@ -20,13 +20,14 @@ description: "Play four in a row against an AlphaZero-style neural network by Ke
     </div>
     <div class="c4-panel__body" id="c4-panel-body">
       <p class="c4-blurb">
-        You are <strong>blue</strong>. The AI is a small neural network that learned this
-        game from about 12,000 games played by an exact solver, and it picks its moves
-        the way AlphaZero does: the network's hunch guides a search, and the search
-        decides. While it thinks, the panel beside the board shows that search tree
-        growing, its raw instinct next to what the search concludes, and the win odds.
-        Turn the strength down to Instinct and it plays on the hunch alone, which
-        sometimes misses a mate in one. The search is what fixes that.
+        You are <strong>blue</strong>. The AI is a small neural network that first learned
+        this game from about 12,000 games played by an exact solver, then improved by
+        playing thousands of games against itself. It picks its moves the way AlphaZero
+        does: the network's hunch guides a search, and the search decides. While it
+        thinks, the panel beside the board shows that search tree growing, its raw
+        instinct next to what the search concludes, and the win odds. Turn the strength
+        down to Instinct and it plays on the hunch alone, which sometimes misses a mate
+        in one. The search is what fixes that.
       </p>
 
       <div class="c4-row">
@@ -53,9 +54,9 @@ description: "Play four in a row against an AlphaZero-style neural network by Ke
 
       <p class="c4-status-line" role="status" aria-live="polite"><span id="c4-status"></span></p>
       <p class="c4-verify-line"><span id="c4-verify"></span><br><span id="c4-modelnote"></span></p>
-      <p class="c4-credit">Policy and value network with PUCT search, following the
-        AlphaZero design (Silver et al., 2017, DeepMind). All code here is original and
-        runs in your browser.</p>
+      <p class="c4-credit">Policy and value network with PUCT search, trained by
+        self-play following the AlphaZero method (Silver et al., 2017, DeepMind). All
+        code here is original and runs in your browser.</p>
     </div>
   </div>
 </div>
