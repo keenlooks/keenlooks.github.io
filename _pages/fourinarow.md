@@ -12,6 +12,11 @@ description: "Play four in a row against an AlphaZero-style neural network by Ke
   <canvas id="c4-canvas" class="c4-canvas"
           aria-label="A four in a row board. Click or tap a column to drop a piece; the AI answers, and its search is visualized beside the board."></canvas>
 
+  <!-- The visible status lives in the control panel, which is collapsed (and so
+       display:none) by default on phones. A display:none live region announces
+       nothing, so this always-present mirror carries the same text. -->
+  <p id="c4-status-sr" class="c4-sr" role="status" aria-live="polite"></p>
+
   <div class="c4-panel" id="c4-panel">
     <div class="c4-panel__head">
       <span class="c4-panel__title">Four in a Row</span>
@@ -52,7 +57,7 @@ description: "Play four in a row against an AlphaZero-style neural network by Ke
         <button id="c4-save" class="c4-btn" type="button">Save image</button>
       </div>
 
-      <p class="c4-status-line" role="status" aria-live="polite"><span id="c4-status"></span></p>
+      <p class="c4-status-line"><span id="c4-status"></span></p>
       <p class="c4-verify-line"><span id="c4-verify"></span><br><span id="c4-modelnote"></span></p>
       <p class="c4-credit">Policy and value network with PUCT search, trained by
         self-play following the AlphaZero method (Silver et al., 2017, DeepMind). All
@@ -133,8 +138,30 @@ html[data-theme="light"] .c4-panel { background: rgba(255,255,255,0.97); border-
 .c4-check { display: inline-flex; align-items: center; gap: 0.45rem; font-size: 0.95em; cursor: pointer; }
 .c4-check input { accent-color: #82a6cc; }
 .c4-status-line { margin: 0; font-size: 0.9em; opacity: 0.85; min-height: 1.2em; }
+.c4-sr {
+  position: absolute; width: 1px; height: 1px; margin: -1px;
+  padding: 0; border: 0; overflow: hidden; white-space: nowrap;
+  clip: rect(0 0 0 0); clip-path: inset(50%);
+}
 .c4-verify-line { margin: 0; font-size: 0.78em; opacity: 0.6; line-height: 1.4; }
 .c4-credit { margin: 0; font-size: 0.78em; opacity: 0.55; line-height: 1.4; }
+
+/* Small screens: the blurb runs to a dozen lines, which pushed New game and the
+   strength slider below the fold. The panel body is a flex column, so lead with
+   the things you touch and let the prose follow. */
+@media (max-width: 768px) {
+  .c4-blurb { order: 1; }
+  .c4-verify-line { order: 2; }
+  .c4-credit { order: 3; }
+}
+/* touch targets */
+@media (pointer: coarse) {
+  .c4-btn { min-height: 40px; padding: 0.5em 0.85em; }
+  .c4-collapse { width: 2.3em; height: 2.3em; }
+  .c4-panel .gadget-help { min-width: 36px; min-height: 36px; }
+  .c4-slider input[type="range"] { height: 32px; }
+  .c4-check input { width: 20px; height: 20px; }
+}
 
 html[data-theme="light"] .c4-seg--on { border-color: #34568a; background: rgba(52,86,138,0.14); }
 html[data-theme="light"] .c4-slider input[type="range"],
