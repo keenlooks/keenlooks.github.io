@@ -491,6 +491,17 @@
     geo.bh = boardH;
     if (wide) {
       geo.ty = topPad; geo.th = CH - topPad - botPad;
+      /* On a short screen the panel is collapsed to a header sitting over the
+         top-right, which is exactly where this column starts. Begin below it so
+         the robot (now at the AI end, on the right) is never hidden under it. */
+      var pn = geo.panel;
+      if (pn && pn.h < CH * 0.4 && pn.x < geo.tx + geo.tw && pn.x + pn.w > geo.tx) {
+        var push = pn.y + pn.h + 8;
+        if (push > geo.ty && push < CH - botPad - 90) {
+          geo.th -= (push - geo.ty);
+          geo.ty = push;
+        }
+      }
     } else if (think) {
       geo.tx = CW * 0.06;
       geo.tw = Math.min(CW * 0.88, twRight - geo.tx);
@@ -1448,8 +1459,10 @@
   function drawRobotArea(now) {
     var size, rx, ry;
     if (st.showThink && geo.tw) {
+      /* the AI end of the win bar: the robot IS the gold side, so it belongs
+         over the "AI" label, not over "you" */
       size = Math.min(44, Math.max(30, geo.tw * 0.13));
-      rx = geo.tx + size * 0.55;
+      rx = geo.tx + geo.tw - size * 0.55;
       ry = geo.ty + size * 0.62;
     } else {
       /* thinking hidden: sit under the board's RIGHT end, below the column
