@@ -164,6 +164,8 @@ html[data-theme="light"] .comp-topfade {
 
 /* ---- editor (explicit high contrast in BOTH themes) ---- */
 .comp-codebar { align-items: center; }
+/* let the example menu shrink so the bar stays one row on a narrow column */
+.comp-codebar select { flex: 1 1 90px; min-width: 0; }
 .comp-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .comp-edwrap { flex: 1; min-height: 200px; display: flex; position: relative; }
 #comp-src, .comp-srcview {
@@ -301,9 +303,11 @@ html[data-theme="light"] .comp-memedit { color: #1e2732; background: #ffffff; bo
 }
 .comp-ref--open { transform: none; box-shadow: -14px 0 44px rgba(0,0,0,0.45); visibility: visible; }
 /* visibility (delayed to the end of the slide) also takes the closed panel out
-   of the tab order in browsers without inert support */
+   of the tab order in browsers without inert support. These two rules come
+   AFTER the pair above and have the same specificity, so the open state has to
+   restate visibility here or the panel slides in while still invisible. */
 .comp-ref { visibility: hidden; transition: transform 0.25s ease, visibility 0s linear 0.25s; }
-.comp-ref--open { transition: transform 0.25s ease, visibility 0s; }
+.comp-ref--open { visibility: visible; transition: transform 0.25s ease, visibility 0s; }
 @media (prefers-reduced-motion: reduce) { .comp-ref { transition: none; } }
 html[data-theme="light"] .comp-ref { background: rgba(252,253,255,0.99); border-left-color: rgba(0,0,0,0.18); }
 @media (prefers-color-scheme: light) {
@@ -320,9 +324,48 @@ html[data-theme="light"] .comp-ref { background: rgba(252,253,255,0.99); border-
 .comp-ref-table code { font-size: 1em; white-space: nowrap; }
 .comp-ref-credit { margin-top: 1.4em; font-size: 0.85em; opacity: 0.75; }
 
-/* ---- small screens: keep clear of the floating corner buttons ---- */
+/* ---- small screens: keep clear of the floating corner buttons ----
+   #theme-toggle and #life-link float over the bottom-left (bottom: 4rem here,
+   ~42px tall, spanning to x~113), and a pane that SCROLLS can put a control
+   under them at any scroll offset, so padding cannot fix it — the left column
+   has to end above the band. Only the left column is ever under them. */
 @media (max-width: 768px) {
-  .comp-pane { padding-bottom: 5rem; }
+  #comp-app[data-cols="1"] .comp-pane,
+  #comp-app[data-cols="2"] .comp-pane--code { margin-bottom: 6.6rem; }
+}
+/* the datapath is 620x352 of design space; fitting that into a phone-width
+   pane shrinks its labels to ~6px, so on the single-column layout it keeps a
+   legible minimum width and its wrapper pans instead */
+#comp-app[data-cols="1"] .comp-dpwrap { overflow-x: auto; overflow-y: hidden; }
+@media (max-height: 540px) {
+  .comp-edwrap { min-height: 72px; }
+  .comp-dpwrap { min-height: 120px; }
+  .comp-pane--code .comp-blurb { display: none; }
+  /* 38vh lands on the toolbar in landscape; drop the hint to the bottom */
+  .gadget-hint { top: auto; bottom: 0.5rem; }
+}
+/* the shared first-run hint normally floats over a canvas; on this page it
+   lands on the code editor, so give it a readable band */
+.gadget-hint {
+  padding: 0.7rem 1.2rem; background: rgba(18,18,18,0.9);
+  -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+  border-top: 1px solid rgba(127,127,127,0.25);
+  border-bottom: 1px solid rgba(127,127,127,0.25);
+}
+html[data-theme="light"] .gadget-hint { background: rgba(255,255,255,0.93); }
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .gadget-hint { background: rgba(255,255,255,0.93); }
+}
+/* touch targets, and a 16px editor font so iOS does not zoom the page when the
+   textarea takes focus */
+@media (pointer: coarse) {
+  .comp-btn, #comp-app select { min-height: 40px; }
+  .comp-tab { min-height: 42px; }
+  .comp-dbtn { min-height: 44px; }
+  .comp-dpad { grid-auto-rows: 44px; }
+  #comp-src, .comp-srcview, .comp-memedit { font-size: 16px; }
+  .comp-memedit { width: 66px; min-height: 30px; }
+  #comp-app input[type="range"] { height: 34px; }
 }
 </style>
 

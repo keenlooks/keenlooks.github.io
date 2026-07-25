@@ -154,6 +154,23 @@ html[data-theme="light"] .mars-seg__btn--on { background: rgba(52,86,138,0.16); 
 .mars-credit { margin: 0; font-size: 0.78em; opacity: 0.6; line-height: 1.45; }
 .mars-verify { margin: 0; font-size: 0.78em; opacity: 0.55; font-variant-numeric: tabular-nums; min-height: 1.1em; }
 .mars-verify--warn { opacity: 0.9; font-weight: 600; }
+
+/* Small screens: the blurb and the credit run to fourteen lines on a phone,
+   which pushed Launch and the target switch below the fold. The panel body is
+   a flex column, so lead with the things you touch and let the prose follow. */
+@media (max-width: 768px) {
+  .mars-blurb { order: 1; }
+  .mars-credit { order: 2; }
+  .mars-verify { order: 3; }
+}
+/* touch targets */
+@media (pointer: coarse) {
+  .mars-btn { min-height: 40px; padding: 0.5em 0.85em; }
+  .mars-seg__btn { min-height: 40px; }
+  .mars-collapse { width: 2.3em; height: 2.3em; }
+  .mars-panel .gadget-help { min-width: 36px; min-height: 36px; }
+  .mars-details summary { padding: 0.35em 0; }
+}
 </style>
 
 <script defer src="{{ '/assets/js/gadget-ui.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>

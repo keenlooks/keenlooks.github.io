@@ -107,6 +107,16 @@ html[data-theme="light"] .cre-topfade {
 @media (max-width: 768px) {
   .cre-chart { bottom: 8rem; }
 }
+/* On a phone that spot lands right on the runners. Move the chart to the
+   bottom-right instead: below the ground line, and clear of the corner
+   buttons. creatures.js sizes it to match (see chartBox). */
+@media (max-width: 620px) {
+  .cre-chart { left: auto; right: 1rem; bottom: 1rem; }
+}
+/* a landscape phone has no room for it at all */
+@media (max-height: 520px) {
+  .cre-chart { display: none; }
+}
 
 .cre-panel {
   position: fixed; top: 4.6rem; right: 1rem; z-index: 30;
@@ -177,6 +187,21 @@ html[data-theme="light"] .cre-banner { background: rgba(255,255,255,0.97); borde
 html[data-theme="light"] .cre-slider input[type="range"] { accent-color: #34568a; }
 @media (prefers-color-scheme: light) {
   html:not([data-theme="dark"]) .cre-slider input[type="range"] { accent-color: #34568a; }
+}
+
+/* Small screens: the blurb is ten lines on a phone, which pushed every control
+   below the fold. The panel body is a flex column, so send the explanation to
+   the end and lead with the things you touch. */
+@media (max-width: 768px) {
+  .cre-blurb { order: 1; }
+}
+/* touch targets */
+@media (pointer: coarse) {
+  .cre-btn { min-height: 40px; padding: 0.5em 0.85em; }
+  .cre-select select { min-height: 40px; }
+  .cre-collapse { width: 2.3em; height: 2.3em; }
+  .cre-panel .gadget-help { min-width: 36px; min-height: 36px; }
+  .cre-slider input[type="range"] { height: 32px; }
 }
 </style>
 

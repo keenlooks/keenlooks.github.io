@@ -148,7 +148,7 @@
     var scrCtx = scrCanvas.getContext('2d');
     var memCtx = memCanvas.getContext('2d');
     var DP_W = 620, DP_H = 352;      /* datapath design space */
-    var dpScale = 1, dpOffX = 0, dpOffY = 0;
+    var dpScale = 1, dpOffX = 0, dpOffY = 0, dpScrolled = false;
 
     function sizeOne(canvas, cssW, cssH) {
       canvas.style.width = cssW + 'px';
@@ -160,18 +160,29 @@
       }
     }
     function sizeCanvases() {
-      /* datapath: fill its wrapper, keep aspect */
+      var oneCol = app.getAttribute('data-cols') === '1';
+      /* datapath: fill its wrapper, keep aspect. On the single-column (phone)
+         layout, fitting 620x352 into a ~344px pane would shrink the block
+         labels to about 6px, so the canvas keeps a legible minimum width and
+         the wrapper pans horizontally instead (CSS: overflow-x auto). */
       if (dpWrap && dpWrap.clientWidth > 0) {
-        var w = dpWrap.clientWidth;
+        var w = Math.max(dpWrap.clientWidth, oneCol ? 560 : 0);
         var h = Math.max(200, dpWrap.clientHeight);
         sizeOne(dpCanvas, w, h);
         dpScale = Math.min(w / DP_W, h / DP_H);
         dpOffX = (w - DP_W * dpScale) / 2;
         dpOffY = Math.max(0, (h - DP_H * dpScale) / 2);
+        /* start the pan in the middle once, so BOTH edges read as cut off and
+           the diagram is obviously wider than the window (never fight a pan
+           the reader has already made) */
+        if (oneCol && !dpScrolled && dpWrap.scrollWidth > dpWrap.clientWidth) {
+          dpWrap.scrollLeft = Math.round((dpWrap.scrollWidth - dpWrap.clientWidth) / 2);
+          dpScrolled = true;
+        }
       }
-      /* screen: square, CSS-driven width */
+      /* screen: square, CSS-driven width (a phone gets the whole pane) */
       if (scrCanvas.parentElement && scrCanvas.parentElement.clientWidth > 0) {
-        var sw = Math.min(272, scrCanvas.parentElement.clientWidth - 4);
+        var sw = Math.min(oneCol ? 340 : 272, scrCanvas.parentElement.clientWidth - 4);
         sizeOne(scrCanvas, sw, sw);
         screenAll = true;
       }

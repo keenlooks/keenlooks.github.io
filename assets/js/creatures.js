@@ -67,6 +67,14 @@
 
   /* ------------------------------ layout --------------------------------- */
 
+  /* The chart is a fixed HUD. On a phone it moves to the bottom-right (CSS) and
+     has to shrink so the corner buttons, which reach x~130, never sit on it. */
+  function chartBox() {
+    if (W >= 620) return [260, 150];
+    var w = Math.max(150, Math.min(230, W - 150));
+    return [w, Math.round(w * 150 / 260)];
+  }
+
   function resize() {
     dpr = Math.min(window.devicePixelRatio || 1, 2);
     W = canvas.clientWidth; H = canvas.clientHeight;
@@ -74,8 +82,13 @@
     canvas.width = Math.round(W * dpr);
     canvas.height = Math.round(H * dpr);
     if (chart) {
+      var cb = chartBox();
+      CHART_W = cb[0]; CHART_H = cb[1];
+      chart.style.width = CHART_W + 'px';
+      chart.style.height = CHART_H + 'px';
       chart.width = Math.round(CHART_W * dpr);
       chart.height = Math.round(CHART_H * dpr);
+      chartLen = -1;                /* the cached stride depends on the width */
     }
   }
   function groundY() { return H * 0.78; }
@@ -412,7 +425,7 @@
   /* ------------------------------ chart ---------------------------------- */
 
   function drawChart() {
-    if (!chctx) return;
+    if (!chctx || !chart.clientWidth) return;   /* hidden on landscape phones */
     chctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     chctx.clearRect(0, 0, CHART_W, CHART_H);
     var head;
@@ -659,11 +672,14 @@
   if (window.GadgetUI) {
     var hint = GadgetUI.firstRunHint('creatures',
       'Watch the population learn to run. The blue one is the current best.');
-    GadgetUI.initPanel({
+    var pnl = GadgetUI.initPanel({
       panel: id('cre-panel'), toggle: id('cre-collapse'),
       collapsedClass: 'cre-panel--collapsed',
       help: id('cre-help'), hint: hint
     });
+    /* a landscape phone is wide enough that initPanel leaves the panel open,
+       but it would cover half the runners */
+    if (pnl && window.innerHeight < 520) pnl.setCollapsed(true);
   }
 
   var rt;

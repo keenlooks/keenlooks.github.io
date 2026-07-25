@@ -54,6 +54,7 @@
   var dragKind = null;                        // 'pc' | 'tl'
   var stars = null, orbCache = null;
   var L = null;                               // layout rects
+  var panelOpen = true;                       // control-panel collapse state
 
   /* ---------------- theme ---------------- */
   function effectiveTheme() {
@@ -121,14 +122,35 @@
     return Math.max(16, Math.round(H - r.top) + 8);
   }
 
+  /* The fixed #theme-toggle / #life-link buttons float over the bottom-left of
+     every .life-app page. They are created on DOMContentLoaded, i.e. after this
+     deferred script's first layout, so fall back to the measured band (bottom
+     4rem + ~42px tall at <=768px) until they exist. */
+  function cornerBand() {
+    var els = [document.getElementById('theme-toggle'), document.getElementById('life-link')];
+    var top = Infinity, bot = -Infinity;
+    for (var i = 0; i < els.length; i++) {
+      if (!els[i]) continue;
+      var r = els[i].getBoundingClientRect();
+      if (!r.height) continue;
+      if (r.top < top) top = r.top;
+      if (r.bottom > bot) bot = r.bottom;
+    }
+    if (!isFinite(top)) return { top: H - 110, bottom: H - 60 };
+    return { top: top, bottom: bot };
+  }
+
   function layout() {
     /* the fixed control panel owns the top-right ~330px and runs nearly full
        height, so the corner-inset porkchop only works on wide screens; below
-       1000px it docks along the bottom instead (still clear of the panel,
-       which auto-collapses only under 600px). Measured clearances: the two
+       1000px it docks along the bottom instead. The reserve disappears once the
+       panel is collapsed (it auto-collapses under 600px wide, and this page
+       collapses it on short screens too). Measured clearances: the two
        bottom-left buttons span to x~130, the panel starts at W-318. */
     var mobile = W < 1000;
-    var panelReserve = W >= 600 ? 330 : 0;
+    var phone = W < 600 && H >= 560;
+    var shortWide = !phone && H < 520 && W >= 520 && W < 1000;
+    var panelReserve = (W >= 600 && panelOpen) ? 330 : 0;
     var botClear = chatClearance();
     var pc, plot, ro, tl;
     if (!mobile) {
@@ -141,6 +163,38 @@
       plot = { x: pc.x + 48, y: pc.y + roH + 4, w: pcW - 48 - 14, h: plotH - 4 - 26 };
       /* timeline along the bottom: starts right of BOTH corner buttons */
       tl = { x0: 140, x1: Math.max(260, pc.x - 26), y: H - 26 };
+    } else if (phone) {
+      /* Portrait phone. Reserving a 134px gutter for the corner buttons (as the
+         tablet branch below does) would eat a third of the width, so instead the
+         PLOT stops above the button band and spans the full width; the readout
+         goes under the plot, in the strip below the buttons. Nothing draggable
+         is ever over #life-link, which would navigate away mid-session. */
+      var band = cornerBand();
+      var pcH3 = Math.round(H * 0.42);
+      pc = { x: 6, y: H - pcH3 - Math.max(8, botClear - 8), w: W - 12, h: pcH3 };
+      ro = { x: pc.x, y: pc.y + pc.h - 52, w: pc.w, h: 52 };
+      var plotTop = pc.y + 8;
+      var plotBot = Math.min(band.top - 30, ro.y - 26);
+      plot = { x: pc.x + 44, y: plotTop, w: pc.w - 44 - 10, h: Math.max(90, plotBot - plotTop) };
+      tl = { x0: 16, x1: W - 16, y: pc.y - 22 };
+    } else if (shortWide) {
+      /* Landscape phone. Stacking the map over the plot leaves both a sliver,
+         so they go side by side: plot on the right, system view and timeline on
+         the left where the corner buttons live (the plot never reaches them). */
+      var pcW2 = Math.round(Math.min(W * 0.56, W - panelReserve - 200));
+      var pcX = Math.max(140, W - pcW2 - 8 - panelReserve);
+      /* a collapsed panel is only a header, but it still sits over this column */
+      var top2 = 118;
+      if (elPanel) {
+        var pr = elPanel.getBoundingClientRect();
+        if (pr.height && pr.right > pcX && pr.left < pcX + pcW2) {
+          top2 = Math.min(Math.round(H * 0.45), Math.max(top2, Math.round(pr.bottom) + 6));
+        }
+      }
+      pc = { x: pcX, y: top2, w: pcW2, h: H - top2 - 10 };
+      ro = { x: pc.x, y: pc.y + pc.h - 46, w: pc.w, h: 46 };
+      plot = { x: pc.x + 44, y: pc.y + 8, w: pc.w - 44 - 12, h: Math.max(60, pc.h - 8 - 46 - 22) };
+      tl = { x0: 140, x1: Math.max(240, pc.x - 20), y: H - 26 };
     } else {
       /* Docked along the bottom. The fixed corner buttons (#theme-toggle,
          #life-link) float ABOVE this canvas and span x 20..130, so the plot
@@ -152,7 +206,8 @@
       plot = { x: pc.x + 134, y: pc.y + 50, w: pc.w - 134 - 10, h: pc.h - 50 - 24 };
       tl = { x0: 140, x1: W - 16 - panelReserve, y: pc.y - 22 };
     }
-    L = { mobile: mobile, reserve: panelReserve, pc: pc, plot: plot, ro: ro, tl: tl, sys: null };
+    L = { mobile: mobile, phone: phone, side: shortWide, reserve: panelReserve,
+          pc: pc, plot: plot, ro: ro, tl: tl, sys: null };
     fitView();
   }
 
@@ -164,8 +219,8 @@
     /* the docked branch must also clear the control panel, or the target orbit
        and the cruising ship pass behind it in the 600-1000px band */
     var x0 = 10;
-    var x1 = L.mobile ? Math.max(x0 + 60, W - 10 - L.reserve)
-                      : Math.max(x0 + 60, L.pc.x - 10);
+    var x1 = (L.mobile && !L.side) ? Math.max(x0 + 60, W - 10 - L.reserve)
+                                   : Math.max(x0 + 60, L.pc.x - 10);
     var y0 = Math.max(90, H * 0.16), y1 = L.tl.y - 30;
     if (y1 < y0 + 60) y1 = y0 + 60;
     var scale = Math.min(x1 - x0, y1 - y0) / 2 / rFit;
@@ -901,16 +956,29 @@
 
   if (window.GadgetUI) {
     var hint = GadgetUI.firstRunHint('mars', 'Drag the crosshair on the map, then press Launch.');
-    GadgetUI.initPanel({
+    var pnl = GadgetUI.initPanel({
       panel: elPanel, toggle: elCollapse,
       collapsedClass: 'mars-panel--collapsed',
-      help: elHelp, hint: hint
+      help: elHelp, hint: hint,
+      /* collapsing the panel hands its 330px column back to the map */
+      onToggle: function (c) {
+        panelOpen = !c;
+        if (L) { layout(); pcCache = null; pcDirty = true; }
+      }
     });
+    /* a landscape phone is wide enough that initPanel leaves the panel open,
+       but it would cover the map and squeeze the plot into a sliver */
+    if (pnl && window.innerHeight < 520) pnl.setCollapsed(true);
   }
 
   resize();
   layout();
   makeStars();
+  /* the corner buttons this layout measures are created on DOMContentLoaded,
+     which is after this deferred script runs */
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function () { layout(); });
+  }
   /* chat-widget.js injects its bar after this script runs, so the first layout
      measures no widget; re-layout once it lands (and once more as a fallback
      in case it is disabled or renamed) */
