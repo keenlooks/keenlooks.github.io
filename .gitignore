@@ -16,3 +16,6 @@ CLAUDE.md
 .cf_token
 setup_cf_redirects.ps1
 *.zone
+
+# Python bytecode from the make_*.py dev scripts
+__pycache__/

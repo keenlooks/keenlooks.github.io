@@ -152,6 +152,7 @@ exclude:
   - docker-compose.yml
   - make_adversarial_model.py
   - make_favicons.py
+  - make_fourinarow_model.py
   - make_lander_model.py
   - make_transformer_model.py
   - setup_cf_redirects.ps1

@@ -502,6 +502,239 @@
         }
         ctx.globalAlpha = 1;
       }
+    },
+
+    fourinarow: {
+      fps: 3,
+      init: function (s) {
+        /* three scripted games, each ending in a win (vertical / row / diagonal) */
+        s.games = [[3, 2, 3, 2, 3, 2, 3],
+                   [2, 2, 3, 3, 4, 4, 5],
+                   [1, 2, 2, 3, 3, 4, 3, 4, 4, 6, 4]];
+        s.gi = 0;
+        s.restart = function () {
+          s.grid = [[], [], [], [], [], [], []];
+          s.mi = 0; s.hold = 0;
+        };
+        s.restart();
+      },
+      draw: function (s, ctx, w, h) {
+        var cell = Math.min(w / 8.4, h / 7.2);
+        var bx = (w - cell * 7) / 2, by = (h - cell * 6) / 2;
+        var mv = s.games[s.gi];
+        if (s.hold > 0) {
+          if (--s.hold === 0) { s.gi = (s.gi + 1) % s.games.length; s.restart(); }
+        } else if (s.mi < mv.length) {
+          s.grid[mv[s.mi]].push(s.mi % 2);
+          if (++s.mi === mv.length) s.hold = 5;
+        }
+        var gold = light() ? '#a07c2c' : '#c8a45c';
+        var flash = s.hold > 0 && s.hold % 2 === 0;
+        ctx.lineWidth = 1;
+        for (var c = 0; c < 7; c++) {
+          for (var r = 0; r < 6; r++) {
+            var x = bx + c * cell + cell / 2, y = by + (5 - r) * cell + cell / 2;
+            if (r < s.grid[c].length) {
+              ctx.fillStyle = s.grid[c][r] === 0 ? accent() : gold;
+              ctx.globalAlpha = flash ? 0.55 : 0.9;
+              ctx.beginPath(); ctx.arc(x, y, cell * 0.4, 0, 6.2832); ctx.fill();
+              ctx.globalAlpha = 1;
+            } else {
+              ctx.strokeStyle = grey(0.35);
+              ctx.beginPath(); ctx.arc(x, y, cell * 0.36, 0, 6.2832); ctx.stroke();
+            }
+          }
+        }
+      }
+    },
+
+    creatures: {
+      fps: 30,
+      init: function (s) {
+        /* the Sprinter preset + an evolved genome, same Verlet math as the page */
+        var P = [[0, 0.95], [-0.28, 0.65], [0.28, 0.65], [-0.22, 0.09], [0.22, 0.09]];
+        s.nodes = P.map(function (p) { return { x: p[0], y: p[1], px: p[0], py: p[1] }; });
+        var d = function (a, b) {
+          return Math.hypot(P[a][0] - P[b][0], P[a][1] - P[b][1]);
+        };
+        s.springs = [
+          { a: 0, b: 1, L: d(0, 1) }, { a: 0, b: 2, L: d(0, 2) }, { a: 1, b: 2, L: d(1, 2) },
+          { a: 1, b: 3, L: d(1, 3), m: [0.2582, 2.867] },
+          { a: 2, b: 4, L: d(2, 4), m: [0.32, 4.3065] },
+          { a: 1, b: 4, L: d(1, 4), m: [0.2538, 2.1736] },
+          { a: 2, b: 3, L: d(2, 3), m: [0.3195, 2.0189] }
+        ];
+        s.f = 2.0468; s.step = 0;
+      },
+      draw: function (s, ctx, w, h) {
+        var R = 0.09, DT = 1 / 240, i, j, sp;
+        for (var sub = 0; sub < 8; sub++) {          /* 8 substeps @30fps = real time */
+          var tt = s.step * DT; s.step++;
+          for (i = 0; i < s.springs.length; i++) {
+            sp = s.springs[i];
+            sp.rest = sp.m ? sp.L * (1 + sp.m[0] * Math.sin(6.2832 * s.f * tt + sp.m[1])) : sp.L;
+          }
+          for (i = 0; i < s.nodes.length; i++) {
+            var n = s.nodes[i];
+            var vx = (n.x - n.px) * 0.998, vy = (n.y - n.py) * 0.998;
+            n.px = n.x; n.py = n.y;
+            n.x += vx; n.y += vy - 9.8 * DT * DT;
+          }
+          for (j = 0; j < 3; j++) {
+            for (i = 0; i < s.springs.length; i++) {
+              sp = s.springs[i];
+              var A = s.nodes[sp.a], B = s.nodes[sp.b];
+              var dx = B.x - A.x, dy = B.y - A.y;
+              var len = Math.hypot(dx, dy) || 1e-9;
+              var corr = 0.5 * 0.8 * (len - sp.rest) / len;
+              A.x += dx * corr; A.y += dy * corr;
+              B.x -= dx * corr; B.y -= dy * corr;
+            }
+          }
+          for (i = 0; i < s.nodes.length; i++) {
+            var nd = s.nodes[i];
+            if (nd.y < R) {
+              nd.y = R;
+              var fvx = nd.x - nd.px;
+              nd.px = Math.abs(fvx) < 0.0004 ? nd.x : nd.x - fvx * 0.5;
+              if (nd.py < nd.y) nd.py = nd.y;
+            }
+          }
+        }
+        var com = 0;
+        for (i = 0; i < s.nodes.length; i++) com += s.nodes[i].x;
+        com /= s.nodes.length;
+        /* respawn and keep drawing this frame (the preset spawns around x=0) */
+        if (com > 9) { THUMBS.creatures.init(s); com = 0; }
+        var PX = h * 0.55, gy = h * 0.82, camX = com - 0.9;
+        var sx = function (x) { return (x - camX) * PX; };
+        var sy = function (y) { return gy - y * PX; };
+        ctx.strokeStyle = grey(0.35); ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(w, gy); ctx.stroke();
+        for (i = 0; i < 12; i++) {                   /* passing distance ticks */
+          var mx = sx(Math.floor(camX) + i);
+          if (mx > 0 && mx < w) {
+            ctx.beginPath(); ctx.moveTo(mx, gy); ctx.lineTo(mx, gy + 3); ctx.stroke();
+          }
+        }
+        ctx.strokeStyle = grey(0.6); ctx.lineWidth = 1.5;
+        for (i = 0; i < s.springs.length; i++) {
+          sp = s.springs[i];
+          ctx.beginPath();
+          ctx.moveTo(sx(s.nodes[sp.a].x), sy(s.nodes[sp.a].y));
+          ctx.lineTo(sx(s.nodes[sp.b].x), sy(s.nodes[sp.b].y));
+          ctx.stroke();
+        }
+        ctx.fillStyle = accent();
+        for (i = 0; i < s.nodes.length; i++) {
+          ctx.beginPath();
+          ctx.arc(sx(s.nodes[i].x), sy(s.nodes[i].y), 2.6, 0, 6.2832);
+          ctx.fill();
+        }
+      }
+    },
+
+    computer: {
+      fps: 6,
+      init: function (s) {
+        s.row = [0, 0, 0, 0, 1, 0, 0, 0];
+        s.rows = [s.row.slice()];
+        s.tick = 0;
+      },
+      draw: function (s, ctx, w, h) {
+        s.tick++;
+        if (s.rows.length < 8) {
+          var prev = s.rows[s.rows.length - 1], next = [];
+          for (var x = 0; x < 8; x++) {
+            next.push((x > 0 ? prev[x - 1] : 0) ^ (x < 7 ? prev[x + 1] : 0));
+          }
+          s.rows.push(next);
+        } else if (s.tick > 14) {
+          /* fall through and draw the fresh first row: returning here would
+             leave the (already cleared) canvas blank for a whole frame */
+          THUMBS.computer.init(s);
+        }
+        var cs = Math.min(w * 0.5 / 8, h * 0.8 / 8);
+        var gx = w * 0.08, gy = (h - cs * 8) / 2;
+        ctx.strokeStyle = grey(0.3); ctx.lineWidth = 1;
+        ctx.strokeRect(gx - 2, gy - 2, cs * 8 + 4, cs * 8 + 4);
+        ctx.fillStyle = accent();
+        for (var r = 0; r < s.rows.length; r++) {
+          for (var c = 0; c < 8; c++) {
+            if (s.rows[r][c]) ctx.fillRect(gx + c * cs + 1, gy + r * cs + 1, cs - 2, cs - 2);
+          }
+        }
+        /* register boxes ticking in hex */
+        var names = ['A', 'X', 'PC'], bx = w * 0.62, bw = w * 0.3;
+        ctx.font = '600 9px "Source Sans 3", system-ui, sans-serif';
+        for (var i = 0; i < 3; i++) {
+          var by = h * 0.16 + i * h * 0.26;
+          ctx.strokeStyle = grey(0.4);
+          ctx.strokeRect(bx, by, bw, h * 0.18);
+          ctx.fillStyle = grey(0.75);
+          ctx.textAlign = 'left';
+          ctx.fillText(names[i], bx + 3, by + h * 0.125);
+          ctx.fillStyle = accent();
+          ctx.textAlign = 'right';
+          var v = ((s.tick * (i + 3) * 37) & 0xFF).toString(16).toUpperCase();
+          ctx.fillText('$' + (v.length < 2 ? '0' + v : v), bx + bw - 3, by + h * 0.125);
+        }
+        ctx.textAlign = 'left';
+      }
+    },
+
+    mars: {
+      fps: 30,
+      init: function (s) { s.a1 = 0.6; s.a2 = 2.1; s.ship = null; s.pulse = 0; },
+      draw: function (s, ctx, w, h, t) {
+        var cx = w / 2, cy = h / 2;
+        var r1 = Math.min(w, h) * 0.20, r2 = Math.min(w, h) * 0.38;
+        s.a1 += 0.030; s.a2 += 0.0161;               /* inner year is shorter */
+        var gold = light() ? '#a07c2c' : '#c8a45c';
+        ctx.strokeStyle = grey(0.3); ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(cx, cy, r1, 0, 6.2832); ctx.stroke();
+        ctx.beginPath(); ctx.arc(cx, cy, r2, 0, 6.2832); ctx.stroke();
+        ctx.fillStyle = gold;
+        ctx.beginPath(); ctx.arc(cx, cy, 2.4, 0, 6.2832); ctx.fill();
+        var ex = cx + r1 * Math.cos(s.a1), ey = cy + r1 * Math.sin(s.a1);
+        var mx2 = cx + r2 * Math.cos(s.a2), my2 = cy + r2 * Math.sin(s.a2);
+        ctx.fillStyle = accent();
+        ctx.beginPath(); ctx.arc(ex, ey, 3.2, 0, 6.2832); ctx.fill();
+        ctx.fillStyle = gold;
+        ctx.beginPath(); ctx.arc(mx2, my2, 2.8, 0, 6.2832); ctx.fill();
+        if (!s.ship) {
+          /* wait for roughly the right phase angle, then launch */
+          var ph = (s.a2 - s.a1) % 6.2832; if (ph < 0) ph += 6.2832;
+          if (Math.abs(ph - 0.77) < 0.03) {
+            var frames = 78;                          /* arrival prediction */
+            var aArr = s.a2 + 0.0161 * frames;
+            s.ship = { u: 0, du: 1 / frames, x0: ex, y0: ey,
+                       x1: cx + r2 * Math.cos(aArr), y1: cy + r2 * Math.sin(aArr) };
+          }
+        } else {
+          var sh = s.ship;
+          sh.u += sh.du;
+          if (sh.u >= 1) { s.ship = null; s.pulse = 12; }
+          else {
+            /* a bowed path via a control point pushed outward from the chord */
+            var mxx = (sh.x0 + sh.x1) / 2, myy = (sh.y0 + sh.y1) / 2;
+            var ox = mxx - cx, oy = myy - cy, ol = Math.hypot(ox, oy) || 1;
+            var push = r2 * 0.55;
+            var cxp = cx + ox / ol * (ol + push), cyp = cy + oy / ol * (ol + push);
+            var u = sh.u, iu = 1 - u;
+            var px = iu * iu * sh.x0 + 2 * iu * u * cxp + u * u * sh.x1;
+            var py = iu * iu * sh.y0 + 2 * iu * u * cyp + u * u * sh.y1;
+            ctx.fillStyle = accent();
+            ctx.beginPath(); ctx.arc(px, py, 2, 0, 6.2832); ctx.fill();
+          }
+        }
+        if (s.pulse > 0) {
+          s.pulse--;
+          ctx.strokeStyle = gold; ctx.globalAlpha = s.pulse / 12;
+          ctx.beginPath(); ctx.arc(mx2, my2, 6 + (12 - s.pulse), 0, 6.2832); ctx.stroke();
+          ctx.globalAlpha = 1;
+        }
+      }
     }
   };
 

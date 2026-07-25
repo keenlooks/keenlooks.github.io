@@ -47,6 +47,26 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
     </div>
   </a>
 
+  <a class="xp-card" href="{{ base_path }}/fourinarow/">
+    <div class="xp-card__art" aria-hidden="true" data-thumb="fourinarow">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="4.5" cy="19.5" r="2" fill="currentColor" stroke="none"></circle><circle cx="9.5" cy="14.5" r="2" fill="currentColor" stroke="none"></circle><circle cx="14.5" cy="9.5" r="2" fill="currentColor" stroke="none"></circle><circle cx="19.5" cy="4.5" r="2" fill="currentColor" stroke="none"></circle><circle cx="9.5" cy="19.5" r="2" stroke-opacity="0.55"></circle><circle cx="14.5" cy="19.5" r="2" stroke-opacity="0.55"></circle><circle cx="14.5" cy="14.5" r="2" stroke-opacity="0.55"></circle></svg>
+    </div>
+    <div class="xp-card__body">
+      <h2 class="xp-card__title">Four in a Row</h2>
+      <p class="xp-card__desc">Play against a neural network and watch its search tree grow while it decides on a move.</p>
+    </div>
+  </a>
+
+  <a class="xp-card" href="{{ base_path }}/creatures/">
+    <div class="xp-card__art" aria-hidden="true" data-thumb="creatures">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5 L7.5 11 L16.5 11 Z"></path><path d="M7.5 11 L5.5 19 M16.5 11 L18.5 19"></path><circle cx="12" cy="5" r="1.4" fill="currentColor" stroke="none"></circle><circle cx="5.5" cy="19" r="1.4" fill="currentColor" stroke="none"></circle><circle cx="18.5" cy="19" r="1.4" fill="currentColor" stroke="none"></circle></svg>
+    </div>
+    <div class="xp-card__body">
+      <h2 class="xp-card__title">Evolving Creatures</h2>
+      <p class="xp-card__desc">Soft-body creatures evolve to run, live in your browser, one generation at a time.</p>
+    </div>
+  </a>
+
 </div>
 </section>
 
@@ -114,6 +134,16 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
     </div>
   </a>
 
+  <a class="xp-card" href="{{ base_path }}/computer/">
+    <div class="xp-card__art" aria-hidden="true" data-thumb="computer">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="7" y="7" width="10" height="10" rx="1.5"></rect><path d="M10 7V4 M14 7V4 M10 20v-3 M14 20v-3 M7 10H4 M7 14H4 M20 10h-3 M20 14h-3"></path></svg>
+    </div>
+    <div class="xp-card__body">
+      <h2 class="xp-card__title">The Visible Computer</h2>
+      <p class="xp-card__desc">An original 8-bit computer: write assembly and watch every register, bus transfer, and pixel.</p>
+    </div>
+  </a>
+
 </div>
 </section>
 
@@ -148,6 +178,16 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
     <div class="xp-card__body">
       <h2 class="xp-card__title">Double Pendulum</h2>
       <p class="xp-card__desc">Two pendulums start a hair apart and end up with nothing in common. Chaos, on screen.</p>
+    </div>
+  </a>
+
+  <a class="xp-card" href="{{ base_path }}/mars/">
+    <div class="xp-card__art" aria-hidden="true" data-thumb="mars">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.5" stroke-opacity="0.5"></circle><circle cx="12" cy="12" r="9"></circle><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"></circle><circle cx="16.5" cy="12" r="1.6" fill="currentColor" stroke="none"></circle><circle cx="12" cy="3" r="1.6" fill="currentColor" stroke="none"></circle><path d="M16.5 12 Q17.5 5.5 12 3" stroke-opacity="0.6" stroke-dasharray="2 2"></path></svg>
+    </div>
+    <div class="xp-card__body">
+      <h2 class="xp-card__title">Mission to Mars</h2>
+      <p class="xp-card__desc">Pick a launch date on a real porkchop plot and fly the transfer while the planets keep moving.</p>
     </div>
   </a>
 
