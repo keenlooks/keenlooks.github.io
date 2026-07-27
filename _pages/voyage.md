@@ -8,6 +8,11 @@ description: "An interactive full-screen trip planner by Keane Lucas: real JPL p
 ---
 
 <div class="voy-app life-app">
+<script>/* This page defaults to dark because the sky reads better that way. An
+   explicit visitor choice, saved by the site toggle under localStorage key
+   'theme', still wins. Block comments only: the production build strips
+   newlines and a line comment would eat the rest of the script. */
+(function(){try{if(!localStorage.getItem('theme')){document.documentElement.setAttribute('data-theme','dark');}}catch(e){}})();</script>
   <div class="voy-topfade" aria-hidden="true"></div>
   <canvas id="voy-canvas" class="voy-canvas"
           aria-label="A 3D view of the solar system and the real night sky. Planets sit on their true orbits for today, and every star is a real star at its true position and color. Tap a planet or a star, or use the search box, to plan a trip to it."></canvas>
@@ -24,7 +29,8 @@ description: "An interactive full-screen trip planner by Keane Lucas: real JPL p
         from the HYG catalog, in its true position, distance and color. Pick a destination
         by tapping it or searching for it: planets get a real transfer-orbit map, stars get
         the honest relativity of a constant-acceleration ship. Nobody knows how to build
-        that ship, and the numbers show why.
+        that ship, and the numbers show why. Somewhere out there your ship is waiting in
+        orbit.
       </p>
 
       <div class="voy-search-wrap">
@@ -67,6 +73,15 @@ description: "An interactive full-screen trip planner by Keane Lucas: real JPL p
           known, and nobody knows how to build a ship that holds 1&nbsp;g for years.
           Star sizes on screen show brightness, not true size.
         </p>
+        <p>
+          About 65,000 stars are drawn; the 5,000 brightest are clickable. Star
+          close-ups are procedural art driven by each star's real temperature, size and
+          type; the flares are typical for the type, not observations. Every exoplanet
+          orb is an impression drawn from its measured size and temperature, and nobody
+          has seen any of them up close. In the cockpit view the dust streaks are
+          invented motes, but the way the stars crowd forward and shift color is the
+          real aberration and Doppler math at the speed shown on the HUD.
+        </p>
       </details>
 
       <p class="voy-status-line"><span id="voy-status" role="status"></span></p>
@@ -78,6 +93,11 @@ description: "An interactive full-screen trip planner by Keane Lucas: real JPL p
     </div>
   </div>
 
+  <div class="voy-fpbar voy-seg" id="voy-fp" role="group" aria-label="Cruise view" hidden>
+    <button id="voy-fp-chase" class="voy-seg__btn voy-seg__btn--on" type="button" aria-pressed="true">Chase</button>
+    <button id="voy-fp-cockpit" class="voy-seg__btn" type="button" aria-pressed="false">Cockpit</button>
+  </div>
+
   <div id="voy-card" class="voy-card" role="region" aria-label="About the selected body" hidden></div>
 </div>
 
@@ -86,7 +106,7 @@ description: "An interactive full-screen trip planner by Keane Lucas: real JPL p
    viewport. (These rules only load on /voyage/.) */
 .page__title, .page__meta, .page__footer { display: none !important; }
 .page__content { pointer-events: none; }
-.voy-canvas, .voy-panel, .voy-card { pointer-events: auto; }
+.voy-canvas, .voy-panel, .voy-card, .voy-fpbar { pointer-events: auto; }
 
 .masthead { background: transparent !important; border-bottom: 0 !important; }
 .greedy-nav { background: transparent !important; }
@@ -284,7 +304,12 @@ html[data-theme="light"] .voy-trip__row--hl td { background: rgba(52,86,138,0.1)
 .voy-seg__btn {
   flex: 1; font: inherit; font-size: 0.85em; color: inherit; background: none; border: 0;
   padding: 0.42em 0.2em; cursor: pointer; line-height: 1.2; min-height: 24px;
+  /* narrow phones: "generation 1,000,000 t" must wrap between words, never
+     shed a lone "t" onto a third line */
+  min-width: 0; hyphens: none; overflow-wrap: normal; word-break: normal;
+  text-wrap: balance;
 }
+@media (max-width: 460px) { .voy-seg__btn { font-size: 0.78em; padding: 0.42em 0.15em; } }
 .voy-seg__btn + .voy-seg__btn { border-left: 1px solid rgba(127,127,127,0.4); }
 .voy-seg__btn--on { background: rgba(130,166,204,0.22); font-weight: 600; }
 html[data-theme="light"] .voy-seg__btn--on { background: rgba(52,86,138,0.16); }
@@ -293,6 +318,53 @@ html[data-theme="light"] .voy-seg__btn--on { background: rgba(52,86,138,0.16); }
 }
 .voy-live { margin: 0; font-size: 0.85em; opacity: 0.85; line-height: 1.45; font-variant-numeric: tabular-nums; }
 .voy-warp { margin: 0; font-size: 0.82em; opacity: 0.6; line-height: 1.45; }
+
+/* ---- live preview orbs (star card + expanded exoplanet chip) ---- */
+.voy-orbwrap {
+  flex: none; display: flex; align-items: center; justify-content: center;
+  border-radius: 10px; background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.10); overflow: hidden;
+}
+.voy-orbwrap--exo { margin: 0.1rem 0 0.35rem; align-self: flex-start; }
+.voy-card__head--orb { align-items: flex-start; }
+.voy-card__head--orb .voy-card__titles { flex: 1 1 auto; min-width: 0; }
+.voy-card__head--orb .voy-orbwrap { margin: 0 0.5rem; }
+html[data-theme="light"] .voy-orbwrap { background: rgba(0,0,0,0.035); border-color: rgba(0,0,0,0.10); }
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .voy-orbwrap { background: rgba(0,0,0,0.035); border-color: rgba(0,0,0,0.10); }
+}
+.voy-orb { display: block; }
+.voy-orbnote { margin: 0.25em 0 0; font-size: 0.78em; opacity: 0.6; line-height: 1.4; }
+
+/* ---- the rocket preview under the acceleration row ---- */
+.voy-shipprev-wrap { display: flex; flex-direction: column; gap: 0.25rem; }
+.voy-shipprev {
+  display: block; width: 100%; max-width: 210px; height: auto;
+  border-radius: 8px; border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(255,255,255,0.03);
+}
+html[data-theme="light"] .voy-shipprev { border-color: rgba(0,0,0,0.10); background: rgba(0,0,0,0.03); }
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .voy-shipprev { border-color: rgba(0,0,0,0.10); background: rgba(0,0,0,0.03); }
+}
+.voy-shipname { margin: 0; font-size: 0.88em; font-weight: 600; }
+.voy-shipline { margin: 0; font-size: 0.8em; opacity: 0.7; line-height: 1.4; }
+
+/* ---- chase / cockpit toggle, under the cruise HUD ---- */
+.voy-fpbar {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  top: 11.8rem; z-index: 29; width: 190px; pointer-events: auto;
+  background: rgba(18,20,24,0.86);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+}
+.voy-fpbar[hidden] { display: none !important; }
+html[data-theme="light"] .voy-fpbar { background: rgba(255,255,255,0.9); }
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .voy-fpbar { background: rgba(255,255,255,0.9); }
+}
+@media (max-width: 768px) {
+  .voy-fpbar { top: 10.4rem; width: 170px; }
+}
 
 /* Mobile: full-width bottom sheet. The raised corner buttons occupy the
    bottom ~112px band at <=768px, so the sheet keeps 7.5rem of padding under
@@ -331,4 +403,6 @@ html[data-theme="light"] .voy-seg__btn--on { background: rgba(52,86,138,0.16); }
 <script defer src="{{ '/assets/js/share-hash.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/voyage-astro.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/voyage-data.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
+<script defer src="{{ '/assets/js/voyage-art.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
+<script defer src="{{ '/assets/js/voyage-ships.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/voyage.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
