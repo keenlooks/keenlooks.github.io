@@ -683,55 +683,78 @@
       }
     },
 
-    mars: {
+    voyage: {
       fps: 30,
-      init: function (s) { s.a1 = 0.6; s.a2 = 2.1; s.ship = null; s.pulse = 0; },
+      init: function (s) {
+        s.f = 0; s.a1 = 0.6; s.a2 = 2.1;
+        /* a small fixed starfield (LCG-seeded so every card is identical) */
+        s.stars = [];
+        var r = 12345;
+        function rnd() { r = (r * 1103515245 + 12345) & 0x7fffffff; return r / 0x7fffffff; }
+        for (var i = 0; i < 42; i++) s.stars.push([rnd(), rnd(), 0.2 + rnd() * 0.5]);
+        s.target = [0.78, 0.24];
+      },
       draw: function (s, ctx, w, h, t) {
-        var cx = w / 2, cy = h / 2;
-        var r1 = Math.min(w, h) * 0.20, r2 = Math.min(w, h) * 0.38;
-        s.a1 += 0.030; s.a2 += 0.0161;               /* inner year is shorter */
+        var cx = w / 2, cy = h / 2, i;
         var gold = light() ? '#a07c2c' : '#c8a45c';
-        ctx.strokeStyle = grey(0.3); ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.arc(cx, cy, r1, 0, 6.2832); ctx.stroke();
-        ctx.beginPath(); ctx.arc(cx, cy, r2, 0, 6.2832); ctx.stroke();
-        ctx.fillStyle = gold;
-        ctx.beginPath(); ctx.arc(cx, cy, 2.4, 0, 6.2832); ctx.fill();
-        var ex = cx + r1 * Math.cos(s.a1), ey = cy + r1 * Math.sin(s.a1);
-        var mx2 = cx + r2 * Math.cos(s.a2), my2 = cy + r2 * Math.sin(s.a2);
-        ctx.fillStyle = accent();
-        ctx.beginPath(); ctx.arc(ex, ey, 3.2, 0, 6.2832); ctx.fill();
-        ctx.fillStyle = gold;
-        ctx.beginPath(); ctx.arc(mx2, my2, 2.8, 0, 6.2832); ctx.fill();
-        if (!s.ship) {
-          /* wait for roughly the right phase angle, then launch */
-          var ph = (s.a2 - s.a1) % 6.2832; if (ph < 0) ph += 6.2832;
-          if (Math.abs(ph - 0.77) < 0.03) {
-            var frames = 78;                          /* arrival prediction */
-            var aArr = s.a2 + 0.0161 * frames;
-            s.ship = { u: 0, du: 1 / frames, x0: ex, y0: ey,
-                       x1: cx + r2 * Math.cos(aArr), y1: cy + r2 * Math.sin(aArr) };
-          }
-        } else {
-          var sh = s.ship;
-          sh.u += sh.du;
-          if (sh.u >= 1) { s.ship = null; s.pulse = 12; }
-          else {
-            /* a bowed path via a control point pushed outward from the chord */
-            var mxx = (sh.x0 + sh.x1) / 2, myy = (sh.y0 + sh.y1) / 2;
-            var ox = mxx - cx, oy = myy - cy, ol = Math.hypot(ox, oy) || 1;
-            var push = r2 * 0.55;
-            var cxp = cx + ox / ol * (ol + push), cyp = cy + oy / ol * (ol + push);
-            var u = sh.u, iu = 1 - u;
-            var px = iu * iu * sh.x0 + 2 * iu * u * cxp + u * u * sh.x1;
-            var py = iu * iu * sh.y0 + 2 * iu * u * cyp + u * u * sh.y1;
-            ctx.fillStyle = accent();
-            ctx.beginPath(); ctx.arc(px, py, 2, 0, 6.2832); ctx.fill();
-          }
+        s.f = (s.f + 1) % 300;
+        var f = s.f;
+        s.a1 += 0.030; s.a2 += 0.0161;               /* inner year is shorter */
+        /* zoom: hold at 1 to f=120, shrink to 0.12 by f=180, ease back at the end */
+        var z = 1;
+        if (f > 120) z = Math.max(0.12, 1 - (f - 120) / 60 * 0.88);
+        if (f > 285) z = 0.12 + (f - 285) / 14 * 0.88;
+        var starA = 0;
+        if (f > 130) starA = Math.min(1, (f - 130) / 40);
+        if (f > 285) starA *= Math.max(0, (299 - f) / 14);
+        /* orbits fade out as the camera pulls away */
+        var oa = Math.max(0, Math.min(1, (z - 0.12) / 0.5));
+        var r1 = Math.min(w, h) * 0.20 * z, r2 = Math.min(w, h) * 0.38 * z;
+        if (oa > 0.02) {
+          ctx.globalAlpha = oa * 0.9;
+          ctx.strokeStyle = grey(0.3); ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.arc(cx, cy, r1, 0, 6.2832); ctx.stroke();
+          ctx.beginPath(); ctx.arc(cx, cy, r2, 0, 6.2832); ctx.stroke();
+          ctx.fillStyle = accent();
+          ctx.beginPath();
+          ctx.arc(cx + r1 * Math.cos(s.a1), cy + r1 * Math.sin(s.a1), 3.2 * Math.max(z, 0.4), 0, 6.2832);
+          ctx.fill();
+          ctx.fillStyle = gold;
+          ctx.beginPath();
+          ctx.arc(cx + r2 * Math.cos(s.a2), cy + r2 * Math.sin(s.a2), 2.8 * Math.max(z, 0.4), 0, 6.2832);
+          ctx.fill();
+          ctx.globalAlpha = 1;
         }
-        if (s.pulse > 0) {
-          s.pulse--;
-          ctx.strokeStyle = gold; ctx.globalAlpha = s.pulse / 12;
-          ctx.beginPath(); ctx.arc(mx2, my2, 6 + (12 - s.pulse), 0, 6.2832); ctx.stroke();
+        /* the Sun stays through the zoom (it becomes one dot among the stars) */
+        ctx.fillStyle = gold;
+        ctx.beginPath(); ctx.arc(cx, cy, Math.max(1.6, 2.4 * z + 0.8), 0, 6.2832); ctx.fill();
+        if (starA > 0.01) {
+          for (i = 0; i < s.stars.length; i++) {
+            var st = s.stars[i];
+            ctx.fillStyle = grey(st[2] * starA);
+            ctx.fillRect(st[0] * w, st[1] * h, 1.6, 1.6);
+          }
+          var tx = s.target[0] * w, ty = s.target[1] * h;
+          ctx.globalAlpha = starA;
+          ctx.fillStyle = gold;
+          ctx.beginPath(); ctx.arc(tx, ty, 2.2, 0, 6.2832); ctx.fill();
+          /* the route draws out, a spark rides it, a ring greets arrival */
+          if (f > 190) {
+            var u = Math.min(1, (f - 190) / 55);
+            ctx.strokeStyle = gold; ctx.lineWidth = 1;
+            ctx.globalAlpha = starA * 0.7;
+            ctx.beginPath(); ctx.moveTo(cx, cy);
+            ctx.lineTo(cx + (tx - cx) * u, cy + (ty - cy) * u); ctx.stroke();
+            ctx.globalAlpha = starA;
+            ctx.fillStyle = accent();
+            ctx.beginPath();
+            ctx.arc(cx + (tx - cx) * u, cy + (ty - cy) * u, 2, 0, 6.2832); ctx.fill();
+            var p = f - 245;
+            if (u >= 1 && p > 0 && p < 14) {
+              ctx.strokeStyle = gold; ctx.globalAlpha = (14 - p) / 14 * starA;
+              ctx.beginPath(); ctx.arc(tx, ty, 4 + p, 0, 6.2832); ctx.stroke();
+            }
+          }
           ctx.globalAlpha = 1;
         }
       }

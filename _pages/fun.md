@@ -4,7 +4,7 @@ title: "Fun"
 permalink: /fun/
 author_profile: false
 excerpt: "A small, growing collection of interactive things, built as an ongoing exercise in seeing what Claude can do."
-description: "Interactive visualizations and toys by Keane Lucas &mdash; visual explainers and playgrounds, starting with Conway's Game of Life."
+description: "Interactive visualizations and toys by Keane Lucas: machine learning demos, simulations, physics sandboxes, and visual explainers."
 ---
 
 <p class="xp-intro">
@@ -63,7 +63,7 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
     </div>
     <div class="xp-card__body">
       <h2 class="xp-card__title">Evolving Creatures</h2>
-      <p class="xp-card__desc">Soft-body creatures evolve to run, live in your browser, one generation at a time.</p>
+      <p class="xp-card__desc">Design a creature from dots and springs, then watch evolution teach it to walk.</p>
     </div>
   </a>
 
@@ -140,7 +140,7 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
     </div>
     <div class="xp-card__body">
       <h2 class="xp-card__title">The Visible Computer</h2>
-      <p class="xp-card__desc">An original 8-bit computer: write assembly and watch every register, bus transfer, and pixel.</p>
+      <p class="xp-card__desc">A small 8-bit computer drawn as a living circuit board you can program.</p>
     </div>
   </a>
 
@@ -181,13 +181,13 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
     </div>
   </a>
 
-  <a class="xp-card" href="{{ base_path }}/mars/">
-    <div class="xp-card__art" aria-hidden="true" data-thumb="mars">
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.5" stroke-opacity="0.5"></circle><circle cx="12" cy="12" r="9"></circle><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"></circle><circle cx="16.5" cy="12" r="1.6" fill="currentColor" stroke="none"></circle><circle cx="12" cy="3" r="1.6" fill="currentColor" stroke="none"></circle><path d="M16.5 12 Q17.5 5.5 12 3" stroke-opacity="0.6" stroke-dasharray="2 2"></path></svg>
+  <a class="xp-card" href="{{ base_path }}/voyage/">
+    <div class="xp-card__art" aria-hidden="true" data-thumb="voyage">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="15" r="5.5" stroke-opacity="0.5"></circle><circle cx="9" cy="15" r="1.1" fill="currentColor" stroke="none"></circle><circle cx="13" cy="11.3" r="1.4" fill="currentColor" stroke="none"></circle><path d="M13 11.3 L19 4.8" stroke-opacity="0.6" stroke-dasharray="2 2"></path><path d="M19.5 3.2 l0.7 1.6 1.6 0.7 -1.6 0.7 -0.7 1.6 -0.7 -1.6 -1.6 -0.7 1.6 -0.7 Z" fill="currentColor" stroke="none"></path></svg>
     </div>
     <div class="xp-card__body">
-      <h2 class="xp-card__title">Mission to Mars</h2>
-      <p class="xp-card__desc">Pick a launch date on a real porkchop plot and fly the transfer while the planets keep moving.</p>
+      <h2 class="xp-card__title">Mission to Anywhere</h2>
+      <p class="xp-card__desc">Plan a trip from Earth to any planet or any real star, and see what relativity does to the clocks.</p>
     </div>
   </a>
 
