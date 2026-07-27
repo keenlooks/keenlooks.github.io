@@ -1,12 +1,231 @@
 /* ==========================================================================
    computer.js — page runtime for The Visible Computer (/computer/).
-   Wires the 3-pane app: editor + assembler errors, animated datapath
-   canvas, 32x32 screen with keyboard capture + D-pad, memory inspector
-   with a bespoke hex edit overlay, run controls, instruction reference
-   slide-over, share/save. All machine logic lives in computer-core.js.
+   Wires the 3-pane app: editor + assembler errors, the circuit-board
+   datapath canvas (chips, gold traces, byte sparks) with a plain-language
+   narrator strip, 32x32 screen with keyboard capture + D-pad, memory
+   inspector with a bespoke hex edit overlay, run controls, instruction
+   reference slide-over, share/save. Machine logic lives in computer-core.js.
    ========================================================================== */
 (function () {
   'use strict';
+
+  /* ======================================================================
+     narrate(ph, ctx) — a PURE function turning one micro-trace phase into
+     a sentence a non-programmer can follow. No DOM, no cpu access: the
+     ctx carries everything (exported for node tests as module.exports).
+     ctx = {
+       mnemonic,                      instruction name ('LDA', 'STA', ...)
+       fetchStage, irNew, byteIndex,  opcode byte vs operand byte
+       prevFlags: {z, n, c},          display flags BEFORE this phase
+       vm,                            display values BEFORE this phase
+                                      (vm.A/vm.X are '$21'-style strings)
+       symbolsByAddr,                 inverted symbols, addr -> label name
+       resA, resX                     cpu.A / cpu.X at apply time (the plan:
+                                      "result from cpu.A, which IS the
+                                      result at apply time")
+     }
+     Returns a string, or null when no template matches (the caller then
+     falls back to the technical phase string).
+     ====================================================================== */
+  function nh2(v) { return ('0' + (v & 0xFF).toString(16).toUpperCase()).slice(-2); }
+  function nh4(v) { return ('000' + (v & 0xFFFF).toString(16).toUpperCase()).slice(-4); }
+  /* parse '$21' / '#$21' / '$0012' -> number, else null */
+  function npnum(s) {
+    var m = /^#?\$([0-9A-Fa-f]{1,4})$/.exec(String(s == null ? '' : s).replace(/^\s+|\s+$/g, ''));
+    return m ? parseInt(m[1], 16) : null;
+  }
+  function chipForAddr(a) {
+    if (a >= 0x1000 && a < 0x1400) return 'VID';
+    if (a >= 0x1400 && a <= 0x1402) return 'IO';
+    return 'RAM';
+  }
+  /* one plain clause per mnemonic (all of them) for the DECODE sentence */
+  var NARR_VERBS = {
+    NOP: 'do nothing',
+    LDA: 'load memory into A', LDX: 'load memory into X',
+    STA: 'store the A register into memory', STX: 'store the X register into memory',
+    TAX: 'copy A into X', TXA: 'copy X into A',
+    ADD: 'add to A', SUB: 'subtract from A',
+    AND: 'bitwise AND into A', ORA: 'bitwise OR into A', EOR: 'bitwise exclusive-OR into A',
+    SHL: 'shift A left one bit', SHR: 'shift A right one bit',
+    CMP: 'compare A with a value', CPX: 'compare X with a value',
+    INX: 'add 1 to X', DEX: 'subtract 1 from X',
+    INC: 'add 1 to a memory byte', DEC: 'subtract 1 from a memory byte',
+    JMP: 'jump',
+    JEQ: 'jump if the zero flag is set', JNE: 'jump if the zero flag is clear',
+    JCS: 'jump if the carry flag is set', JCC: 'jump if the carry flag is clear',
+    JMI: 'jump if the negative flag is set',
+    JSR: 'call a subroutine', RTS: 'return from the subroutine',
+    PHA: 'push A onto the stack', PLA: 'pull A from the stack',
+    WAIT: 'wait for the next screen frame', HLT: 'stop the program'
+  };
+  /* branch mnemonics: [flag letter, state (1 = set) that takes the jump] */
+  var NARR_BRANCH = { JEQ: ['Z', 1], JNE: ['Z', 0], JCS: ['C', 1], JCC: ['C', 0], JMI: ['N', 1] };
+
+  function narrate(ph, ctx) {
+    if (!ph) return null;
+    ctx = ctx || {};
+    var mn = ctx.mnemonic || '';
+    var vm = ctx.vm || {};
+    var lbl = ph.label || '';
+
+    /* ---- flag phases ---- */
+    if (ph.kind === 'flag') {
+      if (ph.flags) {
+        var f = ph.flags;
+        var p = ctx.prevFlags || { z: 0, n: 0, c: 0 };
+        if (f.z !== p.z) {
+          return f.z ? 'The result was zero, so the Z flag switches on.'
+                     : 'The result was not zero, so the Z flag switches off.';
+        }
+        if (f.c !== p.c) {
+          if (mn === 'ADD') return f.c ? 'The sum went past 255, so the carry flag switches on.'
+                                       : 'No overflow this time, so the carry flag switches off.';
+          if (mn === 'SUB' || mn === 'CMP' || mn === 'CPX') {
+            return f.c ? 'There was no borrow, so the carry flag switches on.'
+                       : 'It went below zero, so the carry flag switches off.';
+          }
+          if (mn === 'SHL' || mn === 'SHR') {
+            return f.c ? 'A 1 bit fell off the end, so the carry flag switches on.'
+                       : 'A 0 bit fell off the end, so the carry flag switches off.';
+          }
+          return f.c ? 'The carry flag switches on.' : 'The carry flag switches off.';
+        }
+        if (f.n !== p.n) {
+          return f.n ? 'The top bit of the result is 1, so the N flag switches on.'
+                     : 'The top bit of the result is 0, so the N flag switches off.';
+        }
+        return f.z ? 'The result was zero again, so the Z flag stays on.'
+                   : 'The result was not zero, so the Z flag stays off.';
+      }
+      /* branch condition check (label: 'Z=1 ? yes, jump' / '... no, continue') */
+      if (NARR_BRANCH[mn]) {
+        var b = NARR_BRANCH[mn];
+        var taken = /yes/.test(lbl);
+        if (!taken) return b[0] + ' is ' + (b[1] ? 'clear' : 'set') + ', so no jump; carry on.';
+        return b[0] + ' is ' + (b[1] ? 'set' : 'clear') + ', so the jump goes ahead.';
+      }
+      if (/^waiting/.test(lbl)) return 'Waiting for the next screen frame. This is how it paces itself.';
+      if (lbl === 'halted') return 'The program stops here. Press Reset, then Run to start it again.';
+      return null; /* bad opcode etc: technical fallback */
+    }
+
+    /* ---- ALU phases ---- */
+    if (ph.kind === 'alu') {
+      var mq;
+      if ((mq = /^([AX])\s*(<<|>>|[+\-&|^])\s*(\S+)\s*(\?)?$/.exec(lbl))) {
+        var reg = mq[1], op = mq[2], rhs = mq[3];
+        var before = (reg === 'A' ? vm.A : vm.X) || reg;
+        if (mq[4]) {
+          /* compare: no result is stored, only flags */
+          return 'The ALU compares ' + reg + ' (' + before + ') with ' + rhs + ' to set the flags.';
+        }
+        var res = (reg === 'A') ? ctx.resA : ctx.resX;
+        if (res == null) return 'The ALU computes ' + before + ' ' + op + ' ' + rhs + '.';
+        return 'The ALU computes ' + before + ' ' + op + ' ' + rhs + ' = $' + nh2(res) + '.';
+      }
+      if (/\+ X$/.test(lbl)) {
+        return 'The ALU adds X (' + (vm.X || 'X') + ') to ' + lbl.replace(/\s*\+ X$/, '') +
+               ' to make the final address.';
+      }
+      return null;
+    }
+
+    /* ---- moves ---- */
+    if (ph.kind !== 'move') return null;
+    var from = ph.from, to = ph.to;
+
+    /* fetch: the program counter points at the next instruction */
+    if (from === 'PC' && to === 'MAR' && ctx.fetchStage !== false) {
+      return 'The program counter says the next instruction is at ' + lbl + '.';
+    }
+
+    /* fetch: memory hands bytes to the instruction register */
+    if (from === 'RAM' && to === 'IR') {
+      if (ctx.irNew !== false) {
+        return 'Memory sends back ' + lbl + '. That is an instruction byte.';
+      }
+      /* operand byte(s). Two bytes arrive LOW BYTE FIRST ('$E3 $10' means
+         $10E3) - never join the label text naively. */
+      var bm = /^\$([0-9A-Fa-f]{2})(?:\s+\$([0-9A-Fa-f]{2}))?$/.exec(lbl);
+      if (bm) {
+        var opv = parseInt(bm[1], 16) | (bm[2] ? parseInt(bm[2], 16) << 8 : 0);
+        var hex = bm[2] ? nh4(opv) : nh2(opv);
+        return 'The instruction needs more: memory sends the operand $' + hex + '.';
+      }
+      return 'The instruction needs more: memory sends the operand ' + lbl + '.';
+    }
+
+    /* decode */
+    if (to === 'DECODE') {
+      var dmn = mn || (lbl.split(/\s+/)[0] || '');
+      var clause = NARR_VERBS[dmn];
+      if (clause) return 'Decoded: ' + dmn + ', ' + clause + '.';
+      return null;
+    }
+
+    /* jumps and calls land in the PC */
+    if (to === 'PC' && from === 'IR') {
+      var ta = npnum(lbl);
+      var sym = (ctx.symbolsByAddr && ta != null) ? ctx.symbolsByAddr[ta] : null;
+      var tgt = sym ? (sym + ' (' + lbl + ')') : lbl;
+      if (mn === 'JSR') return 'The program calls the subroutine ' + tgt + '.';
+      if (NARR_BRANCH[mn]) {
+        var bb = NARR_BRANCH[mn];
+        return bb[0] + ' is ' + (bb[1] ? 'set' : 'clear') + ', so the program jumps to ' + tgt + '.';
+      }
+      return 'The program jumps to ' + tgt + '.';
+    }
+
+    /* writes into memory (the RAM endpoint may really be video or I/O) */
+    if (to === 'RAM' && ph.addr !== undefined) {
+      if (from === 'PC') {
+        var ra = npnum(lbl.replace(/^push\s+/, ''));
+        return 'The return address (' + (ra != null ? '$' + nh4(ra) : lbl) + ') is saved on the stack.';
+      }
+      var who = (from === 'A') ? 'A' : (from === 'X') ? 'X' : 'The result';
+      if (chipForAddr(ph.addr) === 'VID') {
+        var vo = ph.addr - 0x1000;
+        return who + ' (' + lbl + ') is written into video memory. Pixel (' +
+               (vo & 31) + ', ' + (vo >> 5) + ') changes color.';
+      }
+      if (mn === 'PHA') return 'A (' + lbl + ') is pushed onto the stack.';
+      return who + ' (' + lbl + ') is stored at address $' + nh4(ph.addr) + '.';
+    }
+
+    /* reads out of memory */
+    if (from === 'RAM' && ph.addr !== undefined) {
+      if (ph.addr === 0x1400) return 'The program checks the keyboard.';
+      if (ph.addr === 0x1401) return 'The program asks for a random number and gets ' + lbl + '.';
+      if (ph.addr === 0x1402) return 'The program reads the frame counter (' + lbl + ').';
+      if (to === 'PC') return 'The saved address (' + lbl + ') comes off the stack. The program returns there.';
+      if (to === 'MAR') return 'Memory hands over a pointer: it says look at ' + lbl + '.';
+      if (chipForAddr(ph.addr) === 'VID') {
+        var ro = ph.addr - 0x1000;
+        return 'The pixel at (' + (ro & 31) + ', ' + (ro >> 5) + ') reads back ' + lbl + '.';
+      }
+      if (mn === 'PLA' && to === 'A') return 'A gets ' + lbl + ' back from the stack.';
+      if (to === 'ALU') return 'The value at $' + nh4(ph.addr) + ' (' + lbl + ') goes to the ALU.';
+      return 'The value at $' + nh4(ph.addr) + ' (' + lbl + ') is loaded into ' + to + '.';
+    }
+
+    /* register-to-register and immediate moves */
+    if (from === 'IR' && (to === 'A' || to === 'X')) {
+      return 'The value ' + lbl.replace(/^#/, '') + ' goes straight into ' + to + '.';
+    }
+    if (from === 'IR' && to === 'ALU') return 'The value ' + lbl.replace(/^#/, '') + ' goes to the ALU.';
+    if (from === 'IR' && to === 'MAR') return 'Memory is pointed at address ' + lbl + '.';
+    if (from === 'ALU' && to === 'MAR') return 'Memory is pointed at the computed address ' + lbl + '.';
+    if (from === 'SP' && to === 'MAR') return 'The stack pointer picks the top of the stack (' + lbl + ').';
+    if (from === 'A' && to === 'X') return 'A (' + lbl + ') is copied into X.';
+    if (from === 'X' && to === 'A') return 'X (' + lbl + ') is copied into A.';
+    if (from === 'ALU' && (to === 'A' || to === 'X')) return 'The result (' + lbl + ') lands in ' + to + '.';
+    return null;
+  }
+
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { narrate: narrate, chipForAddr: chipForAddr };
+  }
   if (typeof window === 'undefined') return;
 
   function boot() {
@@ -23,6 +242,7 @@
     var errBox = $('comp-errors');
     var assembleBtn = $('comp-assemble'), exampleSel = $('comp-examples'), refBtn = $('comp-ref-btn');
     var dpWrap = $('comp-dpwrap'), dpCanvas = $('comp-datapath'), phaseEl = $('comp-phase');
+    var narMain = $('comp-narrate-main'), narSr = $('comp-narrate-sr'), byteChipBtn = $('comp-bytechip');
     var scrCanvas = $('comp-screen'), capNote = $('comp-capnote'), dpad = $('comp-dpad');
     var resetBtn = $('comp-reset'), microBtn = $('comp-micro'), stepBtn = $('comp-step'), runBtn = $('comp-run');
     var speedSl = $('comp-speed'), speedVal = $('comp-speedval');
@@ -147,8 +367,7 @@
     var dpCtx = dpCanvas.getContext('2d');
     var scrCtx = scrCanvas.getContext('2d');
     var memCtx = memCanvas.getContext('2d');
-    var DP_W = 620, DP_H = 352;      /* datapath design space */
-    var dpScale = 1, dpOffX = 0, dpOffY = 0, dpScrolled = false;
+    var dpScrolled = false;
 
     function sizeOne(canvas, cssW, cssH) {
       canvas.style.width = cssW + 'px';
@@ -161,17 +380,15 @@
     }
     function sizeCanvases() {
       var oneCol = app.getAttribute('data-cols') === '1';
-      /* datapath: fill its wrapper, keep aspect. On the single-column (phone)
-         layout, fitting 620x352 into a ~344px pane would shrink the block
-         labels to about 6px, so the canvas keeps a legible minimum width and
-         the wrapper pans horizontally instead (CSS: overflow-x auto). */
+      /* datapath: fill its wrapper. On the single-column (phone) layout,
+         fitting the board into a ~344px pane would shrink the monospace chip
+         values below legibility, so the canvas keeps a legible minimum width
+         and the wrapper pans horizontally instead (CSS: overflow-x auto). */
       if (dpWrap && dpWrap.clientWidth > 0) {
         var w = Math.max(dpWrap.clientWidth, oneCol ? 560 : 0);
         var h = Math.max(200, dpWrap.clientHeight);
         sizeOne(dpCanvas, w, h);
-        dpScale = Math.min(w / DP_W, h / DP_H);
-        dpOffX = (w - DP_W * dpScale) / 2;
-        dpOffY = Math.max(0, (h - DP_H * dpScale) / 2);
+        ensureBoard(w, h);
         /* start the pan in the middle once, so BOTH edges read as cut off and
            the diagram is obviously wider than the window (never fight a pan
            the reader has already made) */
@@ -205,16 +422,44 @@
       var o = i * 4;
       img.data[o] = c[0]; img.data[o + 1] = c[1]; img.data[o + 2] = c[2]; img.data[o + 3] = 255;
     }
-    function drawScreen() {
+    /* Drain the display dirty list ONCE per frame, UNCONDITIONALLY, into the
+       offscreen 32x32 — the VID chip's mini screen must keep updating even
+       when the Screen pane is hidden (2-col view, 1-col Machine tab). Both
+       consumers (mini blit + big blit) feed from this single drain, because
+       drainDirty() clears the list. Returns true when pixels changed. */
+    function updateOffscreen() {
       var d = cpu.drainDirty();
       if (screenAll) { d = 'all'; screenAll = false; }
-      if (!d) return;
+      if (!d) return false;
       if (d === 'all') { for (var i = 0; i < 1024; i++) paintPixel(i); }
       else { for (var j = 0; j < d.length; j++) paintPixel(d[j]); }
       offCtx.putImageData(img, 0, 0);
-      scrCtx.imageSmoothingEnabled = false;
-      scrCtx.clearRect(0, 0, scrCanvas.width, scrCanvas.height);
-      scrCtx.drawImage(off, 0, 0, scrCanvas.width, scrCanvas.height);
+      return true;
+    }
+    /* video-write cause-and-effect: a ~500 ms highlight ring on the pixel a
+       traced STA just wrote, on BOTH the big screen and the VID mini screen.
+       The core's dirty bookkeeping is frozen (a same-value write never
+       dirties anything), so ring create/expire force the existing
+       full-repaint path (screenAll) and the ring is drawn AFTER the blit. */
+    var lastVidWrite = null, ringWas = false;
+    function vidRingOn(t) { return !!(lastVidWrite && (t - lastVidWrite.t) < 500); }
+    function blitScreen(changed, t) {
+      var ringOn = vidRingOn(t);
+      if (ringOn && !ringWas) changed = true;          /* first ring frame */
+      if (!ringOn && ringWas) screenAll = true;        /* erase it next frame */
+      ringWas = ringOn;
+      if (changed) {
+        scrCtx.setTransform(1, 0, 0, 1, 0, 0);
+        scrCtx.imageSmoothingEnabled = false;
+        scrCtx.clearRect(0, 0, scrCanvas.width, scrCanvas.height);
+        scrCtx.drawImage(off, 0, 0, scrCanvas.width, scrCanvas.height);
+      }
+      if (ringOn && changed) {
+        var cell = scrCanvas.width / 32;
+        scrCtx.strokeStyle = THEME.accentHi;
+        scrCtx.lineWidth = Math.max(2, DPR * 1.5);
+        scrCtx.strokeRect(lastVidWrite.x * cell + 1, lastVidWrite.y * cell + 1, cell - 2, cell - 2);
+      }
     }
 
     /* ---------- keyboard capture (canvas has tabindex=0) ---------- */
@@ -222,11 +467,11 @@
     scrCanvas.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') { scrCanvas.blur(); return; }
       var b = KEYBITS[e.key];
-      if (b) { kbBits |= b; e.preventDefault(); }
+      if (b) { kbBits |= b; needDp = true; e.preventDefault(); }
     });
     scrCanvas.addEventListener('keyup', function (e) {
       var b = KEYBITS[e.key];
-      if (b) { kbBits &= ~b; e.preventDefault(); }
+      if (b) { kbBits &= ~b; needDp = true; e.preventDefault(); }
     });
     scrCanvas.addEventListener('pointerdown', function () { scrCanvas.focus(); });
     scrCanvas.addEventListener('focus', function () {
@@ -256,10 +501,12 @@
             e.preventDefault();
             try { btn.setPointerCapture(e.pointerId); } catch (err) {}
             dpadBits |= bit;
+            needDp = true;
             btn.classList.add('comp-dbtn--on');
           });
           function release() {
             dpadBits &= ~bit;
+            needDp = true;
             btn.classList.remove('comp-dbtn--on');
           }
           btn.addEventListener('pointerup', release);
@@ -411,7 +658,10 @@
       cpu.memLog = [];
       memFlash = {};
       screenAll = true;
+      lastVidWrite = null;
       animQ.length = 0; animCur = null; microCredit = 0;
+      symbolsByAddr = {};
+      if (r.symbols) { for (var sy in r.symbols) symbolsByAddr[r.symbols[sy]] = sy; }
       resetVm();
       lastCount = 0; hzNow = 0;
       setStatus('Assembled: ' + r.bytes.length + ' bytes at $' + hx4(r.origin) + '.');
@@ -427,6 +677,7 @@
       cpu.reset();
       animQ.length = 0; animCur = null; microCredit = 0;
       screenAll = true;
+      lastVidWrite = null;
       memFlash = {};
       resetVm();
       stopMachine('Reset. The screen and registers are cleared.');
@@ -437,17 +688,47 @@
     var vm = {}, heat = {}, aluFlash = 0;
     var animQ = [], animCur = null, microCredit = 0, playMode = 'auto';
     var fetchStage = true, irNew = true;
+    var curMn = '';                  /* mnemonic of the instruction in animQ */
+    var symbolsByAddr = {};          /* addr -> label name, for the narrator */
     var acc = 0;
     var needDp = true, needMem = true;
+
+    /* ---------- narrator strip ----------
+       The visible strip is #comp-narrate-main (plain words) over #comp-phase
+       (the small grey technical line). Screen readers get a separate
+       visually-hidden mirror throttled to one announcement per 2 s. */
+    var lastNarr = '', srPending = '', srLastTxt = '', srLastT = -1e9;
+    function setNarration(main, tech) {
+      lastNarr = main || '';
+      if (narMain && narMain.textContent !== lastNarr) narMain.textContent = lastNarr;
+      if (phaseEl) phaseEl.textContent = (tech == null ? '' : tech);
+      srPending = lastNarr;
+    }
+    function narrateWait(tech) {
+      setNarration('Waiting for the next screen frame. This is how it paces itself.',
+        tech || ('WAIT: display frame ' + cpu.frameCount + ' ticked'));
+    }
+    var lastFastNarT = -1e9;
+    function narrateFastLine() {
+      if (lastT - lastFastNarT < 1000) return;
+      lastFastNarT = lastT;
+      var rate = Math.round(hzNow);
+      setNarration(rate > 0
+        ? 'Running fast: about ' + rate.toLocaleString() + ' instructions per second. ' +
+          'Slow it down or press Step to watch one at a time.'
+        : 'Running fast. Slow it down or press Step to watch one at a time.',
+        'running at about ' + fmtHz(hzNow));
+    }
 
     function resetVm() {
       vm = {
         PC: '$' + hx4(cpu.PC), SP: '$' + hx2(cpu.SP), A: '$' + hx2(cpu.A), X: '$' + hx2(cpu.X),
-        MAR: '----', RAMa: null, RAMv: null, IR: '--', DEC: 'ready', ALU: '',
+        MAR: '----', RAMa: null, RAMv: null, RAMchip: 'RAM', ramR: null, vidR: null,
+        IR: '--', DEC: 'ready', ALU: '',
         Z: cpu.Z, N: cpu.N, C: cpu.C
       };
       heat = {}; aluFlash = 0;
-      if (phaseEl) phaseEl.textContent = '';
+      setNarration('', '');
       needDp = true;
     }
     function bump(b) { heat[b] = 1; }
@@ -461,15 +742,38 @@
       return stage + ': ' + src + ' → ' + dst + '   ' + ph.label;
     }
 
-    function applyPhase(ph) {
-      bump(ph.to);
+    function applyPhase(ph, mn) {
+      /* narrate FIRST: ctx.vm / prevFlags must be the pre-phase display
+         state, while cpu.* already holds the post-instruction values (the
+         ALU "result" reads exactly that, at apply time) */
+      var sentence = null;
+      try {
+        sentence = narrate(ph, {
+          mnemonic: mn || curMn,
+          fetchStage: fetchStage, irNew: irNew, byteIndex: irNew ? 0 : 1,
+          prevFlags: { z: vm.Z, n: vm.N, c: vm.C },
+          vm: vm,
+          symbolsByAddr: symbolsByAddr,
+          resA: cpu.A, resX: cpu.X
+        });
+      } catch (e) { sentence = null; }
+
+      /* every memory phase is named RAM in the trace; route the visual to
+         the chip the ADDRESS really belongs to (RAM / VID / IO) */
+      var chip = (ph.addr !== undefined) ? chipForAddr(ph.addr) : null;
+      bump(ph.to === 'RAM' && chip ? chip : ph.to);
       if (ph.kind === 'alu') { vm.ALU = ph.op || ''; aluFlash = 1; bump('ALU'); }
       else if (ph.kind === 'flag') {
         if (ph.flags) { vm.Z = ph.flags.z; vm.N = ph.flags.n; vm.C = ph.flags.c; }
         bump('FLAGS');
       } else {
         if (ph.to === 'MAR') vm.MAR = ph.label;
-        if (ph.addr !== undefined) { vm.RAMa = ph.addr; vm.RAMv = cpu.peek(ph.addr); bump('RAM'); }
+        if (ph.addr !== undefined) {
+          vm.RAMa = ph.addr; vm.RAMv = cpu.peek(ph.addr); vm.RAMchip = chip;
+          if (chip === 'RAM') { vm.ramR = { a: ph.addr, v: vm.RAMv }; bump('RAM'); }
+          else if (chip === 'VID') { vm.vidR = { a: ph.addr, v: vm.RAMv }; bump('VID'); }
+          else { bump('IO'); bump('IO' + (ph.addr - 0x1400)); }
+        }
         if (ph.to === 'IR') { vm.IR = irNew ? ph.label : vm.IR + ' ' + ph.label; irNew = false; }
         if (ph.to === 'DECODE') { vm.DEC = ph.label; fetchStage = false; }
         if (ph.to === 'A') vm.A = '$' + hx2(cpu.A);
@@ -478,20 +782,37 @@
         if (ph.from === 'PC' && ph.to === 'MAR') vm.PC = ph.label;
         if (ph.from === 'SP' || ph.to === 'SP') { vm.SP = '$' + hx2(cpu.SP); bump('SP'); }
       }
-      if (phaseEl) phaseEl.textContent = phaseText(ph);
+
+      /* the code did that: ring the just-written pixel for ~500 ms */
+      if (ph.kind === 'move' && ph.to === 'RAM' && ph.addr !== undefined &&
+          ph.addr >= 0x1000 && ph.addr < 0x1400) {
+        lastVidWrite = { x: (ph.addr - 0x1000) & 31, y: (ph.addr - 0x1000) >> 5, t: lastT };
+        screenAll = true;   /* ring created: force the full-repaint path */
+      }
+
+      /* narrator update policy: per phase when stepping; once per
+         instruction (the DECODE sentence) in pulse-mode Run, which already
+         executes ~25 phases/s - per-phase prose would be an unreadable blur */
+      var tech = phaseText(ph);
+      if (mode !== 'run') setNarration(sentence || tech, tech);
+      else if (speedHz() <= 30) {
+        if (ph.kind === 'move' && ph.to === 'DECODE') setNarration(sentence || tech, tech);
+        else if (phaseEl) phaseEl.textContent = tech;
+      }
       needDp = true;
     }
 
     function beginTrace(tr, perPhase) {
       if (tr.line) highlightLine(tr.line);
       fetchStage = true; irNew = true;
+      curMn = (tr.text || '').split(/\s+/)[0] || '';
       for (var i = 0; i < tr.phases.length; i++) {
-        animQ.push({ ph: tr.phases[i], dur: perPhase });
+        animQ.push({ ph: tr.phases[i], dur: perPhase, mn: curMn });
       }
     }
     function flushAnim() {
-      if (animCur) { applyPhase(animCur.ph); animCur = null; }
-      while (animQ.length) applyPhase(animQ.shift().ph);
+      if (animCur) { applyPhase(animCur.ph, animCur.mn); animCur = null; }
+      while (animQ.length) { var q = animQ.shift(); applyPhase(q.ph, q.mn); }
       syncVmEnd();
     }
     function syncVmEnd() {
@@ -509,11 +830,11 @@
       if (!animCur && animQ.length && (playMode === 'auto' || microCredit > 0)) {
         var nx = animQ.shift();
         if (microCredit > 0) microCredit--;
-        if (nx.dur <= 0) { applyPhase(nx.ph); if (!animQ.length) syncVmEnd(); return; }
-        animCur = { ph: nx.ph, t0: now, dur: nx.dur, pts: routeFor(nx.ph) };
+        if (nx.dur <= 0) { applyPhase(nx.ph, nx.mn); if (!animQ.length) syncVmEnd(); return; }
+        animCur = { ph: nx.ph, t0: now, dur: nx.dur, mn: nx.mn, pts: routeFor(nx.ph) };
       }
       if (animCur && now - animCur.t0 >= animCur.dur) {
-        applyPhase(animCur.ph);
+        applyPhase(animCur.ph, animCur.mn);
         animCur = null;
         if (!animQ.length) syncVmEnd();
       }
@@ -546,6 +867,8 @@
     runBtn.addEventListener('click', function () {
       if (mode === 'run') {
         mode = 'ready'; runBtn.textContent = 'Run'; setStatus('Paused.');
+        /* the strip must never keep claiming "Running fast..." while paused */
+        setNarration('Paused. Step runs one instruction; Micro-step moves one byte.', '');
         return;
       }
       if (!ensureMachine()) return;
@@ -566,7 +889,7 @@
       playMode = 'auto';
       if (cpu.waiting) {
         cpu.frame();
-        if (phaseEl) phaseEl.textContent = 'WAIT: display frame ' + cpu.frameCount + ' ticked';
+        narrateWait();
         setStatus('WAIT released by a display frame.');
         return;
       }
@@ -583,7 +906,7 @@
         if (cpu.halted) { setStatus('Halted.'); return; }
         if (cpu.waiting) {
           cpu.frame();
-          if (phaseEl) phaseEl.textContent = 'WAIT: display frame ' + cpu.frameCount + ' ticked';
+          narrateWait();
           return;
         }
         setStatus('');
@@ -594,6 +917,27 @@
     resetBtn.addEventListener('click', resetMachine);
     speedSl.addEventListener('input', function () {
       if (speedVal) speedVal.textContent = speedLabel();
+      /* crossing pulse -> fast mid-run: queued pulse phases would keep
+         overwriting the live register values with stale labels */
+      if (mode === 'run' && speedHz() > 30) flushAnim();
+    });
+
+    /* "Watch it byte by byte": one honest click from the fast boot into the
+       pulses-and-sentences view. Note pulse-mode Run throughput is bounded
+       at ~4 instructions/s by the 40 ms per-phase clamp, whatever the
+       slider says below 30 Hz - never promise per-pixel motion here. */
+    var byteChipUsed = false;
+    if (byteChipBtn) byteChipBtn.addEventListener('click', function () {
+      byteChipUsed = true;
+      byteChipBtn.hidden = true;
+      if (!ensureMachine()) return;
+      speedSl.value = '0';                 /* 2 Hz: pulse mode */
+      if (speedVal) speedVal.textContent = speedLabel();
+      flushAnim();
+      if (cpu.halted) { setStatus('Halted. Press Reset, then Run.'); return; }
+      mode = 'run'; playMode = 'auto';
+      runBtn.textContent = 'Pause';
+      setStatus('Slowed to 2 Hz. Every byte now travels the board.');
     });
 
     /* ---------- main loop ---------- */
@@ -611,19 +955,24 @@
       vm.IR = '$' + hx2(cpu.peek(cpu.PC));
       vm.MAR = '$' + hx4(cpu.PC);
       vm.RAMa = cpu.PC; vm.RAMv = cpu.peek(cpu.PC);
+      vm.RAMchip = 'RAM';
+      vm.ramR = { a: cpu.PC, v: vm.RAMv };
       bump('PC'); bump('RAM'); bump('IR'); bump('DECODE'); bump('MAR');
       if (cpu.A !== pA) { bump('A'); bump('ALU'); aluFlash = Math.max(aluFlash, 0.6); }
       if (cpu.X !== pX) bump('X');
       if (cpu.Z !== pZ || cpu.N !== pN || cpu.C !== pC) bump('FLAGS');
-      if (phaseEl) phaseEl.textContent = 'running at about ' + fmtHz(hzNow);
+      narrateFastLine();
       needDp = true;
     }
 
     var lastT = 0;
+    var frameDeltasArr = [];         /* rolling last ~120 rAF deltas (test hook) */
     function loop(t) {
       requestAnimationFrame(loop);
       var dt = lastT ? Math.min(100, t - lastT) : 16.7;
       lastT = t;
+      frameDeltasArr.push(dt);
+      if (frameDeltasArr.length > 120) frameDeltasArr.shift();
       var running = (mode === 'run');
 
       if (running && !cpu.halted) {
@@ -642,7 +991,7 @@
           if (!animCur && !animQ.length && acc >= 1) {
             acc -= 1;
             if (cpu.waiting) {
-              if (phaseEl) phaseEl.textContent = 'WAIT: waiting for the next display frame';
+              narrateWait('WAIT: waiting for the next display frame');
             } else {
               playMode = 'auto';
               var tr = cpu.step();
@@ -655,10 +1004,22 @@
           mode = 'ready';
           runBtn.textContent = 'Run';
           setStatus('Halted after ' + cpu.instrCount.toLocaleString() + ' instructions.');
+          setNarration('The program stops here. Press Reset, then Run to start it again.', 'HLT');
         }
       }
 
       animTick(t);
+
+      /* one-time byte-by-byte chip: only offered while running fast */
+      if (byteChipBtn) {
+        var showChip = (mode === 'run' && !cpu.halted && speedHz() > 30 && !byteChipUsed);
+        if (byteChipBtn.hidden !== !showChip) byteChipBtn.hidden = !showChip;
+      }
+      /* screen-reader mirror, throttled to one announcement per 2 s */
+      if (narSr && srPending !== srLastTxt && t - srLastT >= 2000) {
+        narSr.textContent = srPending;
+        srLastTxt = srPending; srLastT = t;
+      }
 
       /* heat decay */
       var hot = false, k;
@@ -690,12 +1051,16 @@
         if (running && machineView && speedHz() > 30) highlightLine(cpu.lineAt(cpu.PC) || -1);
       }
 
+      /* drain the display dirty list exactly once per frame, whether or not
+         the Screen pane is visible (the VID mini screen feeds from this) */
+      var offChanged = updateOffscreen();
+
       if ((needDp || hot || animCur || running) && visible(paneMachine)) {
         drawDatapath(t);
         needDp = false;
       }
       if (visible(paneScreen)) {
-        drawScreen();
+        blitScreen(offChanged, t);
         if (needMem || running || hasFlash(t)) { drawMem(t); needMem = false; }
       }
     }
@@ -705,36 +1070,175 @@
       return false;
     }
 
-    /* ---------- datapath geometry ---------- */
-    var BLOCKS = {
-      PC:     { x: 24,  y: 36,  w: 112, h: 44,  col: 0 },
-      SP:     { x: 24,  y: 102, w: 112, h: 44,  col: 0 },
-      FLAGS:  { x: 24,  y: 168, w: 112, h: 56,  col: 0 },
-      MAR:    { x: 250, y: 24,  w: 130, h: 40,  col: 1 },
-      RAM:    { x: 250, y: 86,  w: 130, h: 96,  col: 1 },
-      IR:     { x: 250, y: 204, w: 130, h: 52,  col: 1 },
-      DECODE: { x: 250, y: 278, w: 130, h: 42,  col: 1 },
-      A:      { x: 478, y: 36,  w: 112, h: 44,  col: 2 },
-      X:      { x: 478, y: 102, w: 112, h: 44,  col: 2 },
-      ALU:    { x: 464, y: 196, w: 140, h: 84,  col: 2 }
-    };
-    var CH01 = 200, CH12 = 425;
+    /* ---------- circuit board: layout ----------
+       layoutBoard(w, h) receives the CANVAS CSS size and computes every
+       chip rect, row rect, pin point, and riser x; everything else reads
+       its output. Five chip packages group the logical blocks (the block
+       NAMES stay exactly what the vm/heat/routing machinery uses):
+         CTRL "CONTROL"          rows PC, SP, IR, DECODE
+         CPU  "ALU + REGISTERS"  rows A, X, ALU, FLAGS
+         RAM  "RAM 4 KB"         rows MAR + the addressed byte
+         VID  "VIDEO"            live mini copy of the 32x32 screen
+         IO   "I/O"              rows KEYS, RND, FRAME
+       All sizes are floored (review invariant: a negative rect throws in
+       ctx.arc and one throw kills the rAF loop permanently). */
+    function clampN(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+    function layoutBoard(w, h) {
+      /* cap the board height and float it centered: on a tall pane a
+         full-height board leaves a dead zone between the chips and the
+         bottom bus channels */
+      var bh = clampN(h - 24, 90, 560);
+      var bd = { x: 12, y: Math.max(12, Math.round((h - bh) / 2)), w: Math.max(120, w - 24), h: bh };
+      var pad = 14;
+      var chanA = bd.y + bd.h - 42;      /* address channel y */
+      var chanD = chanA + 9;             /* data channel y */
+      var chipTop = bd.y + 14;
+      var chipBot = Math.max(chipTop + 70, chanA - 16);
+      var innerW = bd.w - pad * 2;
+      var gap = Math.max(26, innerW * 0.06);
+      var colW = Math.max(60, (innerW - 2 * gap) / 3);
+      var lx = bd.x + pad, cxx = lx + colW + gap, rxx = cxx + colW + gap;
+      var HH = 17, PB = 7, CGAP = 12;
+      var avail = chipBot - chipTop;
+      var rowH = clampN((avail - CGAP - 2 * (HH + PB)) / 8, 13, 22);
+
+      var chips = {}, rows = {}, pins = {};
+      function chip(name, x, y, cw, chh, label) {
+        chips[name] = { rect: { x: x, y: y, w: cw, h: chh }, label: label, rows: [] };
+      }
+      function row(name, chipName, y, rh) {
+        var c = chips[chipName].rect;
+        rows[name] = { x: c.x + 5, y: y, w: c.w - 10, h: rh, chip: chipName };
+        chips[chipName].rows.push(name);
+      }
+
+      var i, names;
+      chip('CTRL', lx, chipTop, colW, HH + 4 * rowH + PB, 'CONTROL');
+      names = ['PC', 'SP', 'IR', 'DECODE'];
+      for (i = 0; i < 4; i++) row(names[i], 'CTRL', chipTop + HH + i * rowH, rowH);
+      var cpuY = chipTop + chips.CTRL.rect.h + CGAP;
+      chip('CPU', lx, cpuY, colW, HH + 4 * rowH + PB, 'ALU + REGISTERS');
+      names = ['A', 'X', 'ALU', 'FLAGS'];
+      for (i = 0; i < 4; i++) row(names[i], 'CPU', cpuY + HH + i * rowH, rowH);
+
+      var ramH = clampN(avail * 0.62, HH + 2 * rowH + PB, avail);
+      chip('RAM', cxx, chipTop, colW, ramH, 'RAM 4 KB');
+      row('MAR', 'RAM', chipTop + HH, rowH);
+      row('RAMBYTE', 'RAM', chipTop + HH + rowH, rowH);
+
+      var ioH = HH + 3 * rowH + PB;
+      var mini = Math.round(clampN(
+        Math.min(colW - 20, avail - CGAP - ioH - (HH + rowH + PB) - 4), 24, 64));
+      var vidH = HH + mini + 4 + rowH + PB;
+      chip('VID', rxx, chipTop, colW, vidH, 'VIDEO');
+      var miniRect = { x: Math.round(rxx + (colW - mini) / 2), y: chipTop + HH + 2, w: mini, h: mini };
+      row('VIDB', 'VID', miniRect.y + mini + 2, rowH);
+      var ioY = chipTop + vidH + CGAP;
+      chip('IO', rxx, ioY, colW, ioH, 'I/O');
+      names = ['KEYS', 'RND', 'FRAME'];
+      for (i = 0; i < 3; i++) row(names[i], 'IO', ioY + HH + i * rowH, rowH);
+
+      /* pins + risers: left-column pins exit RIGHT into the left gap; RAM
+         pins exit LEFT into the same gap's riser ladder; VID/IO pins exit
+         LEFT into the center gap's ladder. Staggered riser x per pin. */
+      var spL = clampN((gap - 10) / 10, 1.8, 4.5);
+      var gL0 = lx + colW + 5;
+      var order = ['PC', 'SP', 'IR', 'DECODE', 'A', 'X', 'ALU', 'FLAGS', 'MAR', 'RAMBYTE'];
+      for (i = 0; i < order.length; i++) {
+        var rr = rows[order[i]], cRect = chips[rr.chip].rect;
+        pins[order[i]] = {
+          x: (rr.chip === 'RAM') ? cRect.x : cRect.x + cRect.w,
+          y: rr.y + rr.h / 2,
+          rx: gL0 + i * spL,
+          chip: rr.chip
+        };
+      }
+      var spC = clampN((gap - 10) / 5, 2.5, 6);
+      var gC0 = cxx + colW + 5;
+      order = ['VIDB', 'KEYS', 'RND', 'FRAME'];
+      for (i = 0; i < order.length; i++) {
+        var rr2 = rows[order[i]];
+        pins[order[i]] = {
+          x: chips[rr2.chip].rect.x, y: rr2.y + rr2.h / 2,
+          rx: gC0 + i * spC, chip: rr2.chip
+        };
+      }
+
+      return {
+        w: w, h: h, bd: bd, pad: pad, chips: chips, rows: rows, pins: pins,
+        chanA: chanA, chanD: chanD, mini: miniRect, rowH: rowH,
+        spanX0: bd.x + pad, spanX1: bd.x + bd.w - pad
+      };
+    }
+
+    /* which heat key lights a given row */
+    function rowHeatKey(rn) {
+      if (rn === 'RAMBYTE') return 'RAM';
+      if (rn === 'VIDB') return 'VID';
+      if (rn === 'KEYS') return 'IO0';
+      if (rn === 'RND') return 'IO1';
+      if (rn === 'FRAME') return 'IO2';
+      return rn;
+    }
+
+    /* classic PCB corners: cut every interior vertex of an orthogonal
+       polyline into two 45-degree segments */
+    function chamfer(pts, c) {
+      if (!pts || pts.length < 3) return pts;
+      var out = [pts[0]];
+      for (var i = 1; i < pts.length - 1; i++) {
+        var p = pts[i - 1], v = pts[i], n = pts[i + 1];
+        var d1 = Math.abs(v.x - p.x) + Math.abs(v.y - p.y);
+        var d2 = Math.abs(n.x - v.x) + Math.abs(n.y - v.y);
+        if (d1 < 0.5 || d2 < 0.5) { out.push(v); continue; }
+        var c1 = Math.min(c, d1 / 2), c2 = Math.min(c, d2 / 2);
+        out.push({ x: v.x + (p.x - v.x) * (c1 / d1), y: v.y + (p.y - v.y) * (c1 / d1) });
+        out.push({ x: v.x + (n.x - v.x) * (c2 / d2), y: v.y + (n.y - v.y) * (c2 / d2) });
+      }
+      out.push(pts[pts.length - 1]);
+      return out;
+    }
+
+    /* address-based chip routing: every memory access is named RAM in the
+       trace, so the endpoint is overridden by ph.addr - video addresses
+       route to the VID chip, the I/O registers to their IO rows. Without
+       this no pulse would ever reach VID or IO. Page-side only. */
+    function endpointFor(name, addr) {
+      if (name !== 'RAM') return name;
+      if (addr === undefined) return 'RAMBYTE';
+      var c = chipForAddr(addr);
+      if (c === 'VID') return 'VIDB';
+      if (c === 'IO') {
+        return addr === 0x1400 ? 'KEYS' : (addr === 0x1401 ? 'RND' : 'FRAME');
+      }
+      return 'RAMBYTE';
+    }
 
     function routeFor(ph) {
-      if (ph.kind === 'flag') return null;
-      var f = BLOCKS[ph.from], to = BLOCKS[ph.to];
-      if (!f || !to || ph.from === ph.to) return null;
-      if (f.col === to.col) {
-        var upper = f.y < to.y ? f : to, lower = f.y < to.y ? to : f;
-        var p1 = { x: upper.x + upper.w / 2, y: upper.y + upper.h };
-        var p2 = { x: lower.x + lower.w / 2, y: lower.y };
-        return f.y < to.y ? [p1, p2] : [p2, p1];
+      if (!L || ph.kind === 'flag') return null;
+      var fn = endpointFor(ph.from, ph.addr);
+      var tn = endpointFor(ph.to, ph.addr);
+      if (fn === tn) return null;
+      var pf = L.pins[fn], pt2 = L.pins[tn];
+      if (!pf || !pt2) return null;
+      /* address-type moves (anything INTO the MAR) ride the address
+         channel; everything else rides the data channel */
+      var chanY = (ph.to === 'MAR') ? L.chanA : L.chanD;
+      var ortho;
+      if (pf.chip === pt2.chip) {
+        /* short jog just outside the shared chip edge */
+        ortho = [
+          { x: pf.x, y: pf.y }, { x: pf.rx, y: pf.y },
+          { x: pf.rx, y: pt2.y }, { x: pt2.x, y: pt2.y }
+        ];
+      } else {
+        ortho = [
+          { x: pf.x, y: pf.y }, { x: pf.rx, y: pf.y }, { x: pf.rx, y: chanY },
+          { x: pt2.rx, y: chanY }, { x: pt2.rx, y: pt2.y }, { x: pt2.x, y: pt2.y }
+        ];
       }
-      var cx = (f.col === 0 || to.col === 0) ? CH01 : CH12;
-      /* start and end on the block edges facing the channel */
-      var s = { x: (cx > f.x + f.w / 2) ? f.x + f.w : f.x, y: f.y + f.h / 2 };
-      var d = { x: (cx > to.x + to.w / 2) ? to.x + to.w : to.x, y: to.y + to.h / 2 };
-      return [s, { x: cx, y: s.y }, { x: cx, y: d.y }, d];
+      return chamfer(ortho, 5);
     }
 
     /* ---------- datapath drawing ---------- */
@@ -775,8 +1279,209 @@
       return pts[pts.length - 1];
     }
 
-    function blockValue(name) {
-      switch (name) {
+    /* ---------- circuit board: static layer ----------
+       boardLayer holds the PCB itself (substrate, silkscreen, chips, pins,
+       idle traces) and is redrawn ONLY on resize / theme change, keyed on
+       (canvas CSS size, theme). Every layout path funnels through
+       sizeCanvases -> ensureBoard; drawDatapath also calls ensureBoard so a
+       theme flip (which changes the key via rebuildTheme) rebuilds too. */
+    var L = null, boardLayer = null, boardKey = '';
+    function ensureBoard(w, h) {
+      var key = Math.round(w) + 'x' + Math.round(h) + (THEME.light ? 'L' : 'D');
+      if (L && boardLayer && key === boardKey) return;
+      boardKey = key;
+      L = layoutBoard(w, h);
+      buildBoardLayer(w, h);
+      needDp = true;
+    }
+
+    function chanLines(g, y) {
+      g.beginPath();
+      g.moveTo(L.spanX0, y - 2.5); g.lineTo(L.spanX1, y - 2.5);
+      g.moveTo(L.spanX0, y); g.lineTo(L.spanX1, y);
+      g.moveTo(L.spanX0, y + 2.5); g.lineTo(L.spanX1, y + 2.5);
+      g.stroke();
+    }
+
+    function buildBoardLayer(w, h) {
+      if (!boardLayer) boardLayer = document.createElement('canvas');
+      boardLayer.width = Math.max(1, Math.round(w * DPR));
+      boardLayer.height = Math.max(1, Math.round(h * DPR));
+      var g = boardLayer.getContext('2d');
+      g.setTransform(DPR, 0, 0, DPR, 0, 0);
+      g.clearRect(0, 0, w, h);
+      var bd = L.bd, light = THEME.light;
+      var name, i;
+
+      /* substrate (navy-tinted charcoal; no green - slate/navy/gold only) */
+      rrect(g, bd.x, bd.y, bd.w, bd.h, 10);
+      g.fillStyle = light ? '#e7ebf1' : '#12161c';
+      g.fill();
+      rrect(g, bd.x, bd.y, bd.w, bd.h, 10);
+      g.strokeStyle = 'rgba(127,127,127,0.35)';
+      g.lineWidth = 1;
+      g.stroke();
+
+      /* faint 12 px fiberglass grid, clipped to the board */
+      g.save();
+      rrect(g, bd.x, bd.y, bd.w, bd.h, 10);
+      g.clip();
+      g.strokeStyle = 'rgba(127,127,127,0.05)';
+      g.lineWidth = 1;
+      g.beginPath();
+      for (var gx = bd.x + 12; gx < bd.x + bd.w; gx += 12) { g.moveTo(gx, bd.y); g.lineTo(gx, bd.y + bd.h); }
+      for (var gy = bd.y + 12; gy < bd.y + bd.h; gy += 12) { g.moveTo(bd.x, gy); g.lineTo(bd.x + bd.w, gy); }
+      g.stroke();
+
+      /* four corner mounting holes (decoration) */
+      g.strokeStyle = 'rgba(127,127,127,0.25)';
+      g.lineWidth = 1.5;
+      var hxs = [bd.x + 11, bd.x + bd.w - 11], hys = [bd.y + 11, bd.y + bd.h - 11];
+      for (i = 0; i < 4; i++) {
+        g.beginPath();
+        g.arc(hxs[i & 1], hys[i >> 1], 4, 0, Math.PI * 2);
+        g.stroke();
+      }
+
+      /* silkscreen title in the bottom margin of the board */
+      g.fillStyle = THEME.muted;
+      g.globalAlpha = 0.5;
+      g.font = '600 9px "Source Sans 3", system-ui, sans-serif';
+      g.textAlign = 'right';
+      g.fillText('KL-8 · 8-bit computer', bd.x + bd.w - 24, bd.y + bd.h - 8);
+      g.globalAlpha = 1;
+      g.textAlign = 'left';
+
+      /* idle bus channels: two gold 3-line bundles + channel names */
+      g.strokeStyle = THEME.gold;
+      g.globalAlpha = 0.30;
+      g.lineWidth = 1;
+      chanLines(g, L.chanA);
+      chanLines(g, L.chanD);
+      g.globalAlpha = 0.4;
+      g.fillStyle = THEME.gold;
+      g.font = '7px "Source Sans 3", system-ui, sans-serif';
+      g.fillText('ADDR', L.spanX0 + 1, L.chanA - 4.5);
+      g.fillText('DATA', L.spanX0 + 1, L.chanD + 10);
+      g.globalAlpha = 1;
+
+      /* idle risers: every pin drops to its usual channel (PC and MAR are
+         the address pair and get a 3-line bundle; the rest are data spurs) */
+      g.strokeStyle = THEME.gold;
+      g.globalAlpha = 0.30;
+      g.lineWidth = 1;
+      for (name in L.pins) {
+        var pn = L.pins[name];
+        var cy = (name === 'PC' || name === 'MAR') ? L.chanA : L.chanD;
+        busLine(g, chamfer([{ x: pn.x, y: pn.y }, { x: pn.rx, y: pn.y }, { x: pn.rx, y: cy }], 5));
+        if (name === 'PC' || name === 'MAR') {
+          busLine(g, [{ x: pn.rx - 2.5, y: pn.y + 8 }, { x: pn.rx - 2.5, y: cy }]);
+          busLine(g, [{ x: pn.rx + 2.5, y: pn.y + 8 }, { x: pn.rx + 2.5, y: cy }]);
+        }
+      }
+      /* vias where risers meet their channel */
+      g.globalAlpha = 0.35;
+      g.fillStyle = THEME.gold;
+      for (name in L.pins) {
+        var pv = L.pins[name];
+        var vy = (name === 'PC' || name === 'MAR') ? L.chanA : L.chanD;
+        g.beginPath();
+        g.arc(pv.rx, vy, 1.6, 0, Math.PI * 2);
+        g.fill();
+      }
+      g.globalAlpha = 1;
+
+      /* a few decorative stub traces + vias (sparse, alpha 0.12) */
+      g.strokeStyle = THEME.gold;
+      g.fillStyle = THEME.gold;
+      g.globalAlpha = 0.12;
+      g.lineWidth = 1;
+      var dy0 = bd.y + bd.h - 52;
+      var deco = [
+        [{ x: bd.x + 22, y: dy0 }, { x: bd.x + 40, y: dy0 }, { x: bd.x + 48, y: dy0 - 8 }],
+        [{ x: bd.x + 22, y: dy0 + 7 }, { x: bd.x + 52, y: dy0 + 7 }],
+        [{ x: bd.x + bd.w - 22, y: bd.y + 24 }, { x: bd.x + bd.w - 38, y: bd.y + 24 }, { x: bd.x + bd.w - 46, y: bd.y + 32 }],
+        [{ x: bd.x + bd.w - 22, y: bd.y + 38 }, { x: bd.x + bd.w - 42, y: bd.y + 38 }]
+      ];
+      for (i = 0; i < deco.length; i++) {
+        busLine(g, deco[i]);
+        var dl = deco[i][deco[i].length - 1];
+        g.beginPath();
+        g.arc(dl.x, dl.y, 1.6, 0, Math.PI * 2);
+        g.fill();
+      }
+      g.globalAlpha = 1;
+
+      /* chip packages */
+      for (name in L.chips) {
+        var cc = L.chips[name], r = cc.rect;
+        rrect(g, r.x, r.y, r.w, r.h, 5);
+        g.fillStyle = light ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.35)';
+        g.fill();
+        rrect(g, r.x, r.y, r.w, r.h, 5);
+        g.strokeStyle = 'rgba(127,127,127,0.5)';
+        g.lineWidth = 1;
+        g.stroke();
+        /* pin-1 dot + silkscreen label */
+        g.fillStyle = THEME.muted;
+        g.globalAlpha = 0.45;
+        g.beginPath();
+        g.arc(r.x + r.w - 8, r.y + 8, 1.5, 0, Math.PI * 2);
+        g.fill();
+        g.globalAlpha = 0.85;
+        g.font = '600 8.5px "Source Sans 3", system-ui, sans-serif';
+        g.fillText(cc.label, r.x + 7, r.y + 11);
+        g.globalAlpha = 1;
+      }
+
+      /* gold pin stubs (chip legs) where traces leave the packages */
+      g.fillStyle = THEME.gold;
+      g.globalAlpha = 0.55;
+      for (name in L.pins) {
+        var pp = L.pins[name];
+        var leftEdge = (pp.chip === 'RAM' || pp.chip === 'VID' || pp.chip === 'IO');
+        g.fillRect(leftEdge ? pp.x - 4 : pp.x, pp.y - 1.5, 4, 3);
+      }
+      g.globalAlpha = 1;
+
+      /* row insets + silkscreen row labels */
+      var LBL = { RAMBYTE: '', VIDB: '' };
+      for (name in L.rows) {
+        var rw = L.rows[name];
+        g.fillStyle = 'rgba(127,127,127,0.07)';
+        g.fillRect(rw.x, rw.y + 1, rw.w, rw.h - 2);
+        var lb = (LBL[name] !== undefined) ? LBL[name] : name;
+        if (lb) {
+          g.fillStyle = THEME.muted;
+          g.font = '600 8.5px "Source Sans 3", system-ui, sans-serif';
+          g.fillText(lb, rw.x + 4, rw.y + rw.h / 2 + 3);
+        }
+      }
+
+      /* RAM body doodle: a faint memory-cell array under its rows */
+      var ram = L.chips.RAM.rect;
+      var doTop = L.rows.RAMBYTE.y + L.rows.RAMBYTE.h + 5;
+      if (ram.y + ram.h - 8 - doTop > 10) {
+        g.fillStyle = 'rgba(127,127,127,0.14)';
+        for (var my = doTop; my < ram.y + ram.h - 8; my += 7) {
+          for (var mx = ram.x + 8; mx < ram.x + ram.w - 10; mx += 9) {
+            g.fillRect(mx, my, 5, 3.5);
+          }
+        }
+      }
+
+      /* mini screen bezel */
+      g.fillStyle = light ? 'rgba(0,0,0,0.12)' : 'rgba(0,0,0,0.5)';
+      g.fillRect(L.mini.x - 2, L.mini.y - 2, L.mini.w + 4, L.mini.h + 4);
+      g.strokeStyle = 'rgba(127,127,127,0.4)';
+      g.lineWidth = 1;
+      g.strokeRect(L.mini.x - 2.5, L.mini.y - 2.5, L.mini.w + 5, L.mini.h + 5);
+      g.restore();
+    }
+
+    /* ---------- circuit board: per-frame drawing ---------- */
+    function rowValue(rn) {
+      switch (rn) {
         case 'PC': return vm.PC;
         case 'SP': return vm.SP;
         case 'A': return vm.A;
@@ -784,130 +1489,175 @@
         case 'MAR': return vm.MAR;
         case 'IR': return vm.IR;
         case 'DECODE': return vm.DEC;
+        case 'RAMBYTE': return vm.ramR ? '[$' + hx4(vm.ramR.a) + '] = $' + hx2(vm.ramR.v || 0) : '';
+        case 'VIDB': return vm.vidR ? '[$' + hx4(vm.vidR.a) + '] = $' + hx2(vm.vidR.v || 0) : '';
+        case 'RND': return '$' + hx2(cpu.peek(0x1401));
+        case 'FRAME': return String(cpu.frameCount);
         default: return '';
       }
     }
 
     function drawDatapath(t) {
+      var w = dpCanvas.width / DPR, h = dpCanvas.height / DPR;
+      ensureBoard(w, h);
       var g = dpCtx;
       g.setTransform(DPR, 0, 0, DPR, 0, 0);
-      g.clearRect(0, 0, dpCanvas.width / DPR, dpCanvas.height / DPR);
-      g.translate(dpOffX, dpOffY);
-      g.scale(dpScale, dpScale);
-      g.lineWidth = 1.5;
+      g.clearRect(0, 0, w, h);
+      if (boardLayer) g.drawImage(boardLayer, 0, 0, w, h);
+      var rn, i;
 
-      /* static buses */
-      g.strokeStyle = THEME.faint;
-      g.lineWidth = 2;
-      busLine(g, [{ x: CH01, y: 40 }, { x: CH01, y: 300 }]);
-      busLine(g, [{ x: CH12, y: 40 }, { x: CH12, y: 300 }]);
-      g.lineWidth = 1.2;
-      var stubs = [
-        ['PC', CH01], ['SP', CH01], ['FLAGS', CH01],
-        ['MAR', CH01], ['RAM', CH01], ['IR', CH01], ['DECODE', CH01],
-        ['MAR', CH12], ['RAM', CH12], ['IR', CH12],
-        ['A', CH12], ['X', CH12], ['ALU', CH12]
-      ];
-      for (var s = 0; s < stubs.length; s++) {
-        var b0 = BLOCKS[stubs[s][0]], chx = stubs[s][1];
-        var ex = chx > b0.x + b0.w / 2 ? b0.x + b0.w : b0.x;
-        busLine(g, [{ x: ex, y: b0.y + b0.h / 2 }, { x: chx, y: b0.y + b0.h / 2 }]);
+      /* fast mode: pulses are off, so the bus channels shimmer instead.
+         t is the rAF timestamp in MILLISECONDS - the /1000 matters, 13
+         rad/ms would alias into per-frame noise. */
+      var fast = (mode === 'run' && speedHz() > 30);
+      if (fast) {
+        g.strokeStyle = THEME.gold;
+        g.globalAlpha = reduced ? 0.2 : Math.max(0, 0.15 + 0.1 * Math.sin((t / 1000) * 13));
+        g.lineWidth = 1.2;
+        chanLines(g, L.chanA);
+        chanLines(g, L.chanD);
+        g.globalAlpha = 1;
       }
-      /* bus captions */
-      g.fillStyle = THEME.muted;
-      g.font = '10px "Source Sans 3", system-ui, sans-serif';
-      g.textAlign = 'center';
-      g.fillText('address bus', CH01, 34);
-      g.fillText('data bus', CH12, 34);
 
-      /* blocks */
-      for (var name in BLOCKS) {
-        var b = BLOCKS[name], h = heat[name] || 0;
-        rrect(g, b.x, b.y, b.w, b.h, 7);
-        g.fillStyle = 'rgba(127,127,127,0.10)';
-        g.fill();
-        if (h > 0.02) {
-          rrect(g, b.x, b.y, b.w, b.h, 7);
-          g.globalAlpha = h * (name === 'ALU' && aluFlash > 0.05 ? 0 : 0.22);
+      /* chip glow: max of the package's row heat, alpha capped at 0.10 */
+      for (var cn in L.chips) {
+        var cc = L.chips[cn], hmax = heat[cn] || 0;
+        for (i = 0; i < cc.rows.length; i++) {
+          var hk = heat[rowHeatKey(cc.rows[i])] || 0;
+          if (hk > hmax) hmax = hk;
+        }
+        if (cn === 'CPU' && aluFlash > hmax) hmax = aluFlash;
+        if (hmax > 0.02) {
+          rrect(g, cc.rect.x, cc.rect.y, cc.rect.w, cc.rect.h, 5);
+          g.globalAlpha = Math.min(0.10, hmax * 0.10);
           g.fillStyle = THEME.accent;
           g.fill();
           g.globalAlpha = 1;
         }
-        if (name === 'ALU' && aluFlash > 0.02) {
-          rrect(g, b.x, b.y, b.w, b.h, 7);
+      }
+
+      /* rows: heat tint + live values */
+      var valFont = '11px ui-monospace, Consolas, monospace';
+      for (rn in L.rows) {
+        var r = L.rows[rn];
+        var hv = heat[rowHeatKey(rn)] || 0;
+        if (rn === 'ALU' && aluFlash > 0.02) {
           g.globalAlpha = aluFlash * 0.3;
           g.fillStyle = THEME.gold;
-          g.fill();
+          g.fillRect(r.x, r.y + 1, r.w, r.h - 2);
+          g.globalAlpha = 1;
+        } else if (hv > 0.02) {
+          g.globalAlpha = 0.25 * hv;
+          g.fillStyle = THEME.accent;
+          g.fillRect(r.x, r.y + 1, r.w, r.h - 2);
           g.globalAlpha = 1;
         }
-        rrect(g, b.x, b.y, b.w, b.h, 7);
-        g.strokeStyle = h > 0.02 ? THEME.accent : 'rgba(127,127,127,0.45)';
-        g.globalAlpha = h > 0.02 ? 0.45 + 0.55 * h : 1;
-        g.lineWidth = 1.5;
-        g.stroke();
-        g.globalAlpha = 1;
-
-        g.fillStyle = THEME.muted;
-        g.font = '600 10px "Source Sans 3", system-ui, sans-serif';
-        g.textAlign = 'left';
-        g.fillText(name === 'DECODE' ? 'DECODE' : name, b.x + 8, b.y + 13);
-
-        if (name === 'FLAGS') {
+        var baseY = r.y + r.h / 2 + 3.5;
+        if (rn === 'FLAGS') {
           var lam = ['Z', 'N', 'C'], vals = [vm.Z, vm.N, vm.C];
-          for (var L = 0; L < 3; L++) {
-            var lx = b.x + 26 + L * 30, ly = b.y + 34;
+          var rad = Math.min(6, r.h * 0.34);
+          for (i = 0; i < 3; i++) {
+            var lcx = r.x + r.w - (3 - i) * (rad * 2 + 7) + rad;
+            var lcy = r.y + r.h / 2;
             g.beginPath();
-            g.arc(lx, ly, 8, 0, Math.PI * 2);
-            if (vals[L]) { g.fillStyle = THEME.accent; g.fill(); }
+            g.arc(lcx, lcy, rad, 0, Math.PI * 2);
+            if (vals[i]) { g.fillStyle = THEME.accent; g.fill(); }
             else { g.strokeStyle = 'rgba(127,127,127,0.5)'; g.lineWidth = 1.2; g.stroke(); }
-            g.fillStyle = vals[L] ? (THEME.light ? '#ffffff' : '#141414') : THEME.muted;
-            g.font = '600 10px "Source Sans 3", system-ui, sans-serif';
+            g.fillStyle = vals[i] ? (THEME.light ? '#ffffff' : '#141414') : THEME.muted;
+            g.font = '600 8px "Source Sans 3", system-ui, sans-serif';
             g.textAlign = 'center';
-            g.fillText(lam[L], lx, ly + 3.5);
+            g.fillText(lam[i], lcx, lcy + 2.8);
           }
           g.textAlign = 'left';
-        } else if (name === 'ALU') {
+        } else if (rn === 'ALU') {
           g.fillStyle = aluFlash > 0.05 ? THEME.gold : THEME.ink;
-          g.font = '700 24px ui-monospace, Consolas, monospace';
-          g.textAlign = 'center';
-          g.fillText(vm.ALU || '·', b.x + b.w / 2, b.y + b.h / 2 + 14);
+          g.font = '700 14px ui-monospace, Consolas, monospace';
+          g.textAlign = 'right';
+          g.fillText(vm.ALU || '·', r.x + r.w - 5, baseY + 1);
           g.textAlign = 'left';
-        } else if (name === 'RAM') {
-          g.fillStyle = THEME.ink;
-          g.font = '13px ui-monospace, Consolas, monospace';
-          g.textAlign = 'center';
-          if (vm.RAMa === null) {
-            g.fillText('4 KB', b.x + b.w / 2, b.y + b.h / 2 + 8);
-          } else {
-            g.fillText('[$' + hx4(vm.RAMa) + ']', b.x + b.w / 2, b.y + b.h / 2 + 2);
-            g.fillText('$' + hx2(vm.RAMv || 0), b.x + b.w / 2, b.y + b.h / 2 + 20);
+        } else if (rn === 'KEYS') {
+          var bits = (kbBits | dpadBits);
+          var glyphs = ['↑', '↓', '←', '→', '␣'];
+          var masks = [1, 2, 4, 8, 16];
+          g.font = '10px ui-monospace, Consolas, monospace';
+          g.textAlign = 'right';
+          for (i = 4; i >= 0; i--) {
+            var kx = r.x + r.w - 5 - (4 - i) * 12;
+            g.fillStyle = (bits & masks[i]) ? THEME.accent : THEME.muted;
+            g.globalAlpha = (bits & masks[i]) ? 1 : 0.45;
+            g.fillText(glyphs[i], kx, baseY);
           }
+          g.globalAlpha = 1;
           g.textAlign = 'left';
+        } else if (rn === 'RAMBYTE' || rn === 'VIDB') {
+          var vtx = rowValue(rn);
+          if (vtx) {
+            g.fillStyle = THEME.ink;
+            g.font = valFont;
+            g.textAlign = 'center';
+            var maxc = Math.floor((r.w - 6) / 6.2);
+            if (vtx.length > maxc) vtx = vtx.slice(0, maxc);
+            g.fillText(vtx, r.x + r.w / 2, baseY);
+            g.textAlign = 'left';
+          }
         } else {
-          g.fillStyle = THEME.ink;
-          g.font = '13px ui-monospace, Consolas, monospace';
-          g.textAlign = 'center';
-          var val = blockValue(name);
-          if (val && val.length > 14) val = val.slice(0, 14);
-          g.fillText(val, b.x + b.w / 2, b.y + b.h - 12);
-          g.textAlign = 'left';
+          var val = rowValue(rn);
+          if (val) {
+            g.fillStyle = THEME.ink;
+            g.font = valFont;
+            g.textAlign = 'right';
+            var maxc2 = Math.floor((r.w - (rn === 'DECODE' ? 42 : 30)) / 6.2);
+            if (val.length > maxc2) val = val.slice(0, Math.max(2, maxc2));
+            g.fillText(val, r.x + r.w - 5, baseY);
+            g.textAlign = 'left';
+          }
         }
       }
 
-      /* traveling pulse */
+      /* the VID chip's live mini screen (cheap: one drawImage of the
+         existing offscreen 32x32; it must never trigger full repaints) */
+      g.imageSmoothingEnabled = false;
+      g.drawImage(off, L.mini.x, L.mini.y, L.mini.w, L.mini.h);
+      g.imageSmoothingEnabled = true;
+      if (vidRingOn(t)) {
+        var mc = L.mini.w / 32;
+        g.strokeStyle = THEME.accentHi;
+        g.lineWidth = 1.2;
+        g.strokeRect(L.mini.x + lastVidWrite.x * mc, L.mini.y + lastVidWrite.y * mc, mc, mc);
+      }
+
+      /* in-flight byte: light the whole route, then the spark + tail
+         (two arcs, never shadowBlur in the per-frame path) */
       if (animCur && animCur.pts) {
+        var pts = animCur.pts;
+        g.strokeStyle = THEME.gold;
+        g.globalAlpha = 0.65;
+        g.lineWidth = 2;
+        busLine(g, pts);
+        g.globalAlpha = 1;
         var p = (t - animCur.t0) / animCur.dur;
         if (p < 0) p = 0; if (p > 1) p = 1;
         p = p * p * (3 - 2 * p);
-        var pos = ptAlong(animCur.pts, p);
-        g.save();
-        g.shadowColor = animCur.ph.kind === 'alu' ? THEME.gold : THEME.accent;
-        g.shadowBlur = 10;
-        g.fillStyle = animCur.ph.kind === 'alu' ? THEME.gold : THEME.accentHi;
+        var col = animCur.ph.kind === 'alu' ? THEME.gold : THEME.accentHi;
+        g.fillStyle = col;
+        for (var k = 3; k >= 1; k--) {
+          var tp = p - 0.04 * k;
+          if (tp <= 0) continue;
+          var gp = ptAlong(pts, tp);
+          g.globalAlpha = 0.28 - k * 0.07;
+          g.beginPath();
+          g.arc(gp.x, gp.y, Math.max(0.5, 3 - k * 0.5), 0, Math.PI * 2);
+          g.fill();
+        }
+        var pos = ptAlong(pts, p);
+        g.globalAlpha = 0.18;
         g.beginPath();
-        g.arc(pos.x, pos.y, 4.5, 0, Math.PI * 2);
+        g.arc(pos.x, pos.y, 8, 0, Math.PI * 2);
         g.fill();
-        g.restore();
+        g.globalAlpha = 1;
+        g.beginPath();
+        g.arc(pos.x, pos.y, 3, 0, Math.PI * 2);
+        g.fill();
       }
       g.setTransform(1, 0, 0, 1, 0, 0);
     }
@@ -1151,19 +1901,73 @@
       else if (rq.addListener) rq.addListener(onRq);
     } catch (e) {}
 
+    /* ---------- boot alive ----------
+       The board should be moving from the first frame: load the bouncing
+       pixel demo through the same path a user selection takes (so the
+       examples select legitimately shows it - placeholder invariant kept),
+       assemble, and RUN at the existing default slider value (60 -> 2 kHz).
+       WAIT paces the program to the display, so the pixel bounces smoothly
+       and the chips glow with activity heat. Do NOT boot into pulse mode:
+       pulse-mode Run is bounded at ~4 instructions/s by the 40 ms phase
+       clamp, so the Bounce demo would move one pixel every ~13 s - the
+       byte-by-byte chip in the narrator is the honest one-click way down. */
+    function bootAlive() {
+      var ex = null;
+      for (var i = 0; i < K.EXAMPLES.length; i++) {
+        if (K.EXAMPLES[i].id === 'bounce') ex = K.EXAMPLES[i];
+      }
+      if (!ex) return;
+      srcTa.value = ex.src;
+      lastLoaded = ex.src;
+      appliedExample = ex.id;
+      exampleSel.value = ex.id;
+      var r = assembleNow();
+      if (!r) return;
+      loadProgram(r);
+      enterMachineView();
+      if (reduced) {
+        /* reduced motion: same example, assembled but PAUSED */
+        mode = 'ready';
+        setStatus('Press Run to start.');
+        return;
+      }
+      mode = 'run';
+      playMode = 'auto';
+      runBtn.textContent = 'Pause';
+      if (app.getAttribute('data-cols') === '1') setTab('screen');
+    }
+
+    /* ---------- test hooks ---------- */
+    window.__comp = {
+      narrate: narrate,
+      lastNarration: function () { return lastNarr; },
+      frameDeltas: function () { return frameDeltasArr.slice(); },
+      boardPx: function (name) {
+        if (!L) return null;
+        var r = L.rows[name] || (L.chips[name] && L.chips[name].rect) || null;
+        if (!r) return null;
+        var cr = dpCanvas.getBoundingClientRect();
+        return { left: cr.left + r.x, top: cr.top + r.y, width: r.w, height: r.h };
+      }
+    };
+
     /* ---------- init ---------- */
     rebuildTheme();
     buildReference();
     srcTa.value = K.EXAMPLES[0].src;
     lastLoaded = srcTa.value;
     exampleSel.value = K.EXAMPLES[0].id;
-    /* restore a shared program from the URL hash (untrusted: clamp) */
+    /* restore a shared program from the URL hash (untrusted: clamp).
+       A share-hash load must NOT auto-run (people share half-written
+       code), so it also skips the boot-alive path. */
+    var sharedLoad = false;
     if (SH) {
       var dec = SH.decode(SH.readHash());
       if (dec && dec.version === 1 && dec.obj && typeof dec.obj.s === 'string' && dec.obj.s.length) {
         var shared = dec.obj.s.slice(0, 6000);
         srcTa.value = shared;
         lastLoaded = shared;
+        sharedLoad = true;   /* even if it does not assemble, keep the source */
         /* the editor no longer holds an example: park the select on the
            placeholder so picking any real entry still fires change */
         exampleSel.value = '';
@@ -1180,7 +1984,8 @@
     syncMemControls();
     resetVm();
     applyCols();
-    if (GU) GU.firstRunHint('computer', 'Press Assemble ▸ Run, then try Step to watch one instruction at a time.');
+    if (!sharedLoad) bootAlive();
+    if (GU) GU.firstRunHint('computer', 'This is a whole small computer. The gold lines carry bytes between the chips. Try Micro-step to watch one move at a time.');
     requestAnimationFrame(loop);
   }
 

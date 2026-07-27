@@ -28,14 +28,21 @@ description: "The Visible Computer by Keane Lucas: the KL-8 is an original 8-bit
         <pre id="comp-srcview" class="comp-srcview" hidden tabindex="0" aria-label="Assembly source, read-only while the machine is loaded. Click it to edit and stop the run."></pre>
       </div>
       <div id="comp-errors" class="comp-errors" role="status" aria-live="polite" hidden></div>
-      <p class="comp-blurb">An original 8-bit machine, assembler and all, running in this page. Press the <strong>?</strong> button for the instruction set and memory map.</p>
+      <p class="comp-blurb">Watch a small computer run: every byte that moves between the chips is drawn on the board, in plain words. When you are curious, open the code and change it. Press the <strong>?</strong> button for the instruction set and memory map.</p>
     </section>
 
-    <section class="comp-pane comp-pane--machine" id="pane-machine" aria-label="Datapath">
+    <section class="comp-pane comp-pane--machine" id="pane-machine" aria-label="Circuit board">
       <div id="comp-dpwrap" class="comp-dpwrap">
-        <canvas id="comp-datapath" aria-label="Animated datapath diagram showing the registers, memory, ALU, flags, and the buses between them"></canvas>
+        <canvas id="comp-datapath" aria-label="The KL-8 drawn as a circuit board: chips for control, ALU and registers, RAM, video, and I/O, with the bytes that move between them lighting the traces"></canvas>
       </div>
-      <div id="comp-phase" class="comp-phase"></div>
+      <div id="comp-narrate" class="comp-narrate">
+        <div class="comp-narrate__row">
+          <span id="comp-narrate-main" class="comp-narrate__main"></span>
+          <button id="comp-bytechip" class="comp-chipbtn" type="button" hidden>Watch it byte by byte</button>
+        </div>
+        <div id="comp-phase" class="comp-phase"></div>
+      </div>
+      <p class="comp-legend">Gold traces carry bytes between the chips. The blue spark is a byte in flight.</p>
     </section>
 
     <section class="comp-pane comp-pane--screen" id="pane-screen" aria-label="Screen, run controls, and memory inspector">
@@ -82,6 +89,10 @@ description: "The Visible Computer by Keane Lucas: the KL-8 is an original 8-bit
       <p class="comp-blurb">Writes flash blue, reads flash gold. Click a byte while paused to edit it.</p>
     </section>
   </div>
+
+  <!-- the aria-live narration mirror must NOT live inside a pane: panes go
+       display:none per tab, and a hidden live region announces nothing -->
+  <div id="comp-narrate-sr" class="comp-sr" aria-live="polite"></div>
 
   <aside id="comp-ref" class="comp-ref" aria-hidden="true" role="dialog" aria-label="KL-8 instruction reference">
     <div class="comp-ref-head">
@@ -157,9 +168,33 @@ html[data-theme="light"] .comp-topfade {
 }
 .comp-pane--machine { overflow: hidden; }
 .comp-dpwrap { flex: 1; min-height: 220px; }
+
+/* ---- narrator strip (plain words over the small technical line) ---- */
+.comp-narrate { display: flex; flex-direction: column; gap: 1px; }
+/* two lines are reserved so a wrapping sentence never shrinks the pane and
+   pushes the sized canvas over the strip mid-run */
+.comp-narrate__row { display: flex; align-items: baseline; gap: 8px; min-height: 2.7em; }
+.comp-narrate__main { flex: 1 1 auto; min-width: 0; font-size: 0.95em; line-height: 1.35; }
 .comp-phase {
-  min-height: 1.5em; font: 12px/1.4 ui-monospace, Consolas, monospace;
-  opacity: 0.85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  min-height: 1.3em; font: 11.5px/1.4 ui-monospace, Consolas, monospace;
+  opacity: 0.6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.comp-chipbtn {
+  flex: 0 0 auto; font: inherit; font-size: 0.82em; color: inherit; cursor: pointer;
+  line-height: 1.1; padding: 0.28em 0.75em; border-radius: 999px;
+  border: 1px solid #82a6cc; background: rgba(130,166,204,0.16);
+}
+.comp-chipbtn:hover { background: rgba(130,166,204,0.3); }
+.comp-chipbtn[hidden] { display: none !important; } /* hidden loses to display rules */
+.comp-legend { margin: 0; font-size: 0.78em; opacity: 0.6; }
+.comp-sr {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%);
+  white-space: nowrap; border: 0;
+}
+html[data-theme="light"] .comp-chipbtn { border-color: #34568a; background: rgba(52,86,138,0.12); }
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .comp-chipbtn { border-color: #34568a; background: rgba(52,86,138,0.12); }
 }
 
 /* ---- editor (explicit high contrast in BOTH themes) ---- */
@@ -339,7 +374,15 @@ html[data-theme="light"] .comp-ref { background: rgba(252,253,255,0.99); border-
 #comp-app[data-cols="1"] .comp-dpwrap { overflow-x: auto; overflow-y: hidden; }
 @media (max-height: 540px) {
   .comp-edwrap { min-height: 72px; }
-  .comp-dpwrap { min-height: 120px; }
+  /* small landscape: keep the board legible and let the machine pane
+     SCROLL rather than clip; the legend goes, the narrator gets one line.
+     280px is the floor below which layoutBoard's chip stack overlaps the
+     bus channels (rowH floors at 13px) */
+  .comp-pane--machine { overflow: auto; }
+  .comp-dpwrap { height: 280px; min-height: 280px; flex: 0 0 auto; }
+  .comp-legend { display: none; }
+  .comp-narrate__row { min-height: 0; }
+  .comp-narrate__main { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .comp-pane--code .comp-blurb { display: none; }
   /* 38vh lands on the toolbar in landscape; drop the hint to the bottom */
   .gadget-hint { top: auto; bottom: 0.5rem; }
