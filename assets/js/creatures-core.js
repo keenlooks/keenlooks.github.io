@@ -47,6 +47,15 @@
   var SIG_A = 0.05, SIG_PHI = 0.45, SIG_F = 0.1;  /* mutation sigmas (x slider) */
   var POP_MIN = 16, POP_MAX = 80, POP_DEF = 40;
 
+  /* Build-your-own editor limits (v2). Custom bodies (preset 5) may use up
+     to 10 nodes / 26 springs; v1 Random shares (preset 4) keep 8 / 20 so old
+     links decode byte-identically. BUILD_XMAX/BUILD_YMAX bound the editable
+     region (x in +-1.6 m, y in [NODE_R, 1.7 m]); BUILD_SNAP is the placement
+     grid. */
+  var BUILD_NODES = 10, BUILD_SPRINGS = 26;
+  var V1_NODES = 8, V1_SPRINGS = 20;
+  var BUILD_XMAX = 1.6, BUILD_YMAX = 1.7, BUILD_SNAP = 0.02;
+
   /* ------------------------------ RNG ----------------------------------- */
 
   function mulberry32(seed) {
@@ -223,11 +232,137 @@
     return copyMorph(PRESETS[2]);
   }
 
-  /* idx 0..3 = fixed presets (no rng draws); idx 4 = random (draws from rng) */
+  /* idx 0..3 = fixed presets (no rng draws); idx 4 = random (draws from rng);
+     idx 5 = custom (makeRun requires opts.morph; never comes here) */
   function morphForPreset(idx, rng) {
     if (idx === 4) return randomMorph(rng);
     return copyMorph(PRESETS[idx]);
   }
+
+  /* ------------------------- morph validation ---------------------------- */
+
+  /* Single source of truth for "can this morphology evolve": the editor's
+     Evolve button and share-decode both call it. Returns { ok: true,
+     muscles: n } or { ok: false, reason: 'few-nodes' | 'many-nodes' |
+     'many-springs' | 'disconnected' | 'no-muscle' | 'bad-coord' }.
+     Checks in order: nodes an array of finite [x, y] pairs within [-3, 3],
+     3..10 of them; springs an array of [i, j, isMuscle] with valid integer
+     indices, no self-edges, no duplicates (i-j unordered), 2..26 of them;
+     graph connected (union-find); at least one muscle. Malformed spring
+     entries report 'bad-coord' (a bad node index is a bad coordinate). */
+  function validateMorph(morph) {
+    if (!morph || typeof morph !== 'object' || Array.isArray(morph)) {
+      return { ok: false, reason: 'few-nodes' };
+    }
+    var n = morph.nodes, s = morph.springs, i;
+    if (!Array.isArray(n) || n.length < 3) return { ok: false, reason: 'few-nodes' };
+    if (n.length > BUILD_NODES) return { ok: false, reason: 'many-nodes' };
+    for (i = 0; i < n.length; i++) {
+      var pt = n[i];
+      if (!Array.isArray(pt) ||
+          typeof pt[0] !== 'number' || !isFinite(pt[0]) || pt[0] < -3 || pt[0] > 3 ||
+          typeof pt[1] !== 'number' || !isFinite(pt[1]) || pt[1] < -3 || pt[1] > 3) {
+        return { ok: false, reason: 'bad-coord' };
+      }
+    }
+    if (!Array.isArray(s) || s.length < 2) return { ok: false, reason: 'disconnected' };
+    if (s.length > BUILD_SPRINGS) return { ok: false, reason: 'many-springs' };
+    var parent = [], seen = {}, muscles = 0;
+    for (i = 0; i < n.length; i++) parent.push(i);
+    function find(v) { while (parent[v] !== v) { parent[v] = parent[parent[v]]; v = parent[v]; } return v; }
+    for (i = 0; i < s.length; i++) {
+      var sp = s[i];
+      if (!Array.isArray(sp)) return { ok: false, reason: 'bad-coord' };
+      var a = sp[0], b = sp[1];
+      if (typeof a !== 'number' || typeof b !== 'number' ||
+          a !== Math.round(a) || b !== Math.round(b) ||
+          a < 0 || a >= n.length || b < 0 || b >= n.length || a === b) {
+        return { ok: false, reason: 'bad-coord' };
+      }
+      var key = Math.min(a, b) + '-' + Math.max(a, b);
+      if (seen[key]) return { ok: false, reason: 'bad-coord' };
+      seen[key] = 1;
+      if (sp[2]) muscles++;
+      parent[find(a)] = find(b);
+    }
+    for (i = 1; i < n.length; i++) {
+      if (find(i) !== find(0)) return { ok: false, reason: 'disconnected' };
+    }
+    if (!muscles) return { ok: false, reason: 'no-muscle' };
+    return { ok: true, muscles: muscles };
+  }
+
+  /* ------------------------- editor mutation ops ------------------------- */
+
+  /* Pure, node-testable mutations the build editor applies to a morph
+     in place. Every op enforces the snap (BUILD_SNAP), the coordinate
+     clamps (x within +-BUILD_XMAX, y in [NODE_R, BUILD_YMAX]) and the caps
+     (BUILD_NODES nodes / BUILD_SPRINGS springs), and returns false when it
+     refuses. addNode returns the NEW NODE INDEX on success (which can be 0,
+     so callers must compare against false, not truthiness). */
+  function snapCoord(v) { return Math.round(v / BUILD_SNAP) * BUILD_SNAP; }
+  function buildClampX(x) { return clampVal(snapCoord(x), -BUILD_XMAX, BUILD_XMAX); }
+  function buildClampY(y) { return clampVal(snapCoord(y), NODE_R, BUILD_YMAX); }
+
+  var BuildOps = {
+    addNode: function (morph, x, y) {
+      if (morph.nodes.length >= BUILD_NODES) return false;
+      if (!isFinite(x) || !isFinite(y)) return false;
+      morph.nodes.push([buildClampX(x), buildClampY(y)]);
+      return morph.nodes.length - 1;
+    },
+    moveNode: function (morph, i, x, y) {
+      if (i !== Math.round(i) || i < 0 || i >= morph.nodes.length) return false;
+      if (!isFinite(x) || !isFinite(y)) return false;
+      morph.nodes[i][0] = buildClampX(x);
+      morph.nodes[i][1] = buildClampY(y);
+      return true;
+    },
+    deleteNode: function (morph, i) {
+      if (i !== Math.round(i) || i < 0 || i >= morph.nodes.length) return false;
+      morph.nodes.splice(i, 1);
+      var out = [], k;
+      for (k = 0; k < morph.springs.length; k++) {
+        var sp = morph.springs[k];
+        if (sp[0] === i || sp[1] === i) continue;
+        out.push([sp[0] > i ? sp[0] - 1 : sp[0], sp[1] > i ? sp[1] - 1 : sp[1], sp[2]]);
+      }
+      morph.springs = out;
+      return true;
+    },
+    /* absent edge -> add as MUSCLE (false at the spring cap); present -> remove */
+    toggleEdge: function (morph, i, j) {
+      var N = morph.nodes.length;
+      if (i !== Math.round(i) || j !== Math.round(j) ||
+          i < 0 || j < 0 || i >= N || j >= N || i === j) return false;
+      for (var k = 0; k < morph.springs.length; k++) {
+        var sp = morph.springs[k];
+        if ((sp[0] === i && sp[1] === j) || (sp[0] === j && sp[1] === i)) {
+          morph.springs.splice(k, 1);
+          return true;
+        }
+      }
+      if (morph.springs.length >= BUILD_SPRINGS) return false;
+      morph.springs.push([Math.min(i, j), Math.max(i, j), 1]);
+      return true;
+    },
+    /* spring k cycles muscle -> structural -> deleted */
+    cycleEdge: function (morph, k) {
+      if (k !== Math.round(k) || k < 0 || k >= morph.springs.length) return false;
+      if (morph.springs[k][2]) morph.springs[k][2] = 0;
+      else morph.springs.splice(k, 1);
+      return true;
+    },
+    /* clamp an imported morph (share, preset) into the editable region;
+       spawn normalization makes the shift harmless to evolution */
+    clampMorph: function (morph) {
+      for (var i = 0; i < morph.nodes.length; i++) {
+        morph.nodes[i][0] = clampVal(morph.nodes[i][0], -BUILD_XMAX, BUILD_XMAX);
+        morph.nodes[i][1] = clampVal(morph.nodes[i][1], NODE_R, BUILD_YMAX);
+      }
+      return morph;
+    }
+  };
 
   /* ----------------------------- creature ------------------------------- */
 
@@ -361,7 +496,12 @@
     opts = opts || {};
     var seed = (opts.seed == null ? 1 : opts.seed) >>> 0;
     var rng = mulberry32(seed);
-    var presetIdx = Math.min(4, Math.max(0, opts.preset | 0));
+    var presetIdx = Math.min(5, Math.max(0, opts.preset | 0));
+    /* preset 5 = a custom-built body: the morph override is REQUIRED
+       (callers guarantee it; PRESETS[5] does not exist) */
+    if (presetIdx === 5 && !opts.morph) {
+      throw new Error('CreaturesCore.makeRun: preset 5 requires opts.morph');
+    }
     var pop = Math.round(clampVal(opts.pop == null ? POP_DEF : opts.pop, POP_MIN, POP_MAX));
     var morph = opts.morph ? copyMorph(opts.morph) : morphForPreset(presetIdx, rng);
     var M = muscleCount(morph);
@@ -457,9 +597,11 @@
 
   /* ------------------------------- share --------------------------------- */
 
-  /* Payload v1: { p, s, g, f, m: [[A, phi]…], morph?: { n, s } } — morph only
-     for the Random preset. Numbers get rounded to 3 decimals by
-     ShareHash.encode; the ranges survive that rounding. */
+  /* Payload v1: { p, s, g, f, m: [[A, phi]…], morph?: { n, s } } — morph for
+     the Random preset (p = 4) and custom-built bodies (p = 5). Numbers get
+     rounded to 3 decimals by ShareHash.encode; the ranges survive that
+     rounding. The schema is a superset of v1, so the ShareHash version
+     stays 1. */
   function buildShare(run) {
     if (!run || !run.champion) return null;
     var ch = run.champion, i;
@@ -468,7 +610,7 @@
       m.push([ch.genome.muscles[i].A, ch.genome.muscles[i].phi]);
     }
     var o = { p: run.presetIdx, s: run.seed, g: ch.gen, f: ch.genome.f, m: m };
-    if (run.presetIdx === 4) {
+    if (run.presetIdx >= 4) {
       var n = [], ss = [];
       for (i = 0; i < run.morph.nodes.length; i++) n.push([run.morph.nodes[i][0], run.morph.nodes[i][1]]);
       for (i = 0; i < run.morph.springs.length; i++) {
@@ -487,16 +629,27 @@
   /* Validate a DECODED (untrusted) share payload object. Returns
      { preset, seed, gen, genome, morph|null } or null. Every number is
      clamped into its range; the payload is rejected outright when the
-     muscle list length does not match the morphology's muscle count. */
+     muscle list length does not match the morphology's muscle count.
+
+     Caps are preset-dependent (v2): p = 4 keeps the v1 caps (8 nodes /
+     20 springs / 20 muscles) so old links decode byte-identically; p = 5
+     (custom-built bodies) allows 10 / 26 / 26 — note the o.m muscle-array
+     cap widens too, since the editor adds every new edge as a muscle. For
+     p >= 4 the morph is REQUIRED (never fall through to PRESETS[5], which
+     does not exist), and the reconstructed morph must pass validateMorph
+     (connectivity + at-least-one-muscle; presets were trusted, user bodies
+     are not — this holds for p = 4 too, since randomMorph always bridges
+     components, verified by the recorded-v1-payload regression test). */
   function validateShare(o) {
     if (!o || typeof o !== 'object' || Array.isArray(o)) return null;
-    var p = shNum(o.p, 0, 4, NaN);
+    var p = shNum(o.p, 0, 5, NaN);
     if (!isFinite(p)) return null;
     p = Math.round(p);
     var seed = shNum(o.s, 0, 4294967295, 1) >>> 0;
     var gen = Math.round(shNum(o.g, 1, 1000000, 1));
     var f = shNum(o.f, F_MIN, F_MAX, (F_MIN + F_MAX) / 2);
-    if (!Array.isArray(o.m) || o.m.length < 1 || o.m.length > 20) return null;
+    var mCap = (p === 5) ? BUILD_SPRINGS : V1_SPRINGS;
+    if (!Array.isArray(o.m) || o.m.length < 1 || o.m.length > mCap) return null;
     var muscles = [], i;
     for (i = 0; i < o.m.length; i++) {
       var e = o.m[i];
@@ -504,15 +657,20 @@
       muscles.push({ A: shNum(e[0], 0, A_MAX, 0), phi: wrapPhi(shNum(e[1], -1000, 1000, 0)) });
     }
     var morph = null;
-    if (p === 4) {
+    if (p >= 4) {
+      var nodeCap = (p === 5) ? BUILD_NODES : V1_NODES;
+      var springCap = (p === 5) ? BUILD_SPRINGS : V1_SPRINGS;
       var mo = o.morph;
       if (!mo || typeof mo !== 'object' || Array.isArray(mo)) return null;
-      if (!Array.isArray(mo.n) || mo.n.length < 3 || mo.n.length > 8) return null;
-      if (!Array.isArray(mo.s) || mo.s.length < 1 || mo.s.length > 20) return null;
+      if (!Array.isArray(mo.n) || mo.n.length < 3 || mo.n.length > nodeCap) return null;
+      if (!Array.isArray(mo.s) || mo.s.length < 1 || mo.s.length > springCap) return null;
       var nodes = [], springs = [], seen = {};
       for (i = 0; i < mo.n.length; i++) {
         if (!Array.isArray(mo.n[i])) return null;
-        nodes.push([shNum(mo.n[i][0], -3, 3, 0), shNum(mo.n[i][1], -3, 3, 0)]);
+        var vx = mo.n[i][0], vy = mo.n[i][1];
+        if (typeof vx !== 'number' || !isFinite(vx) ||
+            typeof vy !== 'number' || !isFinite(vy)) return null;
+        nodes.push([clampVal(vx, -3, 3), clampVal(vy, -3, 3)]);
       }
       for (i = 0; i < mo.s.length; i++) {
         var sp = mo.s[i];
@@ -529,6 +687,7 @@
       }
       if (!springs.length) return null;
       morph = { name: 'Shared', nodes: nodes, springs: springs };
+      if (!validateMorph(morph).ok) return null;
     }
     var mc = morph ? muscleCount(morph) : muscleCount(PRESETS[p]);
     if (mc !== muscles.length) return null;
@@ -543,9 +702,12 @@
     GEN_SUBSTEPS: GEN_SUBSTEPS,
     F_MIN: F_MIN, F_MAX: F_MAX, A_MAX: A_MAX,
     POP_MIN: POP_MIN, POP_MAX: POP_MAX, POP_DEF: POP_DEF,
+    BUILD_NODES: BUILD_NODES, BUILD_SPRINGS: BUILD_SPRINGS,
+    BUILD_XMAX: BUILD_XMAX, BUILD_YMAX: BUILD_YMAX, BUILD_SNAP: BUILD_SNAP,
     mulberry32: mulberry32, gauss: gauss,
     PRESETS: PRESETS, morphForPreset: morphForPreset, randomMorph: randomMorph,
     copyMorph: copyMorph, muscleCount: muscleCount,
+    validateMorph: validateMorph, BuildOps: BuildOps,
     randomGenome: randomGenome, copyGenome: copyGenome,
     mutateGenome: mutateGenome, crossover: crossover,
     makeCreature: makeCreature, stepCreature: stepCreature, comX: comX,

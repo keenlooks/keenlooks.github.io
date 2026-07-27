@@ -3,8 +3,12 @@
    --------------------------------------------------------------------------
    All simulation + evolution logic lives in creatures-core.js (pure, node-
    tested); this file owns rendering, the camera, the fitness chart HUD, the
-   control panel, share links, and champion replay. Champion replays and
+   control panel, share links, champion replay, and the build-your-own
+   editor (mode 'build': place dots, connect edges, mark muscles, then
+   evolve the body — the default landing experience). Champion replays and
    shared creatures step through the SAME stepCreature() path as evolution.
+   Physics never runs in build mode, and entering the editor does not
+   destroy a live run.
 
    Pacing is timestamp-accumulated with a fixed dt = 1/240 s: speed only adds
    substeps per frame (capped at 96 — an overloaded device stretches wall
@@ -29,6 +33,9 @@
   var btnPause = id('cre-pause'), btnRestart = id('cre-restart');
   var btnReplay = id('cre-replay'), btnShare = id('cre-share'), btnSave = id('cre-save');
   var status = id('cre-status');
+  var buildbar = id('cre-buildbar'), buildMsg = id('cre-buildmsg');
+  var btnEvolve = id('cre-evolve'), btnBUndo = id('cre-undo'), btnBClear = id('cre-clear');
+  var btnEdit = id('cre-edit');
 
   var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   var W = 0, H = 0, dpr = 1, raf = null, lastT = 0;
@@ -40,10 +47,26 @@
   var chartHist = null, chartLen = -1, chartYmax = 1, chartStride = 1;
 
   var run = null;                 /* the evolution run (CreaturesCore.makeRun) */
-  var mode = 'evolve';            /* 'evolve' | 'replay' | 'shared' */
+  var panelUi = null;             /* GadgetUI.initPanel handle */
+  var mode = 'evolve';            /* 'evolve' | 'replay' | 'shared' | 'build' */
   var solo = null;                /* { c, substep, genome, morph, gen, label } */
   var shared = null;              /* validated share payload, while relevant */
   var shareBannerEl = null;
+
+  /* ----- build-mode state (the editor; physics never runs here) -----
+     bm.morph is in WORLD meters (same space as presets). Entering build
+     does NOT destroy `run`: it merely stops stepping, so the champion,
+     history and Share button survive an accidental tap. */
+  var coarse = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+  var bm = { morph: null, sel: -1, undo: [] };
+  var UNDO_CAP = 60;
+  /* one in-flight pointer gesture; a second pointer is ignored */
+  var bp = { id: null, dragI: -1, downX: 0, downY: 0, moved: false,
+             dragSnap: null, undoPushed: false, consumed: false, lpTimer: null };
+  var hover = { x: 0, y: 0, on: false };
+  var buildStatus = '';           /* one-shot status line text for build mode */
+  var buildMsgFlash = null;       /* timeout restoring the validity note */
+  var hintBuild = null, hintEvolve = null;  /* lazy GadgetUI first-run hints */
 
   var paused = reduced, started = !reduced;
   var speed = 1, pending = 0;
@@ -93,7 +116,15 @@
   }
   function groundY() { return H * 0.78; }
   function morphOf() { return mode === 'evolve' ? (run && run.morph) : (solo && solo.morph); }
+  /* build mode anchors x at mid-screen (the evolve anchor W*0.40 would clip
+     ~10% of the +-1.6 m editable region off the left edge) */
+  function anchorX() { return W * (mode === 'build' ? 0.50 : 0.40); }
   function scalePx() {
+    if (mode === 'build') {
+      /* fixed scale that fits the 3.4 m x 1.8 m editable region between the
+         ground line and the nav zone, independent of the morph */
+      return Math.min((W * 0.94) / 3.4, (H * 0.58) / 1.8);
+    }
     var m = morphOf(), top = 1.0;
     if (m) {
       var maxY = 0, minY = Infinity, i;
@@ -106,7 +137,7 @@
     /* auto-shrink so tall creatures fit; never zoom in past 1 */
     return PX_PER_M * Math.min(1, (H * 0.35) / (PX_PER_M * (top + 0.4)));
   }
-  function sx(wx, S) { return W * 0.40 + (wx - cam.x) * S; }
+  function sx(wx, S) { return anchorX() + (wx - cam.x) * S; }
   function sy(wy, S) { return groundY() - wy * S; }
 
   /* ------------------------------- runs ---------------------------------- */
@@ -117,16 +148,29 @@
 
   function resetCamera() { cam.x = 0; cam.v = 0; camMax = 0; camEase = null; }
 
+  /* opts.preset overrides the DOM select (the Evolve-it and share paths
+     must never derive the preset from the select). Preset 5 = custom body:
+     it REQUIRES a morph, so with none available (e.g. Restart pressed while
+     the select still reads "Custom body" but no custom run exists) we fall
+     back rather than throw. The select is synced afterwards so the panel
+     always reads honestly. */
   function newRun(opts) {
     opts = opts || {};
+    var preset = (opts.preset != null) ? (+opts.preset | 0) : (elPreset ? +elPreset.value : 0);
+    var morph = opts.morph || null;
+    if (preset === 5 && !morph) {
+      if (run && run.presetIdx === 5) morph = run.morph;
+      else preset = 0;
+    }
     run = C.makeRun({
       seed: newSeed(),
-      preset: elPreset ? +elPreset.value : 0,
+      preset: preset,
       pop: popVal(),
       mutScale: mutVal(),
-      morph: opts.morph || null,
+      morph: morph,
       seedGenome: opts.seedGenome || null
     });
+    if (elPreset) elPreset.value = String(run.presetIdx);
     mode = 'evolve';
     solo = null;
     pending = 0;
@@ -135,6 +179,122 @@
     resetCamera();
     hideShareBanner();
     updateShareBtn();
+    ensureEvolveHint();
+    syncModeUI();
+  }
+
+  /* ------------------------------ build mode ----------------------------- */
+
+  function ensureBuildHint() {
+    if (!hintBuild && window.GadgetUI) {
+      hintBuild = GadgetUI.firstRunHint('creatures-build',
+        'Drag the dots. Tap one dot, then another, to connect them. ' +
+        'Tap an edge to change it. Then press Evolve.');
+    }
+    return hintBuild;
+  }
+  function ensureEvolveHint() {
+    if (!hintEvolve && window.GadgetUI) {
+      hintEvolve = GadgetUI.firstRunHint('creatures',
+        'Watch the population learn to run. The blue one is the current best.');
+    }
+    return hintEvolve;
+  }
+
+  function capUndo() { if (bm.undo.length > UNDO_CAP) bm.undo.shift(); }
+  function pushUndo() { bm.undo.push(C.copyMorph(bm.morph)); capUndo(); }
+
+  function abortGesture() {
+    if (bp.lpTimer) { clearTimeout(bp.lpTimer); bp.lpTimer = null; }
+    bp.id = null; bp.dragI = -1; bp.moved = false;
+    bp.dragSnap = null; bp.undoPushed = false; bp.consumed = false;
+  }
+
+  /* Enter the editor with a COPY of `morph`. `run` stays alive (advance()
+     early-returns in build mode); it is replaced only when Evolve it
+     actually creates a new one. */
+  function enterBuild(morph) {
+    var m = C.copyMorph(morph || { name: 'Custom', nodes: [], springs: [] });
+    C.BuildOps.clampMorph(m);
+    m.name = 'Custom';
+    bm.morph = m;
+    bm.sel = -1;
+    bm.undo = [];
+    abortGesture();
+    hover.on = false;
+    buildStatus = '';
+    mode = 'build';
+    solo = null;
+    pending = 0;
+    hideShareBanner();
+    resetCamera();
+    /* the select reads "Custom body" while editing, so picking ANY preset
+       (including the one just loaded) always fires a change event */
+    if (elPreset) elPreset.value = '5';
+    /* on short windows the expanded panel reaches down over the build bar */
+    if (panelUi && window.innerHeight < 660) panelUi.setCollapsed(true);
+    ensureBuildHint();
+    syncModeUI();
+    updateBuildUI();
+  }
+
+  function doUndo() {
+    if (mode !== 'build') return;
+    /* one press = one level: if a moved drag is in flight, cancelling THAT
+       drag is this press's undo (restore its captured pre-state and do not
+       also pop the stack, which holds the PREVIOUS edit's pre-state) */
+    if (bp.id !== null && bp.moved && bp.dragSnap) {
+      bm.morph = bp.dragSnap;
+      abortGesture();
+      if (bm.sel >= bm.morph.nodes.length) bm.sel = -1;
+      updateBuildUI();
+      return;
+    }
+    if (!bm.undo.length) return;
+    /* a Ctrl+Z mid-gesture must not leave stale indices; abort first */
+    abortGesture();
+    bm.morph = bm.undo.pop();
+    if (bm.sel >= bm.morph.nodes.length) bm.sel = -1;
+    updateBuildUI();
+  }
+
+  function flashBuildMsg(txt) {
+    if (!buildMsg) return;
+    buildMsg.textContent = txt;
+    clearTimeout(buildMsgFlash);
+    buildMsgFlash = setTimeout(function () {
+      buildMsgFlash = null;
+      lastBuildMsg = '';               /* force the validity note to repaint */
+      updateBuildUI();
+    }, 1800);
+  }
+
+  var lastBuildMsg = '';
+  function updateBuildUI() {
+    if (mode !== 'build' || !bm.morph) return;
+    var v = C.validateMorph(bm.morph);
+    var msg;
+    if (v.ok) {
+      msg = bm.morph.nodes.length + ' dots, ' + v.muscles +
+        (v.muscles === 1 ? ' muscle' : ' muscles') + '. Ready.';
+    } else if (v.reason === 'few-nodes') msg = 'add at least 3 dots';
+    else if (v.reason === 'disconnected') msg = 'connect all the dots first';
+    else if (v.reason === 'no-muscle') msg = 'make at least one edge a muscle (tap an edge)';
+    else msg = 'this body will not work yet';
+    if (buildMsg && !buildMsgFlash && msg !== lastBuildMsg) {
+      buildMsg.textContent = msg;
+      lastBuildMsg = msg;
+    }
+    if (btnEvolve) btnEvolve.disabled = !v.ok;
+    if (btnBUndo) btnBUndo.disabled = !bm.undo.length;
+    if (btnBClear) btnBClear.disabled = !bm.morph.nodes.length;
+  }
+
+  function syncModeUI() {
+    if (buildbar) buildbar.hidden = (mode !== 'build');
+    if (chart) chart.hidden = (mode === 'build');
+    if (btnEdit) btnEdit.hidden = !(mode === 'evolve' || mode === 'replay');
+    if (mode === 'build') { lastBuildMsg = ''; updateBuildUI(); }
   }
 
   function makeSolo(morph, genome, gen, label) {
@@ -154,13 +314,15 @@
     pending = 0;
     bannerUntil = 0;
     resetCamera();
+    syncModeUI();
   }
   function exitSolo() {
-    if (mode === 'evolve') return;
+    if (mode === 'evolve' || mode === 'build') return;
     if (mode === 'shared') { hideShareBanner(); if (!run) { newRun(); return; } }
     mode = 'evolve';
     solo = null;
     pending = 0;
+    syncModeUI();
     /* jump the camera to the run's current front-runner */
     var lead = 0, i;
     if (run) {
@@ -213,6 +375,7 @@
   }
 
   function advance(now, dtSec) {
+    if (mode === 'build') return;   /* physics never runs in the editor */
     if (paused) return;
     /* Only the evolve view freezes at a generation end. A replay started during
        the freeze window must still step (gating the whole function on
@@ -263,7 +426,7 @@
     ctx.beginPath();
     ctx.moveTo(0, groundY());
     for (var px = 0; px <= W + 12; px += 12) {
-      var wx = (px - W * 0.40) / S + cam.x * fac;
+      var wx = (px - anchorX()) / S + cam.x * fac;
       ctx.lineTo(px, groundY() - hillRidge(wx, far) * S);
     }
     ctx.lineTo(W, groundY());
@@ -278,8 +441,8 @@
     ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(0, gy + 0.5); ctx.lineTo(W, gy + 0.5); ctx.stroke();
 
-    var left = Math.ceil((0 - W * 0.40) / S + cam.x);
-    var right = Math.floor((W - W * 0.40) / S + cam.x) + 1;
+    var left = Math.ceil((0 - anchorX()) / S + cam.x);
+    var right = Math.floor((W - anchorX()) / S + cam.x) + 1;
     ctx.font = '11px "Source Sans 3", system-ui, sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     for (var m = left; m <= right; m++) {
@@ -343,6 +506,73 @@
     ctx.globalAlpha = 1;
   }
 
+  /* ------------------------- build-mode rendering ------------------------ */
+
+  function muscleTint(a) {
+    return effectiveTheme() === 'light'
+      ? 'rgba(52,86,138,' + a + ')' : 'rgba(130,166,204,' + a + ')';
+  }
+
+  function drawBuild(now, S) {
+    var m = bm.morph, i, k;
+    if (!m) return;
+    /* faint placement grid every 0.1 m over the editable region */
+    ctx.fillStyle = textColor(0.08);
+    for (var gxm = -16; gxm <= 16; gxm++) {
+      var gpx = sx(gxm * 0.1, S);
+      for (var gym = 1; gym <= 17; gym++) {
+        ctx.fillRect(gpx - 1, sy(gym * 0.1, S) - 1, 2, 2);
+      }
+    }
+    /* edges: muscles thick + accent-tinted with a slow cosmetic pulse
+       (wall time, NOT physics); structural thin neutral grey */
+    var pulse = 0.8 + 0.2 * Math.sin(now * 0.004);
+    ctx.lineCap = 'round';
+    for (k = 0; k < m.springs.length; k++) {
+      var sp = m.springs[k];
+      var ax = sx(m.nodes[sp[0]][0], S), ay = sy(m.nodes[sp[0]][1], S);
+      var bx = sx(m.nodes[sp[1]][0], S), by = sy(m.nodes[sp[1]][1], S);
+      if (sp[2]) { ctx.strokeStyle = muscleTint(pulse); ctx.lineWidth = 4; }
+      else { ctx.strokeStyle = 'rgba(127,127,127,0.55)'; ctx.lineWidth = 2; }
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+    }
+    /* dashed preview line from the selected node to the pointer (desktop
+       hover only; coarse pointers skip it) */
+    if (bm.sel >= 0 && hover.on && !coarse && bp.dragI < 0) {
+      ctx.strokeStyle = muscleTint(0.5);
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([5, 4]);
+      ctx.beginPath();
+      ctx.moveTo(sx(m.nodes[bm.sel][0], S), sy(m.nodes[bm.sel][1], S));
+      ctx.lineTo(hover.x, hover.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    /* nodes */
+    var r = coarse ? 10 : 7;
+    for (i = 0; i < m.nodes.length; i++) {
+      var nx = sx(m.nodes[i][0], S), ny = sy(m.nodes[i][1], S);
+      ctx.fillStyle = textColor(0.9);
+      ctx.beginPath(); ctx.arc(nx, ny, r, 0, 6.2832); ctx.fill();
+      if (i === bm.sel) {
+        ctx.save();
+        ctx.shadowColor = accent();
+        ctx.shadowBlur = 9;
+        ctx.strokeStyle = accent();
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(nx, ny, r + 3.5, 0, 6.2832); ctx.stroke();
+        ctx.restore();
+      }
+    }
+    /* empty-canvas caption (kept out of the top 16% of the screen) */
+    if (!m.nodes.length) {
+      ctx.font = '400 16px "Source Sans 3", system-ui, sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = textColor(0.5);
+      ctx.fillText('tap anywhere to add a dot', W / 2, H * 0.18);
+    }
+  }
+
   function drawLeaderTag(c, S, dist) {
     var minY = Infinity, i;
     for (i = 0; i < c.n; i++) if (sy(c.y[i], S) < minY) minY = sy(c.y[i], S);
@@ -372,7 +602,9 @@
     drawHills(S, false);
     drawGround(S);
 
-    if (mode === 'evolve' && run) {
+    if (mode === 'build') {
+      drawBuild(now, S);
+    } else if (mode === 'evolve' && run) {
       var t = run.substep * C.DT;
       /* rank alive creatures by comX for leader styling */
       comBuf.length = 0;
@@ -520,11 +752,15 @@
   function updateStatus() {
     if (!status) return;
     var txt;
-    if (!started && paused) txt = 'Press play to start evolving.';
+    /* build mode stays quiet: the aria-live validity note (#cre-buildmsg)
+       already announces counts, so this line must not repeat every dot add */
+    if (mode === 'build') txt = buildStatus || 'building a creature';
+    else if (!started && paused) txt = 'Press play to start evolving.';
     else if (mode === 'replay' && solo) txt = 'replaying the champion from generation ' + solo.gen;
     else if (mode === 'shared' && solo) txt = 'watching a shared creature';
     else if (run) {
-      txt = 'generation ' + run.gen +
+      if (run.presetIdx === 5 && !run.champion) txt = 'generation ' + run.gen + ' · evolving your creature';
+      else txt = 'generation ' + run.gen +
         (run.champion ? ' · best ' + run.champion.fitness.toFixed(1) + ' m' : '');
       if (paused) txt = 'paused · ' + txt;
     } else txt = '';
@@ -567,12 +803,15 @@
     shareBannerEl = null;
   }
 
-  function showShareBanner(gen) {
+  function showShareBanner(gen, custom) {
     hideShareBanner();
     var div = document.createElement('div');
     div.className = 'cre-banner';
     var p = document.createElement('p');
-    p.textContent = 'A shared creature, evolved for ' + gen + (gen === 1 ? ' generation.' : ' generations.');
+    var tail = ' for ' + gen + (gen === 1 ? ' generation.' : ' generations.');
+    p.textContent = custom
+      ? 'A creature someone built themselves, evolved' + tail
+      : 'A shared creature, evolved' + tail;
     div.appendChild(p);
     var row = document.createElement('div');
     row.className = 'cre-banner__row';
@@ -580,13 +819,22 @@
     b1.type = 'button'; b1.className = 'cre-btn'; b1.textContent = 'Evolve from it';
     b1.addEventListener('click', function () {
       if (!shared) return;
-      if (elPreset) elPreset.value = String(shared.preset);
-      newRun({ morph: shared.morph, seedGenome: shared.genome });
+      /* the preset is passed explicitly: a p=5 payload must seed a run with
+         the CUSTOM morph + preset 5, never the select's reading */
+      newRun({ morph: shared.morph, seedGenome: shared.genome, preset: shared.preset });
     });
     var b2 = document.createElement('button');
     b2.type = 'button'; b2.className = 'cre-btn'; b2.textContent = 'Start fresh';
-    b2.addEventListener('click', function () { newRun(); });
-    row.appendChild(b1); row.appendChild(b2);
+    b2.addEventListener('click', function () {
+      if (elPreset && elPreset.value === '5') elPreset.value = '0';
+      newRun();
+    });
+    var b3 = document.createElement('button');
+    b3.type = 'button'; b3.className = 'cre-btn'; b3.textContent = 'Edit this body';
+    b3.addEventListener('click', function () {
+      if (solo && solo.morph) enterBuild(solo.morph);
+    });
+    row.appendChild(b1); row.appendChild(b2); row.appendChild(b3);
     div.appendChild(row);
     document.body.appendChild(div);
     shareBannerEl = div;
@@ -605,7 +853,9 @@
     solo = makeSolo(morph, sh.genome, sh.gen, 'shared');
     mode = 'shared';
     resetCamera();
-    showShareBanner(sh.gen);
+    showShareBanner(sh.gen, sh.preset === 5);
+    ensureEvolveHint();
+    syncModeUI();
     return true;
   }
 
@@ -618,8 +868,14 @@
     if (btnPause) btnPause.textContent = paused ? 'Play' : 'Pause';
   }
   if (btnPause) btnPause.addEventListener('click', togglePause);
-  if (btnRestart) btnRestart.addEventListener('click', function () { newRun(); });
+  if (btnRestart) btnRestart.addEventListener('click', function () {
+    /* one stray click must not destroy the body being built (same rationale
+       as the R hotkey gate and the Population-slider gate) */
+    if (mode === 'build') return;
+    newRun();
+  });
   if (btnReplay) btnReplay.addEventListener('click', function () {
+    if (mode === 'build') return;
     if (mode === 'replay') exitSolo(); else startReplay();
   });
   if (btnShare) btnShare.addEventListener('click', function () {
@@ -635,10 +891,41 @@
     });
   });
 
-  if (elPreset) elPreset.addEventListener('change', function () { newRun(); });
+  if (elPreset) elPreset.addEventListener('change', function () {
+    /* build-mode re-entrancy: loading a preset into the editor must not fire
+       the evolve-mode restart path */
+    if (mode === 'build') {
+      var v = +elPreset.value;
+      if (v === 5 || !(v >= 0 && v <= 4)) return;
+      pushUndo();
+      var m = (v === 4) ? C.randomMorph(C.mulberry32(newSeed())) : C.copyMorph(C.PRESETS[v]);
+      C.BuildOps.clampMorph(m);
+      var loadedName = (v === 4) ? 'a random' : 'the ' + m.name;
+      m.name = 'Custom';
+      bm.morph = m;
+      bm.sel = -1;
+      abortGesture();
+      buildStatus = 'Loaded ' + loadedName + ' body. Change it, then evolve.';
+      updateBuildUI();
+      /* park the select on "Custom body" so re-picking the SAME preset
+         fires a change event and reloads clean geometry (documented
+         select-state bug class, computer.js invariant) */
+      elPreset.value = '5';
+      return;
+    }
+    /* value 5 is unreachable by user selection (hidden option), but a share
+       restore writes it programmatically */
+    if (+elPreset.value === 5) return;
+    newRun();
+  });
   if (elPop) {
     elPop.addEventListener('input', function () { if (elPopV) elPopV.textContent = elPop.value; });
-    elPop.addEventListener('change', function () { newRun(); });
+    elPop.addEventListener('change', function () {
+      /* in build mode the new population simply applies to the next run;
+         restarting here would silently destroy the body being built */
+      if (mode === 'build') return;
+      newRun();
+    });
   }
   if (elMut) elMut.addEventListener('input', function () {
     var v = mutVal();
@@ -655,11 +942,239 @@
     if (mode === 'replay') exitSolo();
   });
 
+  /* --------------------- build-mode buttons + editing -------------------- */
+
+  if (btnEvolve) btnEvolve.addEventListener('click', function () {
+    if (mode !== 'build' || !bm.morph) return;
+    if (!C.validateMorph(bm.morph).ok) { updateBuildUI(); return; }
+    newRun({ morph: bm.morph, preset: 5 });
+    /* an explicit request to animate: unpause even under reduced motion */
+    paused = false; started = true;
+    if (btnPause) btnPause.textContent = 'Pause';
+  });
+  if (btnBUndo) btnBUndo.addEventListener('click', doUndo);
+  if (btnBClear) btnBClear.addEventListener('click', function () {
+    if (mode !== 'build' || !bm.morph || !bm.morph.nodes.length) return;
+    pushUndo();
+    bm.morph.nodes = [];
+    bm.morph.springs = [];
+    bm.sel = -1;
+    abortGesture();
+    updateBuildUI();
+  });
+  if (btnEdit) btnEdit.addEventListener('click', function () {
+    if (run && (mode === 'evolve' || mode === 'replay')) enterBuild(run.morph);
+  });
+
+  /* needed for right-click delete; without it every right-click also pops
+     the browser menu (same as gravity/magnets) */
+  canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+
+  function hitRad() { return coarse ? 24 : 18; }
+  function edgeRad() { return coarse ? 16 : 12; }
+  function toWorldX(ex) { return (ex - anchorX()) / scalePx(); }
+  function toWorldY(ey) { return (groundY() - ey) / scalePx(); }
+
+  /* hit-testing in screen px; nodes win over edges */
+  function nodeAtPx(ex, ey) {
+    var S = scalePx(), best = -1, bd = hitRad();
+    for (var i = 0; i < bm.morph.nodes.length; i++) {
+      var d = Math.hypot(sx(bm.morph.nodes[i][0], S) - ex, sy(bm.morph.nodes[i][1], S) - ey);
+      if (d <= bd) { bd = d; best = i; }
+    }
+    return best;
+  }
+  function edgeAtPx(ex, ey) {
+    var S = scalePx(), best = -1, bd = edgeRad(), m = bm.morph;
+    for (var k = 0; k < m.springs.length; k++) {
+      var sp = m.springs[k];
+      var ax = sx(m.nodes[sp[0]][0], S), ay = sy(m.nodes[sp[0]][1], S);
+      var bx = sx(m.nodes[sp[1]][0], S), by = sy(m.nodes[sp[1]][1], S);
+      var vx = bx - ax, vy = by - ay, L2 = vx * vx + vy * vy;
+      var t = L2 > 0 ? Math.max(0, Math.min(1, ((ex - ax) * vx + (ey - ay) * vy) / L2)) : 0;
+      var d = Math.hypot(ax + vx * t - ex, ay + vy * t - ey);
+      if (d <= bd) { bd = d; best = k; }
+    }
+    return best;
+  }
+
+  function cancelLP() { if (bp.lpTimer) { clearTimeout(bp.lpTimer); bp.lpTimer = null; } }
+
+  /* delete node i and its springs; preSnap is the pre-op morph copy */
+  function deleteNodeAt(i, preSnap) {
+    bm.undo.push(preSnap || C.copyMorph(bm.morph)); capUndo();
+    C.BuildOps.deleteNode(bm.morph, i);
+    if (bm.sel === i) bm.sel = -1;
+    else if (bm.sel > i) bm.sel--;
+    updateBuildUI();
+  }
+
+  canvas.addEventListener('pointerdown', function (e) {
+    if (mode !== 'build' || !bm.morph) return;
+    if (bp.id !== null) { cancelLP(); return; }   /* second finger: cancel the long-press, ignore */
+    if (e.button === 2) {
+      /* right-click deletes a node or an edge (desktop convention) */
+      var rn = nodeAtPx(e.clientX, e.clientY);
+      if (rn >= 0) { deleteNodeAt(rn, null); return; }
+      var re = edgeAtPx(e.clientX, e.clientY);
+      if (re >= 0) {
+        pushUndo();
+        var rsp = bm.morph.springs[re];
+        C.BuildOps.toggleEdge(bm.morph, rsp[0], rsp[1]);  /* present -> remove */
+        updateBuildUI();
+      }
+      return;
+    }
+    if (e.button !== 0) return;
+    bp.id = e.pointerId; bp.downX = e.clientX; bp.downY = e.clientY;
+    bp.moved = false; bp.consumed = false; bp.undoPushed = false;
+    bp.dragSnap = null; bp.dragI = -1;
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
+    var ni = nodeAtPx(e.clientX, e.clientY);
+    if (ni >= 0) {
+      bp.dragI = ni;
+      bp.dragSnap = C.copyMorph(bm.morph);
+      /* manual long-press delete: 500 ms, cancelled the moment the drag
+         activates (movement > 6 px), on pointerup, or on a second pointer,
+         so a slow touch drag can never delete mid-drag */
+      bp.lpTimer = setTimeout(function () {
+        bp.lpTimer = null;
+        if (bp.id === null || bp.dragI !== ni || bp.moved || bp.consumed) return;
+        deleteNodeAt(ni, bp.dragSnap);
+        bp.consumed = true;
+        bp.dragI = -1;
+      }, 500);
+      return;
+    }
+    var ek = edgeAtPx(e.clientX, e.clientY);
+    if (ek >= 0) {
+      /* an edge tap while a node is selected deselects only (protects the
+         connect gesture, consistent with tap-empty) */
+      if (bm.sel >= 0) { bm.sel = -1; }
+      else { pushUndo(); C.BuildOps.cycleEdge(bm.morph, ek); updateBuildUI(); }
+      bp.consumed = true;
+      return;
+    }
+    /* empty space: with a selection, deselect only (prevents accidental
+       dots while connecting); else add a dot and let the same gesture drag
+       it into place */
+    if (bm.sel >= 0) { bm.sel = -1; bp.consumed = true; return; }
+    var pre = C.copyMorph(bm.morph);
+    var idx = C.BuildOps.addNode(bm.morph, toWorldX(e.clientX), toWorldY(e.clientY));
+    if (idx === false) {
+      flashBuildMsg('10 dots is the limit.');
+      bp.consumed = true;
+      return;
+    }
+    bm.undo.push(pre); capUndo();
+    bm.sel = idx;
+    bp.dragI = idx;
+    bp.undoPushed = true;   /* the add already owns this gesture's undo entry */
+    updateBuildUI();
+  });
+
+  canvas.addEventListener('pointermove', function (e) {
+    if (mode !== 'build' || !bm.morph) return;
+    if (e.pointerType === 'mouse') { hover.x = e.clientX; hover.y = e.clientY; hover.on = true; }
+    if (e.pointerId !== bp.id || bp.dragI < 0 || bp.consumed) return;
+    if (!bp.moved) {
+      var ddx = e.clientX - bp.downX, ddy = e.clientY - bp.downY;
+      if (ddx * ddx + ddy * ddy > 36) { bp.moved = true; cancelLP(); }
+    }
+    if (bp.moved) {
+      C.BuildOps.moveNode(bm.morph, bp.dragI, toWorldX(e.clientX), toWorldY(e.clientY));
+    }
+  });
+  canvas.addEventListener('pointerleave', function () { hover.on = false; });
+
+  canvas.addEventListener('pointerup', function (e) {
+    if (mode !== 'build' || e.pointerId !== bp.id) return;
+    cancelLP();
+    if (!bp.consumed && bp.dragI >= 0) {
+      if (bp.moved) {
+        /* capture-then-commit: push the PRE-drag copy only now (a pointerup-
+           time copy would be the post-drag state and Ctrl+Z would restore
+           nothing); the add gesture already pushed its own entry */
+        if (!bp.undoPushed && bp.dragSnap) { bm.undo.push(bp.dragSnap); capUndo(); }
+        updateBuildUI();
+      } else if (!bp.undoPushed) {
+        var ni = bp.dragI;
+        if (bm.sel === -1) bm.sel = ni;              /* tap a node: select */
+        else if (bm.sel === ni) bm.sel = -1;         /* tap it again: deselect */
+        else {
+          /* second node while one is selected: toggle the edge between them,
+             keep the SECOND selected (tap-tap-tap chains a path) */
+          var pre = C.copyMorph(bm.morph);
+          var r = C.BuildOps.toggleEdge(bm.morph, bm.sel, ni);
+          if (r === false) flashBuildMsg('26 edges is the limit.');
+          else { bm.undo.push(pre); capUndo(); bm.sel = ni; updateBuildUI(); }
+        }
+      }
+    }
+    bp.id = null; bp.dragI = -1; bp.moved = false;
+    bp.dragSnap = null; bp.undoPushed = false; bp.consumed = false;
+  });
+
+  canvas.addEventListener('pointercancel', function (e) {
+    if (mode !== 'build' || e.pointerId !== bp.id) return;
+    cancelLP();
+    /* gesture aborted by the browser: restore the pre-gesture morph */
+    if (bp.undoPushed && bm.undo.length) bm.morph = bm.undo.pop();
+    else if (bp.moved && bp.dragSnap) bm.morph = bp.dragSnap;
+    if (bm.sel >= bm.morph.nodes.length) bm.sel = -1;
+    abortGesture();
+    updateBuildUI();
+  });
+
   window.addEventListener('keydown', function (e) {
-    if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (window.GadgetUI && GadgetUI.isTyping(e)) return;
+    var tag = (e.target && e.target.tagName || '').toLowerCase();
+    if (tag === 'button' || tag === 'a' || tag === 'summary' || tag === 'label') return;
+    /* the undo combo is the ONE modifier chord handled here; everything else
+       with ctrl/meta/alt passes through to the browser untouched */
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
+      if (mode === 'build') { e.preventDefault(); doUndo(); }
+      return;
+    }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (mode === 'build') {
+      /* R / C / Space are gated out here: a stray R must NOT fire newRun and
+         destroy the body being built */
+      if (e.key === 'Escape') { bm.sel = -1; return; }
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (bm.sel >= 0) {
+          e.preventDefault();
+          /* restructuring the morph mid-gesture leaves bp.dragI and the
+             armed long-press timer pointing at stale indices */
+          if (bp.id !== null) abortGesture();
+          deleteNodeAt(bm.sel, null);
+        }
+        return;
+      }
+      var st = e.shiftKey ? 0.1 : 0.02;
+      var kx = e.key === 'ArrowLeft' ? -st : (e.key === 'ArrowRight' ? st : 0);
+      var ky = e.key === 'ArrowDown' ? -st : (e.key === 'ArrowUp' ? st : 0);
+      if ((kx || ky) && bm.sel >= 0) {
+        e.preventDefault();
+        /* auto-repeat coalesces into the first press's snapshot, and a
+           clamp-refused move must not burn an undo level */
+        var nd = bm.morph.nodes[bm.sel];
+        var tx = nd[0] + kx, ty = nd[1] + ky;
+        var before = e.repeat ? null : C.copyMorph(bm.morph);
+        if (C.BuildOps.moveNode(bm.morph, bm.sel, tx, ty) !== false) {
+          var nd2 = bm.morph.nodes[bm.sel];
+          if (before && (nd2[0] !== before.nodes[bm.sel][0] ||
+                         nd2[1] !== before.nodes[bm.sel][1])) {
+            bm.undo.push(before);
+            capUndo();
+          }
+        }
+        updateBuildUI();
+      }
+      if (e.key === ' ') e.preventDefault();
+      return;
+    }
     if (e.key === ' ') {
-      if (e.target && (e.target.tagName || '').toLowerCase() === 'button') return;
       e.preventDefault();
       togglePause();
     } else if (e.key === 'r' || e.key === 'R') {
@@ -669,17 +1184,43 @@
     }
   });
 
+  /* headless test hooks (real screen coordinates for aiming clicks) */
+  window.__cre = {
+    mode: function () { return mode; },
+    nodeCount: function () { return bm.morph ? bm.morph.nodes.length : 0; },
+    springCount: function () { return bm.morph ? bm.morph.springs.length : 0; },
+    sel: function () { return bm.sel; },
+    undoDepth: function () { return bm.undo.length; },
+    gen: function () { return run ? run.gen : 0; },
+    nodePx: function (i) {
+      var S = scalePx(), n = bm.morph.nodes[i];
+      return [sx(n[0], S), sy(n[1], S)];
+    },
+    edgePx: function (k) {
+      var S = scalePx(), sp = bm.morph.springs[k];
+      var a = bm.morph.nodes[sp[0]], b = bm.morph.nodes[sp[1]];
+      return [(sx(a[0], S) + sx(b[0], S)) / 2, (sy(a[1], S) + sy(b[1], S)) / 2];
+    }
+  };
+
   if (window.GadgetUI) {
-    var hint = GadgetUI.firstRunHint('creatures',
-      'Watch the population learn to run. The blue one is the current best.');
+    /* hints are created lazily per mode (see ensureBuildHint/ensureEvolveHint),
+       so the ? button re-shows the hint for the CURRENT mode */
     var pnl = GadgetUI.initPanel({
       panel: id('cre-panel'), toggle: id('cre-collapse'),
-      collapsedClass: 'cre-panel--collapsed',
-      help: id('cre-help'), hint: hint
+      collapsedClass: 'cre-panel--collapsed'
+    });
+    var helpBtn = id('cre-help');
+    if (helpBtn) helpBtn.addEventListener('click', function () {
+      var h = (mode === 'build') ? ensureBuildHint() : ensureEvolveHint();
+      if (h) h.show();
     });
     /* a landscape phone is wide enough that initPanel leaves the panel open,
        but it would cover half the runners */
     if (pnl && window.innerHeight < 520) pnl.setCollapsed(true);
+    panelUi = pnl;
+    /* the default landing enters build before this init ran */
+    if (mode === 'build' && pnl && window.innerHeight < 660) pnl.setCollapsed(true);
   }
 
   var rt;
@@ -700,7 +1241,14 @@
   if (elMutV) elMutV.textContent = mutVal().toFixed(1) + '×';
   if (elSpeedV) elSpeedV.textContent = speed + '×';
   resize();
-  if (!tryLoadShare()) newRun();
+  if (!tryLoadShare()) {
+    /* default landing: the editor, with the Sprinter body preloaded. Show at
+       most one hint this visit (the build hint), so mark the evolve hint as
+       seen before it can ever be created. */
+    try { localStorage.setItem('hint-creatures', '1'); } catch (e) {}
+    enterBuild(C.PRESETS[0]);
+  }
   updateShareBtn();
+  syncModeUI();
   start();
 })();

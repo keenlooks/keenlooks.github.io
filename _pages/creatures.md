@@ -10,9 +10,19 @@ description: "An interactive evolution sandbox by Keane Lucas: a population of s
 <div class="cre-app life-app">
   <div class="cre-topfade" aria-hidden="true"></div>
   <canvas id="cre-canvas" class="cre-canvas"
-          aria-label="A full-screen evolution sandbox. A population of soft-body creatures learns to travel to the right; the farthest travelers of each generation breed the next one."></canvas>
+          aria-label="A full-screen evolution sandbox. A population of soft-body creatures learns to travel to the right; the farthest travelers of each generation breed the next one. It opens in a build mode where you place dots and connect them with edges to design your own creature."></canvas>
   <canvas id="cre-chart" class="cre-chart" width="260" height="150"
           aria-label="Fitness chart: best and median distance per generation."></canvas>
+
+  <div class="cre-buildbar" id="cre-buildbar" hidden>
+    <div class="cre-buildbar__row">
+      <button id="cre-evolve" class="cre-btn cre-btn--go" type="button">Evolve it</button>
+      <button id="cre-undo" class="cre-btn" type="button">Undo</button>
+      <button id="cre-clear" class="cre-btn" type="button">Clear</button>
+      <span id="cre-buildmsg" class="cre-buildmsg" role="status" aria-live="polite"></span>
+    </div>
+    <p class="cre-buildlegend">dots are masses &middot; blue edges are muscles &middot; grey edges are stiff springs</p>
+  </div>
 
   <div class="cre-panel" id="cre-panel">
     <div class="cre-panel__head">
@@ -27,6 +37,8 @@ description: "An interactive evolution sandbox by Keane Lucas: a population of s
         All of them race to the right at once. When the clock runs out, the farthest travelers
         breed with a little mutation and the next generation starts. It is a toy genetic
         algorithm, and it is usually enough to turn wobbling blobs into steady runners.
+        You can also build your own creature from dots and edges and let evolution figure
+        out how to drive it. You design the body; evolution finds the rhythm.
         Inspired by Karl Sims' Evolved Virtual Creatures (1994). All code here is original.
       </p>
 
@@ -37,6 +49,7 @@ description: "An interactive evolution sandbox by Keane Lucas: a population of s
           <option value="2">Worm</option>
           <option value="3">Wheel</option>
           <option value="4">Random body</option>
+          <option value="5" hidden disabled>Custom body</option>
         </select>
       </label>
 
@@ -58,6 +71,7 @@ description: "An interactive evolution sandbox by Keane Lucas: a population of s
       <div class="cre-row">
         <button id="cre-share" class="cre-btn" type="button">Share champion</button>
         <button id="cre-save" class="cre-btn" type="button">Save image</button>
+        <button id="cre-edit" class="cre-btn" type="button" hidden>Edit body</button>
       </div>
 
       <p class="cre-status-line"><span id="cre-status" role="status" aria-live="polite"></span></p>
@@ -70,7 +84,7 @@ description: "An interactive evolution sandbox by Keane Lucas: a population of s
    viewport. (These rules only load on /creatures/.) */
 .page__title, .page__meta, .page__footer { display: none !important; }
 .page__content { pointer-events: none; }
-.cre-canvas, .cre-panel { pointer-events: auto; }
+.cre-canvas, .cre-panel, .cre-buildbar { pointer-events: auto; }
 
 .masthead { background: transparent !important; border-bottom: 0 !important; }
 .greedy-nav { background: transparent !important; }
@@ -116,6 +130,46 @@ html[data-theme="light"] .cre-topfade {
 /* a landscape phone has no room for it at all */
 @media (max-height: 520px) {
   .cre-chart { display: none; }
+}
+/* the hidden attribute must win over any display rule (theme gotcha) */
+.cre-chart[hidden], .cre-buildbar[hidden], .cre-btn[hidden] { display: none !important; }
+
+/* The build bar (build mode only; creatures.js unhides it). Desktop:
+   bottom-center is free there; the corner buttons are bottom-LEFT and the
+   chat bar is hidden on .life-app pages. */
+.cre-buildbar {
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: 1.25rem;
+  /* centered, but never so wide that its left edge reaches the corner
+     buttons (they span to x ~130px) */
+  z-index: 25; max-width: min(calc(100vw - 17.5rem), 34rem);
+  display: flex; flex-direction: column; align-items: center; gap: 0.3rem;
+  padding: 0.6rem 0.85rem; border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.12); background: rgba(18,18,18,0.94);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  box-shadow: 0 6px 24px rgba(0,0,0,0.35); font-size: 0.92em;
+}
+html[data-theme="light"] .cre-buildbar { background: rgba(255,255,255,0.97); border-color: rgba(0,0,0,0.12); box-shadow: 0 6px 24px rgba(0,0,0,0.15); }
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .cre-buildbar { background: rgba(255,255,255,0.97); border-color: rgba(0,0,0,0.12); box-shadow: 0 6px 24px rgba(0,0,0,0.15); }
+}
+.cre-buildbar__row {
+  display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center;
+  justify-content: center;
+}
+.cre-btn--go { border-color: #82a6cc; }
+html[data-theme="light"] .cre-btn--go { border-color: #34568a; }
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .cre-btn--go { border-color: #34568a; }
+}
+.cre-buildmsg { font-size: 0.88em; opacity: 0.82; font-variant-numeric: tabular-nums; }
+.cre-buildlegend { margin: 0; font-size: 0.78em; opacity: 0.6; }
+/* At <=768px the corner buttons rise to bottom 4rem and own the bottom-left
+   ~130 x 112 px band, so the bar hugs the right instead and may wrap. */
+@media (max-width: 768px) {
+  .cre-buildbar {
+    left: 8.75rem; right: 0.5rem; transform: none; bottom: 1rem;
+    max-width: none;
+  }
 }
 
 .cre-panel {
