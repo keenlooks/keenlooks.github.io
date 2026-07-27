@@ -76,11 +76,23 @@ description: "An interactive full-screen trip planner by Keane Lucas: real JPL p
         <p>
           About 65,000 stars are drawn; the 5,000 brightest are clickable. Star
           close-ups are procedural art driven by each star's real temperature, size and
-          type; the flares are typical for the type, not observations. Every exoplanet
+          type; the flares and the surface detail are typical for the type, not
+          observations. The eight planets of our own system are drawn the same way, as
+          likenesses of worlds we do have real pictures of. Every exoplanet
           orb is an impression drawn from its measured size and temperature, and nobody
           has seen any of them up close. In the cockpit view the dust streaks are
           invented motes, but the way the stars crowd forward and shift color is the
           real aberration and Doppler math at the speed shown on the HUD.
+        </p>
+        <p>
+          The galaxy itself is a painting. Its shape, its size and the Sun's place in it
+          are real, but nobody has ever seen our galaxy from the outside. The stars drawn
+          on top of it, about 65,000 of them, are real stars at their real measured
+          positions, and they only reach a few thousand light years out.
+        </p>
+        <p>
+          The four-point crosses on the brightest stars are a camera effect. Real
+          starlight has no spikes.
         </p>
       </details>
 
@@ -96,7 +108,12 @@ description: "An interactive full-screen trip planner by Keane Lucas: real JPL p
   <div class="voy-fpbar voy-seg" id="voy-fp" role="group" aria-label="Cruise view" hidden>
     <button id="voy-fp-chase" class="voy-seg__btn voy-seg__btn--on" type="button" aria-pressed="true">Chase</button>
     <button id="voy-fp-cockpit" class="voy-seg__btn" type="button" aria-pressed="false">Cockpit</button>
+    <button id="voy-fp-info" class="voy-seg__btn" type="button" style="flex:0 0 34px"
+            aria-label="Replay what is happening" title="Replay what is happening">&#9432;</button>
   </div>
+
+  <p id="voy-cap-sr" role="status" aria-live="polite"
+     style="position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;"></p>
 
   <div id="voy-card" class="voy-card" role="region" aria-label="About the selected body" hidden></div>
 </div>
@@ -366,6 +383,30 @@ html[data-theme="light"] .voy-fpbar { background: rgba(255,255,255,0.9); }
   .voy-fpbar { top: 10.4rem; width: 170px; }
 }
 
+/* The info (i) replay button shares the segmented bar with Chase / Cockpit, but
+   it is a momentary action, not a mode: it never takes the "on" fill. The glyph is
+   small at the bar's 0.85em, so it gets its own size, and a hover fill so it
+   reads as a button. Its flex basis is set inline by the markup; only the look
+   is set here. */
+#voy-fp-info {
+  /* padding kept small enough that this button never sets the bar's height */
+  font-size: 1em;
+  line-height: 1;
+  padding: 0.25em 0;
+  opacity: 0.7;
+  transition: background 0.15s ease, opacity 0.15s ease;
+}
+#voy-fp-info:hover, #voy-fp-info:focus-visible {
+  opacity: 1;
+  background: rgba(130,166,204,0.22);
+}
+html[data-theme="light"] #voy-fp-info:hover,
+html[data-theme="light"] #voy-fp-info:focus-visible { background: rgba(52,86,138,0.16); }
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) #voy-fp-info:hover,
+  html:not([data-theme="dark"]) #voy-fp-info:focus-visible { background: rgba(52,86,138,0.16); }
+}
+
 /* Mobile: full-width bottom sheet. The raised corner buttons occupy the
    bottom ~112px band at <=768px, so the sheet keeps 7.5rem of padding under
    its content and nothing interactive lands under them. */
@@ -379,6 +420,10 @@ html[data-theme="light"] .voy-fpbar { background: rgba(255,255,255,0.9); }
   .voy-credit { order: 6; }
   .voy-verify { order: 7; }
   .voy-legend { order: 4; }
+  /* the panel scrolls, and the raised corner buttons sit in the bottom ~112px
+     band, so the end of the scroll needs the same clearance the sheet keeps or
+     the last lines read from behind a button */
+  .voy-panel__body { padding-bottom: 7rem; }
   /* the sheet scrolls, so mid-scroll content can pass under the fixed
      corner buttons; hide them while a sheet is open (close, Esc, or tap
      the sky to bring them back) */
@@ -389,6 +434,11 @@ html[data-theme="light"] .voy-fpbar { background: rgba(255,255,255,0.9); }
 @media (pointer: coarse) {
   .voy-btn { min-height: 40px; padding: 0.5em 0.85em; }
   .voy-seg__btn { min-height: 40px; }
+  /* a fingertip needs more than the 34px the markup asks for, and the bar grows
+     to match so Chase / Cockpit keep their width. The inline flex basis on the
+     button can only be beaten with !important. */
+  .voy-fpbar { width: 200px; }
+  #voy-fp-info { flex: 0 0 44px !important; }
   .voy-collapse { width: 2.3em; height: 2.3em; }
   .voy-panel .gadget-help { min-width: 36px; min-height: 36px; }
   .voy-details summary { padding: 0.35em 0; }
@@ -404,5 +454,7 @@ html[data-theme="light"] .voy-fpbar { background: rgba(255,255,255,0.9); }
 <script defer src="{{ '/assets/js/voyage-astro.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/voyage-data.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/voyage-art.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
+<script defer src="{{ '/assets/js/voyage-gl.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
+<script defer src="{{ '/assets/js/voyage-galaxy.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/voyage-ships.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/voyage.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>

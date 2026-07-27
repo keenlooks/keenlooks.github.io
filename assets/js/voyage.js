@@ -149,6 +149,19 @@
       var b = Math.floor((c + 0.4) / 2.4 * 16);
       return b < 0 ? 0 : (b > 15 ? 15 : b);
     }
+    /* D4 -- the ONE blend the close-up keys off. A star orb whose drawn
+       radius has fallen to ORB_MIN_PX is gone; at ORB_FADE_PX it owns the
+       pixel entirely. Everything that used to switch on a distance (the
+       orb, the exoplanet orbs, the atlas sprite that replaces the orb)
+       reads this instead, so there is no distance at which the star being
+       looked at has no representation on screen. */
+    var ORB_MIN_PX = 2, ORB_FADE_PX = 6;
+    var ORB_HOLD_AU = 30, K_SHRINK = 0.40;
+    function orbBlend(rPx) {
+      var r = (typeof rPx === 'number' && isFinite(rPx)) ? rPx : 0;
+      var v = (r - ORB_MIN_PX) / (ORB_FADE_PX - ORB_MIN_PX);
+      return v < 0 ? 0 : (v > 1 ? 1 : v);
+    }
 
     /* Scale bar: pick a nice 1/2/5 length that fits maxPx at the current
        zoom. Unit: AU below 0.1 ly, then ly, then kly. */
@@ -452,6 +465,272 @@
                flip: flip, swing: swing, done: false };
     }
 
+    /* ==================================================================
+       D2: the continuous cruise pose.
+
+       PURE.cruisePose is layered OVER cruisePhaseAt, which stays the sole
+       authority for the timeline, the labels, tau, thrust, flip and swing.
+       This adds what a camera rig needs and the phase machine never had: a
+       ship ORIENTATION (a quaternion, so the flip can roll the whole sky
+       instead of sweeping a yaw angle), a world position that starts on a
+       real parking orbit and ends short of the star in a capture orbit,
+       and a shake envelope. Nothing here reads the DOM or the clock.
+       ================================================================== */
+
+    /* quaternions, (x, y, z, w), right-handed, columns (X, Y, Z).
+       ONE convention trap, and it is the reason this comment exists: the
+       page's camera triple is LEFT handed (updateCamBasis sets u =
+       cross(r, f), so r x u = -f). A quaternion cannot express that, so the
+       rig carries the right-handed triple (X = cross(U, F), Y = U, Z = F)
+       and negates X on the way out to get the page's r. */
+    function qAxisAngle(ax, ay, az, ang, out) {
+      var h = ang * 0.5, s = Math.sin(h);
+      var o = out || [0, 0, 0, 1];
+      o[0] = ax * s; o[1] = ay * s; o[2] = az * s; o[3] = Math.cos(h);
+      return o;
+    }
+    function qMul(a, b, out) {
+      var ax = a[0], ay = a[1], az = a[2], aw = a[3];
+      var bx = b[0], by = b[1], bz = b[2], bw = b[3];
+      var o = out || [0, 0, 0, 1];
+      o[0] = aw * bx + ax * bw + ay * bz - az * by;
+      o[1] = aw * by - ax * bz + ay * bw + az * bx;
+      o[2] = aw * bz + ax * by - ay * bx + az * bw;
+      o[3] = aw * bw - ax * bx - ay * by - az * bz;
+      return o;
+    }
+    function qNormalize(q) {
+      var n = Math.sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+      if (!(n > 1e-12)) { q[0] = 0; q[1] = 0; q[2] = 0; q[3] = 1; return q; }
+      q[0] /= n; q[1] /= n; q[2] /= n; q[3] /= n;
+      return q;
+    }
+    function qRot(q, vx, vy, vz, out) {
+      var x = q[0], y = q[1], z = q[2], w = q[3];
+      /* t = 2 * (q_vec x v); v' = v + w t + q_vec x t */
+      var tx = 2 * (y * vz - z * vy);
+      var ty = 2 * (z * vx - x * vz);
+      var tz = 2 * (x * vy - y * vx);
+      var o = out || [0, 0, 0];
+      o[0] = vx + w * tx + (y * tz - z * ty);
+      o[1] = vy + w * ty + (z * tx - x * tz);
+      o[2] = vz + w * tz + (x * ty - y * tx);
+      return o;
+    }
+    function qSlerp(a, b, t, out) {
+      var o = out || [0, 0, 0, 1];
+      var d = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
+      var bx = b[0], by = b[1], bz = b[2], bw = b[3];
+      if (d < 0) { d = -d; bx = -bx; by = -by; bz = -bz; bw = -bw; }
+      var k0, k1;
+      if (d > 0.9995) { k0 = 1 - t; k1 = t; }
+      else {
+        var th = Math.acos(d > 1 ? 1 : d), s = Math.sin(th);
+        k0 = Math.sin((1 - t) * th) / s;
+        k1 = Math.sin(t * th) / s;
+      }
+      o[0] = a[0] * k0 + bx * k1; o[1] = a[1] * k0 + by * k1;
+      o[2] = a[2] * k0 + bz * k1; o[3] = a[3] * k0 + bw * k1;
+      return qNormalize(o);
+    }
+    /* geodesic angle between two orientations, radians */
+    function qAngle(a, b) {
+      var d = Math.abs(a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3]);
+      if (d > 1) d = 1;
+      return 2 * Math.acos(d);
+    }
+    /* orthonormal columns (R, U, F) -> quaternion */
+    function qFromBasis(rx, ry, rz, ux, uy, uz, fx, fy, fz, out) {
+      var o = out || [0, 0, 0, 1];
+      var tr = rx + uy + fz, s;
+      if (tr > 0) {
+        s = Math.sqrt(tr + 1) * 2;
+        o[3] = 0.25 * s; o[0] = (uz - fy) / s; o[1] = (fx - rz) / s; o[2] = (ry - ux) / s;
+      } else if (rx > uy && rx > fz) {
+        s = Math.sqrt(1 + rx - uy - fz) * 2;
+        o[3] = (uz - fy) / s; o[0] = 0.25 * s; o[1] = (ux + ry) / s; o[2] = (fx + rz) / s;
+      } else if (uy > fz) {
+        s = Math.sqrt(1 + uy - rx - fz) * 2;
+        o[3] = (fx - rz) / s; o[0] = (ux + ry) / s; o[1] = 0.25 * s; o[2] = (fy + uz) / s;
+      } else {
+        s = Math.sqrt(1 + fz - rx - uy) * 2;
+        o[3] = (ry - ux) / s; o[0] = (fx + rz) / s; o[1] = (fy + uz) / s; o[2] = 0.25 * s;
+      }
+      return qNormalize(o);
+    }
+
+    /* ---- rig geometry, pinned (CL-09) ---- */
+    var SHIP_LEN_AU = 1.337e-9;      /* a 200 m hull, stated honestly; units only */
+    var RIG_BACK = 2.2, RIG_UP = 0.35, RIG_SIDE = 0.55;   /* ship-lengths */
+    var RIG_LEN = 2.295;             /* |RIG_OFFSET| */
+    var SHIP_PX_K = 0.55;
+    var RIG_D_MIN = 0.6, RIG_D_MAX = 8;
+    /* the parking orbit the ship leaves from and the capture orbit it stops
+       in. 10^0.62 and 10^0.75 AU, the two zoom levels the shipped cinematic
+       already framed those beats at, so the handoffs land exactly. */
+    var DEPART_AU = 4.1687, ARRIVE_AU = 5.6234;
+    var DEP_OMEGA = 0.42;            /* parking-orbit angular rate, rad/s */
+    var DEP_TH0 = 0.7;
+    var DEP_SPAN_AU = 4000;          /* travel over which the arc straightens */
+    var DEP_LEAD = 0.50;             /* nose lead onto the orbital tangent, rad */
+    var DEP_SIDE = 0.40, DEP_BACK = 1.00;   /* parking offset, in DEPART_AU */
+    var BANK_DEP = 0.42, BANK_ARR = -0.5, FLIP_ROLL = 1.15;
+
+    function num1(v, d) { return (typeof v === 'number' && isFinite(v)) ? v : d; }
+    function clamp01(v) { return v < 0 ? 0 : (v > 1 ? 1 : v); }
+
+    /* Two unit vectors perpendicular to u, chosen deterministically. */
+    function perpBasis(ux, uy, uz, out) {
+      var wx = 0, wy = 0, wz = 1;
+      if (Math.abs(uz) > 0.999) { wx = 0; wy = 1; wz = 0; }
+      var ax = uy * wz - uz * wy, ay = uz * wx - ux * wz, az = ux * wy - uy * wx;
+      var n = Math.sqrt(ax * ax + ay * ay + az * az);
+      if (!(n > 1e-12)) { ax = 1; ay = 0; az = 0; n = 1; }
+      ax /= n; ay /= n; az /= n;
+      var bx = uy * az - uz * ay, by = uz * ax - ux * az, bz = ux * ay - uy * ax;
+      var o = out || {};
+      o.ax = ax; o.ay = ay; o.az = az;
+      o.bx = bx; o.by = by; o.bz = bz;
+      return o;
+    }
+
+    var PP_TMP = {};
+    function cruisePose(tSec, plan) {
+      var t = num1(tSec, 0);
+      if (t < 0) t = 0;
+      var p = plan || {};
+      var tauTotal = num1(p.tauTotal, 0);
+      var ph = cruisePhaseAt(t * 1000, tauTotal);
+      var dLy = num1(p.dLy, 0), acc = num1(p.a, 0);
+      var cp = cruisePoint(dLy, acc, ph.tau);
+      var dist = num1(p.distAU, 0);
+      if (!(dist > 0)) dist = 1;
+      var s01 = dLy > 0 ? clamp01(cp.x / dLy) : (ph.done ? 1 : 0);
+
+      var ux = num1(p.ux, 1), uy = num1(p.uy, 0), uz = num1(p.uz, 0);
+      var un = Math.sqrt(ux * ux + uy * uy + uz * uz);
+      if (!(un > 1e-12)) { ux = 1; uy = 0; uz = 0; un = 1; }
+      ux /= un; uy /= un; uz /= un;
+
+      /* along-route distance: starts at 0 (still parked) and stops one
+         capture-orbit radius short of the star, so the last frame of the
+         cinematic is already the pose explore mode inherits. */
+      var travel = Math.min(dist * s01, Math.max(0, dist - ARRIVE_AU));
+      /* the straightening span scales down for an implausibly short hop so
+         the parking arc can never outlive the trip */
+      var depSpan = Math.max(50, Math.min(DEP_SPAN_AU, dist * 0.02));
+      var depW = 1 - smooth01(travel / depSpan);
+
+      /* The parking orbit sits BEHIND the body along the route and a little
+         to one side, not straight out to the side: a body 90 degrees off the
+         heading cannot share a 55 degree frame with the ship, and no camera
+         aim fixes that without throwing the ship out instead. Offset this
+         way the body is about 22 degrees off the nose, so the departure
+         really does open on the world being left, and the ship then swings
+         past it at about 1.7 AU as the engines light. */
+      var pb = perpBasis(ux, uy, uz, PP_TMP);
+      var th = DEP_TH0 + DEP_OMEGA * t;
+      var ct = Math.cos(th), st = Math.sin(th);
+      var offR = DEPART_AU * DEP_SIDE * depW;
+      var offB = DEPART_AU * DEP_BACK * depW;
+      var along = travel - offB;
+      var px0 = num1(p.ox, 0) + ux * along + offR * (ct * pb.ax + st * pb.bx);
+      var py0 = num1(p.oy, 0) + uy * along + offR * (ct * pb.ay + st * pb.by);
+      var pz0 = num1(p.oz, 0) + uz * along + offR * (ct * pb.az + st * pb.bz);
+
+      /* Base frame from the ROUTE direction, which is constant for a whole
+         cruise. Deriving the up vector from the (moving) nose instead would
+         put a hard branch inside the frame: a route within 30 degrees of the
+         ecliptic pole made the reference axis flip mid-flight and the sky
+         snapped through 2.5 rad in one frame. */
+      var wx = 0, wy = 0, wz = 1;
+      if (Math.abs(uz) > 0.9) { wx = 0; wy = 1; wz = 0; }
+      var dp = wx * ux + wy * uy + wz * uz;
+      var sux = wx - dp * ux, suy = wy - dp * uy, suz = wz - dp * uz;
+      var sn = Math.sqrt(sux * sux + suy * suy + suz * suz);
+      if (!(sn > 1e-12)) { sux = 0; suy = 1; suz = 0; sn = 1; }
+      sux /= sn; suy /= sn; suz /= sn;
+      /* X = cross(U, F): the right-handed partner of the page's r = -X */
+      var srx = suy * uz - suz * uy, sry = suz * ux - sux * uz, srz = sux * uy - suy * ux;
+
+      var q0 = qFromBasis(srx, sry, srz, sux, suy, suz, ux, uy, uz);
+
+      /* The nose leads onto the orbital tangent while the ship is still
+         parked, as a yaw about its OWN up axis, so the horizon stays put.
+         The lead stays under 30 degrees: past about 50 the forward half of
+         the aberrated sky would start showing stars from behind. */
+      var leadAng = DEP_LEAD * depW * ct;
+      /* the flip is a real 180 degree rotation about the ship's own up axis,
+         and the capture turn takes the nose back to the star. */
+      var capK = ph.phase === 'capture' ? smooth01((ph.k - 0.05) / 0.75) : (ph.done ? 1 : 0);
+      var flipAng = leadAng + Math.PI * (ph.flip - capK);
+      /* roll: a transient through the flip (this is what visibly spins the
+         sky), plus a bank INTO the parking turn and one into the capture */
+      var bankArr = ph.phase === 'capture'
+        ? BANK_ARR * Math.sin(Math.PI * clamp01(ph.k / 0.9)) : 0;
+      var roll = FLIP_ROLL * Math.sin(Math.PI * ph.flip) - BANK_DEP * depW * st + bankArr;
+
+      var q = qMul(q0, qAxisAngle(0, 1, 0, flipAng));
+      q = qMul(q, qAxisAngle(0, 0, 1, roll));
+      qNormalize(q);
+
+      var X = qRot(q, 1, 0, 0), U = qRot(q, 0, 1, 0), F = qRot(q, 0, 0, 1);
+      return {
+        s01: s01,
+        beta: cp.v,
+        thrust01: ph.thrust,
+        flip01: ph.flip,
+        shipQ: q,
+        phaseLabel: ph.phase,
+        shake01: ph.thrust,
+        /* extras the rig needs; the timeline itself is unchanged */
+        tau: ph.tau, tEarth: cp.t, gamma: cp.g, done: ph.done, k: ph.k,
+        travel: travel, depW: depW, roll: roll, capTurn: capK,
+        x: px0, y: py0, z: pz0,
+        basis: { fX: F[0], fY: F[1], fZ: F[2],
+                 rX: -X[0], rY: -X[1], rZ: -X[2],
+                 uX: U[0], uY: U[1], uZ: U[2] },
+        rigLen: RIG_LEN
+      };
+    }
+
+    /* ---- D3: the cockpit caption track ----
+       t is milliseconds from cruise start, the same clock cruisePhaseAt
+       uses. The flip caption is not in this list: it fires off the phase in
+       BOTH views and outranks everything here. */
+    function cockpitCaptions() {
+      return [
+        { t: 700, ms: 3000,
+          text: 'Your ship is still in orbit. The engines are cold.',
+          alt: ['Your ship is still in orbit. The engines are cold.',
+                'Still in orbit. Engines cold.'] },
+        { t: 2600, ms: 3200,
+          text: 'Engines lit. From here it is one steady burn, straight out.',
+          alt: ['Engines lit. From here it is one steady burn, straight out.',
+                'Engines lit. One steady burn, straight out.',
+                'Engines lit.'] },
+        { t: 5200, ms: 3400,
+          text: 'The stars ahead are starting to crowd together as the speed climbs.',
+          alt: ['The stars ahead are starting to crowd together as the speed climbs.',
+                'The stars ahead are crowding together.',
+                'The stars are crowding ahead.'] },
+        { t: 8200, ms: 4800,
+          text: 'The sky bunches up ahead and turns blue. That is what relativity says you would see.',
+          two: ['The sky bunches up ahead and turns blue.',
+                'That is what relativity says you would see.'],
+          alt: ['The sky bunches up ahead and turns blue. That is what relativity says you would see.'] },
+        { t: 13600, ms: 3400,
+          text: 'Braking now. The engines face the way you came and fight your own speed.',
+          alt: ['Braking now. The engines face the way you came and fight your own speed.',
+                'Braking. The engines fight your own speed.',
+                'Braking.'] },
+        { t: 20200, ms: 2400,
+          text: 'Slowing into orbit. The two clocks stop drifting apart now.',
+          alt: ['Slowing into orbit. The two clocks stop drifting apart now.',
+                'Slowing into orbit.'] }
+      ];
+    }
+
     /* ---- relativistic aberration + Doppler ----
        cosTheta is measured in the REST frame of the stars, from the ship's
        direction of travel. Both formulas are the textbook ones, pinned. */
@@ -479,6 +758,32 @@
       var den = g * (1 - b * c);
       if (!(den > 1e-9)) return 1;
       return 1 / den;
+    }
+    /* The aberrated world direction of a source seen from a ship moving
+       along the unit vector (ux,uy,uz) at beta. It takes the VELOCITY and
+       nothing else: where the crew happen to be looking cannot move where
+       the sky bunches up, so no view basis is an argument here (CL-23). */
+    var AB_OUT = { x: 0, y: 0, z: 0, cos: 0, delta: 1 };
+    function aberrateDir(ux, uy, uz, dx, dy, dz, beta, out) {
+      var o = out || AB_OUT;
+      var n = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (!(n > 1e-12)) { o.x = ux; o.y = uy; o.z = uz; o.cos = 1; o.delta = 1; return o; }
+      dx /= n; dy /= n; dz /= n;
+      var cth = dx * ux + dy * uy + dz * uz;
+      if (cth > 1) cth = 1; else if (cth < -1) cth = -1;
+      var cth2 = aberrateCos(cth, beta);
+      var s1 = Math.sqrt(Math.max(0, 1 - cth * cth));
+      var s2 = Math.sqrt(Math.max(0, 1 - cth2 * cth2));
+      if (s1 > 1e-9) {
+        var px = (dx - cth * ux) / s1, py = (dy - cth * uy) / s1, pz = (dz - cth * uz) / s1;
+        o.x = cth2 * ux + s2 * px; o.y = cth2 * uy + s2 * py; o.z = cth2 * uz + s2 * pz;
+      } else {
+        var sg = cth2 >= 0 ? 1 : -1;
+        o.x = sg * ux; o.y = sg * uy; o.z = sg * uz;
+      }
+      o.cos = cth;
+      o.delta = dopplerFactor(cth, beta);
+      return o;
     }
 
     /* ---- background star tier decode ----
@@ -584,6 +889,11 @@
     P.lightPhrase = lightPhrase;
     P.bandOf = bandOf;
     P.bucketOf = bucketOf;
+    P.orbBlend = orbBlend;
+    P.ORB_MIN_PX = ORB_MIN_PX;
+    P.ORB_FADE_PX = ORB_FADE_PX;
+    P.ORB_HOLD_AU = ORB_HOLD_AU;
+    P.K_SHRINK = K_SHRINK;
     P.niceScale = niceScale;
     P.cruiseTotals = cruiseTotals;
     P.cruisePoint = cruisePoint;
@@ -606,7 +916,25 @@
     P.CRUISE_FLIGHT_MS = CRUISE_FLIGHT_MS;
     P.cruisePhaseAt = cruisePhaseAt;
     P.smooth01 = smooth01;
+    P.cruisePose = cruisePose;
+    P.cockpitCaptions = cockpitCaptions;
+    P.qAxisAngle = qAxisAngle;
+    P.qMul = qMul;
+    P.qRot = qRot;
+    P.qSlerp = qSlerp;
+    P.qAngle = qAngle;
+    P.qFromBasis = qFromBasis;
+    P.qNormalize = qNormalize;
+    P.SHIP_LEN_AU = SHIP_LEN_AU;
+    P.RIG_OFFSET = { back: RIG_BACK, up: RIG_UP, side: RIG_SIDE };
+    P.RIG_LEN = RIG_LEN;
+    P.SHIP_PX_K = SHIP_PX_K;
+    P.RIG_D_MIN = RIG_D_MIN;
+    P.RIG_D_MAX = RIG_D_MAX;
+    P.DEPART_AU = DEPART_AU;
+    P.ARRIVE_AU = ARRIVE_AU;
     P.aberrateCos = aberrateCos;
+    P.aberrateDir = aberrateDir;
     P.dopplerFactor = dopplerFactor;
     P.b64Bytes = b64Bytes;
     P.bgDecode = bgDecode;
@@ -644,6 +972,7 @@
   var cardEl = id('voy-card');
 
   var reduced = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  var coarsePointer = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
   var W = 0, H = 0, dpr = 1, raf = null, lastT = 0;
   var MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   var FONT = '"Source Sans 3", system-ui, sans-serif';
@@ -678,8 +1007,6 @@
   var starPulse = 0;                    /* arrival ring pulse t0 */
   var accelIdx = 1, shipIdx = 1;        /* trip controls (1 g, crewed ship) */
   var fpMode = false;                   /* cruise view: false = chase, true = cockpit */
-  var fpNoteT0 = 0;                     /* one-shot aberration caption */
-  var fpNoteShown = false;
   var flipCapT0 = 0;                    /* flip caption timestamp */
   var previews = null;                  /* live card preview canvases */
   var panelOpen = true;
@@ -780,7 +1107,10 @@
       starLyD[i] = Math.sqrt(st.x[i] * st.x[i] + st.y[i] * st.y[i] + st.z[i] * st.z[i]);
       var band = PURE.bandOf(st.mag[i]);
       var bucket = PURE.bucketOf(st.ci[i]);
-      var row = (typeof st.mag[i] === 'number' && st.mag[i] < 0.5) ? 3 : band;
+      /* row 3 is the spiked cell. The threshold widened from 0.5 to 1.6 for
+         the wallpaper look: about fifty stars instead of a handful. The cell
+         is still 32 px and still drawn at 16, so the spikes still fit. */
+      var row = (typeof st.mag[i] === 'number' && st.mag[i] < 1.6) ? 3 : band;
       starCellX[i] = bucket * 32;
       starCellY[i] = row * 32;
       bandLists[band].push(i);
@@ -846,6 +1176,50 @@
   var SHIPS = window.VoyageShips || null;
   var SHIP_LIST = (SHIPS && SHIPS.SHIPS) ? SHIPS.SHIPS : null;
   var starArtCache = {}, exoArtCache = {}, solArtCache = {};
+
+  /* voyage-gl.js and voyage-galaxy.js are looked up at EVERY use site, never
+     captured here. Capturing once was the real failure mode behind the tag
+     order: a file that lands after this one would leave the reference null
+     and the whole pass would silently no-op with every test still green. */
+  var glOff = false;                    /* __voy.glDisable(), session-long */
+  function GL() { return glOff ? null : (window.VoyageGL || null); }
+  function GAL() { return window.VoyageGalaxy || null; }
+
+  /* Every orb on the page goes through these two, so the GL boundary lives
+     in exactly one place. GL renders the disc and returns false whenever it
+     declines (radius under 40 px, this frame's two blits already spent, a
+     pulsar or an unknown-temperature star, no WebGL at all) and VoyageArt
+     picks it up unchanged. `allowGl` is false for the bodies D1 keeps on
+     VoyageArt forever: the exoplanet orbs, and the DOM preview canvases,
+     which paint outside the main rAF task where the GL buffer is readable. */
+  /* The orb clock. VoyageGL pins tSec at 0 under reduced motion and renders
+     exactly once; VoyageArt has no such rule and would keep animating, so
+     the two renderers would disagree about whether the surface moves. The
+     page settles it here, the same way stepPreviews already does. */
+  function orbT(nowMs) { return reduced ? 0 : nowMs / 1000; }
+
+  function orbDrawStar(g, x, y, r, sp, tSec, opts, allowGl) {
+    if (allowGl) {
+      var G = GL();
+      if (G && G.drawStar) {
+        try { if (G.drawStar(g, x, y, r, sp, tSec, opts)) return true; }
+        catch (e) { /* fall through to the art path; never kill the frame */ }
+      }
+    }
+    if (ART) ART.drawStar(g, x, y, r, sp, tSec, opts);
+    return false;
+  }
+  function orbDrawPlanet(g, x, y, r, pp, tSec, opts, allowGl) {
+    if (allowGl) {
+      var G = GL();
+      if (G && G.drawPlanet) {
+        try { if (G.drawPlanet(g, x, y, r, pp, tSec, opts)) return true; }
+        catch (e) { /* same rule: the art path is always a valid answer */ }
+      }
+    }
+    if (ART) ART.drawPlanet(g, x, y, r, pp, tSec, opts);
+    return false;
+  }
 
   function starArtOf(i) {
     if (!ART || !SD || i < 0 || i >= NS) return null;
@@ -921,7 +1295,14 @@
   var cam = {
     yaw: -0.9, pitch: 0.35, logD: Math.log(15) / Math.LN10,
     cx: 0, cy: 0, cz: 0,
-    ppx: 0, ppy: 0                       /* principal point (screen center) */
+    ppx: 0, ppy: 0,                      /* principal point (screen center) */
+    /* D2 / CL-08. null in every mode but cruise. When it is null the basis
+       derivation below is EXACTLY what it always was and projectPt is
+       bit-identical to the pre-wave-4 build; when the cruise rig sets it,
+       the yaw/pitch pair is bypassed entirely and the eye sits at cam.c*.
+       That is what lets the flip roll the whole sky: a yaw and a pitch
+       cannot express roll, and the +/-z pole is degenerate for them. */
+    basis: null
   };
   var camAnim = null;                    /* {t0, ms, from, to} */
   var FOV_T = Math.tan(27.5 * DEG);      /* fov ~55 degrees */
@@ -936,6 +1317,16 @@
     camD = Math.pow(10, cam.logD);
     fpxV = (H * 0.5) / FOV_T;
     nearD = Math.max(1e-6, camD * 1e-3);
+    var b = cam.basis;
+    if (b) {
+      /* the rig owns the whole frame: eye exactly at cam.c*, orthonormal
+         basis copied straight in, no yaw/pitch derivation and no clamp */
+      camPX = cam.cx; camPY = cam.cy; camPZ = cam.cz;
+      fX = b.fX; fY = b.fY; fZ = b.fZ;
+      rX = b.rX; rY = b.rY; rZ = b.rZ;
+      uX = b.uX; uY = b.uY; uZ = b.uZ;
+      return;
+    }
     var cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
     var cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw);
     var dX = cp * cy, dY = cp * sy, dZ = sp;      /* center -> camera direction */
@@ -1108,7 +1499,8 @@
         g.fillStyle = grad;
         g.beginPath(); g.arc(cx0, cy0, rr * 2.6, 0, 6.2832); g.fill();
         if (row === 3) {
-          /* four tiny diffraction spikes, pre-rendered (mag < 0.5 stars) */
+          /* four tiny diffraction spikes, pre-rendered (mag < 1.6 stars).
+             A camera effect, not starlight; the page says so. */
           g.strokeStyle = 'rgba(' + cr + ',' + cg + ',' + cb + ',0.6)';
           g.lineWidth = 1;
           g.beginPath();
@@ -1735,7 +2127,11 @@
       p.g.clearRect(0, 0, p.w, p.h);
       var art = starArtOf(p.i);
       var r = Math.min(p.w, p.h) * 0.33;
-      if (art) ART.drawStar(p.g, p.w / 2, p.h / 2, r, art, t, { quality: 0 });
+      /* The card orbs go through the same two helpers as everything else,
+         with GL switched OFF: these canvases paint outside the main rAF
+         task, and with preserveDrawingBuffer false the GL buffer is only
+         guaranteed readable inside the task that rendered it. */
+      if (art) orbDrawStar(p.g, p.w / 2, p.h / 2, r, art, t, { quality: 0 }, false);
       else drawStarBlobOn(p.g, p.w / 2, p.h / 2, r, starTempOf(p.i));
     }
     p = previews.exo;
@@ -1743,8 +2139,8 @@
       p.g.clearRect(0, 0, p.w, p.h);
       var eart = exoArtOf(p.j);
       if (eart) {
-        ART.drawPlanet(p.g, p.w / 2, p.h / 2, Math.min(p.w, p.h) * 0.36, eart, t,
-                       { quality: 0, lightDir: Math.PI * 0.85 });
+        orbDrawPlanet(p.g, p.w / 2, p.h / 2, Math.min(p.w, p.h) * 0.36, eart, t,
+                      { quality: 0, lightDir: Math.PI * 0.85 }, false);
       }
     }
     p = previews.ship;
@@ -2178,6 +2574,236 @@
      ================================================================== */
   var orbPlanet = -1;                   /* force a planet orb (cruise close-ups) */
 
+  /* ==================================================================
+     D2: the camera rig.
+
+     ONE basis and TWO projectors (CL-09). The SKY is projected with the eye
+     exactly at the ship's world position, because the rig offset is about
+     1e-9 AU against stars 1e5 AU away: carrying it in world coordinates
+     would change no star's direction by more than 3e-14 rad and would
+     quantize into about ten float64 ULPs at Sirius. The SHIP is projected
+     in a local frame measured in ship-lengths, so it lands off-centre, it
+     moves correctly under free look, and its drawn size is a clean function
+     of the rig distance.
+     ================================================================== */
+  var RIG_BACK = 2.2, RIG_UP = 0.35, RIG_SIDE = 0.55;   /* ship-lengths */
+  var RIG_LEN = PURE.RIG_LEN, SHIP_PX_K = PURE.SHIP_PX_K;
+  var RIG_D_MIN = PURE.RIG_D_MIN, RIG_D_MAX = PURE.RIG_D_MAX;
+  var DEPART_AU = PURE.DEPART_AU;
+  /* how much the drawn hull is turned toward profile. The rig looks along
+     the ship's own nose, so the true geometry is a near end-on view that
+     drawShip renders as a disc; this eases it back toward the 3/4 the
+     shipped chase seat used, continuously and with the right sign. */
+  var SHIP_PROF_K = 0.42;
+  /* how far the chase camera swings toward the body being left, at the
+     start of the departure arc (radians of slerp weight, 0..1) */
+  var DEP_FRAME = 0.18;
+  /* ...and how far the ship may travel before it has escaped and the
+     framing is done. It is the parking stand-off itself: past that the ship
+     is level with the body it left, the direction to that body sweeps
+     through a right angle in a frame or two, and a camera still trying to
+     hold it in frame whips. */
+  var DEP_HOLD_AU = PURE.DEPART_AU * 0.9;
+  var DEP_TAU = 0.22;                   /* framing follower time constant, s */
+
+  var rigD = 1;                         /* wheel / pinch, [0.6, 8] */
+  var lookYaw = 0, lookPitch = 0;       /* persistent free-look offsets */
+  var lookDrag = null;
+  var camQ = null;                      /* spring-damped rig orientation */
+  var camWx = 0, camWy = 0, camWz = 0;  /* its angular velocity, rad/s */
+  var CAM_W0 = 16;                      /* spring rate, critically damped */
+  var viewQ = [0, 0, 0, 1];             /* orientation the cruise draws with */
+  var viewB = { fX: 0, fY: 0, fZ: 0, rX: 0, rY: 0, rZ: 0, uX: 0, uY: 0, uZ: 0 };
+  var rigBasis = { fX: 0, fY: 0, fZ: 0, rX: 0, rY: 0, rZ: 0, uX: 0, uY: 0, uZ: 0 };
+  var QA = [0, 0, 0, 1], QB = [0, 0, 0, 1], QC = [0, 0, 0, 1];
+  var QD = [0, 0, 0, 1], QE = [0, 0, 0, 1], QF = [0, 0, 0, 1];
+  var QS = [0, 0, 0, 1], QG = [0, 0, 0, 1];
+  var QH = [0, 0, 0, 1], QI = [0, 0, 0, 1], QJ = [0, 0, 0, 1];
+  var QIDENT = [0, 0, 0, 1];
+  var depRel = [0, 0, 0, 1];            /* eased departure-framing offset */
+  var VF = [0, 0, 0], VU = [0, 0, 0], VX = [0, 0, 0];
+
+  function resetRig() {
+    rigD = 1; lookYaw = 0; lookPitch = 0; lookDrag = null;
+    camQ = null; camWx = 0; camWy = 0; camWz = 0;
+    depRel[0] = 0; depRel[1] = 0; depRel[2] = 0; depRel[3] = 1;
+    cam.basis = null;
+  }
+
+  /* Critically damped angular spring. The ship snaps through the flip; the
+     camera lags a beat behind it and catches up, which is the whole reason
+     the flip reads as motion instead of as a cut.
+
+     Two things keep it honest on slow hardware. It SUBSTEPS, so the spring
+     integrates the real elapsed time rather than a clamped slice: a tab
+     throttled to 1 rAF per second used to leave the camera most of a
+     half-turn behind and fling the ship thousands of pixels off screen.
+     And the lag is hard-capped, so no frame rate and no user input can put
+     the ship outside the frame. */
+  /* The cap sits well ABOVE the lag the spring actually produces (about
+     0.39 rad against the fastest turn in the timeline), so it is a stall
+     backstop and not part of the normal follow: clamping inside the normal
+     range turned into a per-frame correction that WAS the snap it was meant
+     to prevent. */
+  var CAM_LAG_MAX = 0.9;                /* radians */
+  function springStep(target, dt) {
+    QA[0] = -camQ[0]; QA[1] = -camQ[1]; QA[2] = -camQ[2]; QA[3] = camQ[3];
+    var e = PURE.qMul(QA, target, QB);
+    var ex = e[0], ey = e[1], ez = e[2], ew = e[3];
+    if (ew < 0) { ex = -ex; ey = -ey; ez = -ez; ew = -ew; }
+    var s = Math.sqrt(ex * ex + ey * ey + ez * ez);
+    var ang = 2 * Math.atan2(s, ew);
+    var tx = 0, ty = 0, tz = 0;
+    if (s > 1e-12) { tx = ex / s * ang; ty = ey / s * ang; tz = ez / s * ang; }
+    var k = CAM_W0 * CAM_W0, c2 = 2 * CAM_W0;
+    camWx += (k * tx - c2 * camWx) * dt;
+    camWy += (k * ty - c2 * camWy) * dt;
+    camWz += (k * tz - c2 * camWz) * dt;
+    var ax = camWx * dt, ay = camWy * dt, az = camWz * dt;
+    var an = Math.sqrt(ax * ax + ay * ay + az * az);
+    if (an > 1e-12) {
+      PURE.qAxisAngle(ax / an, ay / an, az / an, an, QC);
+      PURE.qNormalize(PURE.qMul(camQ, QC, QS));
+      camQ[0] = QS[0]; camQ[1] = QS[1]; camQ[2] = QS[2]; camQ[3] = QS[3];
+    }
+  }
+  function springOrient(target, dt) {
+    if (!camQ) {
+      camQ = [target[0], target[1], target[2], target[3]];
+      camWx = camWy = camWz = 0;
+      return;
+    }
+    var d = (typeof dt === 'number' && isFinite(dt) && dt > 0) ? dt : 0;
+    if (d > 0.35) {                     /* a real stall: catch up, do not lag */
+      camQ = [target[0], target[1], target[2], target[3]];
+      camWx = camWy = camWz = 0;
+      return;
+    }
+    var n = Math.ceil(d / 0.02), i;
+    if (n > 0) { for (i = 0; i < n; i++) springStep(target, d / n); }
+    if (!isFinite(camQ[0]) || !isFinite(camQ[3])) {
+      camQ = [target[0], target[1], target[2], target[3]];
+      camWx = camWy = camWz = 0;
+      return;
+    }
+    var lag = PURE.qAngle(camQ, target);
+    if (lag > CAM_LAG_MAX) {
+      PURE.qSlerp(camQ, target, 1 - CAM_LAG_MAX / lag, QS);
+      camQ[0] = QS[0]; camQ[1] = QS[1]; camQ[2] = QS[2]; camQ[3] = QS[3];
+    }
+  }
+
+  function basisFromQ(q, out) {
+    var F = PURE.qRot(q, 0, 0, 1, VF);
+    var U = PURE.qRot(q, 0, 1, 0, VU);
+    var X = PURE.qRot(q, 1, 0, 0, VX);
+    out.fX = F[0]; out.fY = F[1]; out.fZ = F[2];
+    out.uX = U[0]; out.uY = U[1]; out.uZ = U[2];
+    out.rX = -X[0]; out.rY = -X[1]; out.rZ = -X[2];
+    return out;
+  }
+
+  /* seeded camera shake. Six sines, fixed phases, amplitude normalised to
+     1: nothing unseeded and no wall clock, so two runs shake identically. */
+  var SHK_N = 6, shkA = null, shkF = null, shkP = null, shkNorm = 1;
+  function ensureShake() {
+    if (shkA) return;
+    shkA = new Float32Array(SHK_N); shkF = new Float32Array(SHK_N); shkP = new Float32Array(SHK_N);
+    var rnd = mulberry32(517731), tot = 0, i;
+    for (i = 0; i < SHK_N; i++) {
+      shkA[i] = 0.35 + rnd() * 0.65;
+      shkF[i] = 6 + rnd() * 26;
+      shkP[i] = rnd() * 6.2832;
+      tot += shkA[i];
+    }
+    shkNorm = tot > 0 ? 1 / tot : 1;
+  }
+  function shakeAt(tSec, axis) {
+    ensureShake();
+    var v = 0, i;
+    for (i = 0; i < SHK_N; i++) {
+      v += shkA[i] * Math.sin(shkF[i] * tSec + shkP[i] + axis * 2.137);
+    }
+    return v * shkNorm;
+  }
+
+  /* the ship, in the local rig frame. All of it is dimensionless ratios of
+     ship-lengths, so world AU never enters. */
+  var RIG = { ok: false, x: 0, y: 0, px: 0, yaw: 0, sang: 0, bank: 0 };
+  var RLP = { x: 0, y: 0, z: 0 };
+  function rigLocal(rx, ry, rz, ppx, ppy, out) {
+    var b = viewB;
+    var zc = rx * b.fX + ry * b.fY + rz * b.fZ;
+    if (!(zc > 1e-4)) return false;
+    var s = fpxV / zc;
+    out.x = ppx + (rx * b.rX + ry * b.rY + rz * b.rZ) * s;
+    out.y = ppy - (rx * b.uX + ry * b.uY + rz * b.uZ) * s;
+    out.z = zc;
+    return isFinite(out.x) && isFinite(out.y);
+  }
+  var RA = { x: 0, y: 0, z: 0 }, RB = { x: 0, y: 0, z: 0 }, RC = { x: 0, y: 0, z: 0 };
+  function softLimit(v, mid, half) {
+    if (!isFinite(v) || !(half > 0)) return mid;
+    var x = (v - mid) / half;
+    /* tanh, written out: Math.tanh is ES6 and this file is ES5 throughout */
+    var e2 = Math.exp(2 * clampN(x, -20, 20));
+    return mid + half * ((e2 - 1) / (e2 + 1));
+  }
+  function rigProjectShip(pose, ppx, ppy) {
+    RIG.ok = false;
+    if (!pose) return false;
+    var q = pose.shipQ;
+    var F = PURE.qRot(q, 0, 0, 1, VF);
+    var U = PURE.qRot(q, 0, 1, 0, VU);
+    var X = PURE.qRot(q, 1, 0, 0, VX);
+    var d = rigD;
+    /* eye = ship - back*F + up*U + side*right, and the page's right is -X,
+       so rel = ship - eye = +back*F - up*U + side*X */
+    var bx = RIG_BACK * d * F[0] - RIG_UP * d * U[0] + RIG_SIDE * d * X[0];
+    var by = RIG_BACK * d * F[1] - RIG_UP * d * U[1] + RIG_SIDE * d * X[1];
+    var bz = RIG_BACK * d * F[2] - RIG_UP * d * U[2] + RIG_SIDE * d * X[2];
+    if (!rigLocal(bx, by, bz, ppx, ppy, RA)) return false;
+    if (!rigLocal(bx + 0.5 * F[0], by + 0.5 * F[1], bz + 0.5 * F[2], ppx, ppy, RB)) return false;
+    if (!rigLocal(bx - 0.5 * F[0], by - 0.5 * F[1], bz - 0.5 * F[2], ppx, ppy, RC)) return false;
+    var dxs = RB.x - RC.x, dys = RB.y - RC.y;
+    var sang = (dxs * dxs + dys * dys > 1e-8) ? Math.atan2(dys, dxs) : 0;
+    var b2 = viewB;
+    var nr = F[0] * b2.rX + F[1] * b2.rY + F[2] * b2.rZ;
+    var nu = F[0] * b2.uX + F[1] * b2.uY + F[2] * b2.uZ;
+    var nf = F[0] * b2.fX + F[1] * b2.fY + F[2] * b2.fZ;
+    var yw = Math.atan2(nf, Math.sqrt(nr * nr + nu * nu)) * SHIP_PROF_K;
+    /* roll relative to the camera: where the ship's own up lands on screen */
+    var bank = 0;
+    if (rigLocal(bx + 0.5 * U[0], by + 0.5 * U[1], bz + 0.5 * U[2], ppx, ppy, RC)) {
+      var ux2 = RC.x - RA.x, uy2 = RC.y - RA.y;
+      if (ux2 * ux2 + uy2 * uy2 > 1e-8) {
+        bank = Math.atan2(uy2, ux2) - sang + Math.PI / 2;
+        while (bank > Math.PI) bank -= 2 * Math.PI;
+        while (bank < -Math.PI) bank += 2 * Math.PI;
+      }
+    }
+    /* Soft screen limiter. The local projection is the pinned one, but two
+       things can push its result out of frame: a tall narrow phone, where
+       the rig's side offset is measured against fpxV (which scales with the
+       HEIGHT) while the screen is only 390 px wide, and the spring lag
+       through the flip. tanh leaves the normal position within a pixel and
+       saturates instead of ever letting the hull leave the viewport. */
+    var pxD = clampN(fpxV * SHIP_PX_K / (RIG_LEN * d), 12, 900);
+    RIG.x = softLimit(RA.x, W * 0.5, Math.max(20, W * 0.5 - pxD * 0.75));
+    RIG.y = softLimit(RA.y, H * 0.5, Math.max(20, H * 0.5 - pxD * 0.5));
+    RIG.px = pxD;
+    RIG.yaw = yw; RIG.sang = sang; RIG.bank = bank;
+    RIG.ok = isFinite(RIG.x) && isFinite(RIG.y) && isFinite(RIG.px);
+    return RIG.ok;
+  }
+
+  function cruisePlanOf(c) {
+    return { dLy: c.dLy, a: c.a, tauTotal: c.tauTotal,
+             ox: c.ox, oy: c.oy, oz: c.oz,
+             ux: c.ux, uy: c.uy, uz: c.uz, distAU: c.distAU,
+             shipKey: shipKeyOf(accelIdx), star: c.star };
+  }
+
   function startStarCruise(i) {
     var dLy = starLyD[i];
     if (!(dLy > 0)) return;
@@ -2202,24 +2828,67 @@
       tauTotal: tot.tauTotal, tTotal: tot.tTotal, tauHalf: tot.tauHalf,
       ox: o.x, oy: o.y, oz: o.z,
       ux: dx / dist, uy: dy / dist, uz: dz / dist, distAU: dist,
-      t0: performance.now(), cp: null, ph: null,
-      sx: o.x, sy: o.y, sz: o.z
+      t0: performance.now(), cp: null, ph: null, pose: null, tPrev: 0,
+      sx: o.x, sy: o.y, sz: o.z, launch: null
     };
     closeCard();
     camAnim = null;
     camBefore = null;
     mode = 'cruise';
     flipCapT0 = 0;
+    /* every flight starts at full detail and earns its own demotion: this
+       step is scoped to the cruise and must never carry over as a permanent
+       one (CL-27) */
+    cruiseLod = 0; clN = 0; clHot = 0; clCool = 0;
+    /* and the launch itself is not evidence: the first second pays for the
+       departure orb, the ship's first lathe and whatever the driver still
+       owes on a shader, exactly the transient budgetHold already ignores
+       for the explore governor */
+    clHold = GOV_HOLD_MS;
+    resetCaptions();
     setStatus('Leaving ' + shipLabel() + ' for ' + starName(i) + '. Watch the two clocks.');
     if (reduced) { arriveStar(); return; }
     /* beat 1: fly to wherever the ship actually is */
     if (cruiseSt.from.kind === 'p') { centeredStar = -1; orbPlanet = cruiseSt.from.idx; }
     else { centeredStar = cruiseSt.from.idx; orbPlanet = -1; }
-    camGo({ cx: o.x, cy: o.y, cz: o.z, logD: 0.62,
-            ppx: W / 2, ppy: H * 0.52 }, 2400);
+    /* CL-18 launch handoff: the departure arc starts from the pose the
+       explore camera is actually in and eases into the rig over the same
+       2400 ms the old camGo took, so there is no cut at the boundary. */
+    resetRig();
+    updateCamBasis();
+    cruiseSt.launch = {
+      ex: camPX, ey: camPY, ez: camPZ,
+      q: PURE.qFromBasis(-rX, -rY, -rZ, uX, uY, uZ, fX, fY, fZ),
+      logD: cam.logD, ppx: cam.ppx || W / 2, ppy: cam.ppy || H * 0.5
+    };
   }
+  /* CL-18/CL-19 arrival handoff. Explore mode has no roll, so the last rig
+     pose is written back as the yaw/pitch/centre/zoom triple that
+     reproduces it exactly, and only then is the basis released. Both the
+     natural end and a mid-flight skip land on the capture pose: the ship
+     stops one capture-orbit radius short of the star with its nose on it,
+     which is precisely what camSnapshot needs to hand camGo. */
+  function handoffRigToExplore(c) {
+    var i = c.star;
+    var ax = starX[i] - c.ux * PURE.ARRIVE_AU;
+    var ay = starY[i] - c.uy * PURE.ARRIVE_AU;
+    var az = starZ[i] - c.uz * PURE.ARRIVE_AU;
+    var dx = ax - starX[i], dy = ay - starY[i], dz = az - starZ[i];
+    var dd = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    cam.basis = null;
+    if (!(dd > 1e-9)) { cam.ppx = W / 2; cam.ppy = H * 0.5; return; }
+    cam.cx = starX[i]; cam.cy = starY[i]; cam.cz = starZ[i];
+    cam.logD = Math.log(dd) / Math.LN10;
+    cam.yaw = Math.atan2(dy, dx);
+    cam.pitch = clampN(Math.asin(clampN(dz / dd, -1, 1)), -1.45, 1.45);
+    cam.ppx = W / 2; cam.ppy = H * 0.5;
+    camAnim = null;
+  }
+
   function arriveStar() {
     if (!cruiseSt) return;
+    if (!reduced) handoffRigToExplore(cruiseSt);
+    resetRig();
     var i = cruiseSt.star;
     arriveInfo = {
       star: i,
@@ -2249,10 +2918,14 @@
   /* A programmatic teardown (a search, a porkchop, another selection) leaves
      the ship where it was: shipAt only changes on arrival. */
   function cancelStarCruise(silent) {
-    if (mode !== 'cruise' || !cruiseSt) { cruiseSt = null; return; }
+    if (mode !== 'cruise' || !cruiseSt) { cruiseSt = null; resetRig(); return; }
     cruiseSt = null;
     orbPlanet = -1;
     mode = 'explore';
+    /* programmatic teardown: the offsets go and the basis is released, but
+       the ship stays where it was and the camera is handed to the caller */
+    resetRig();
+    resetCaptions();
     if (silent) return;                 /* a follow-up action takes over */
     var pp = explorePP();
     cam.ppx = pp.x; cam.ppy = pp.y;
@@ -2261,51 +2934,158 @@
     setStatus('Launch cancelled. Your ship is still at ' + shipLabel() + '.');
   }
 
-  /* ---- cruise stepping (called from the rAF loop) ---- */
+  /* ---- cruise stepping (called from the rAF loop) ----
+     One continuous pose over the UNCHANGED timeline. The phase names are
+     still the authority for labels and for the thrust / flip envelopes;
+     they no longer cut the camera anywhere. */
   function cruiseStep(nowMs) {
     var c = cruiseSt;
     if (!c) return;
     var el = nowMs - c.t0;
+    var dt = c.tPrev ? clampN((nowMs - c.tPrev) / 1000, 0, 0.05) : 0;
+    /* The camera spring gets the REAL elapsed time, never this clamped
+       slice. The pose it chases is sampled from the wall clock, so feeding
+       the spring a capped dt made it fall a whole frame's worth of turn
+       behind on any long frame and then dump that debt into the NEXT frame
+       however short it was: measured 0.15 rad of basis rotation inside a
+       9 ms frame right after an 84 ms one, an outsized step by any reading.
+       springOrient already substeps at 20 ms and snaps past a 350 ms stall,
+       so real time is safe to hand it. */
+    var dtReal = c.tPrev ? clampN((nowMs - c.tPrev) / 1000, 0, 2) : 0;
+    c.tPrev = nowMs;
     var ph = PURE.cruisePhaseAt(el, c.tauTotal);
     c.ph = ph;
     if (ph.done) { arriveStar(); return; }
+    var pose = PURE.cruisePose(el / 1000, cruisePlanOf(c));
+    c.pose = pose;
     var cp = PURE.cruisePoint(c.dLy, c.a, ph.tau);
     cp.tau = ph.tau;
     c.cp = cp;
-    var frac = c.dLy > 0 ? clampN(cp.x / c.dLy, 0, 1) : 0;
-    c.sx = c.ox + c.ux * c.distAU * frac;
-    c.sy = c.oy + c.uy * c.distAU * frac;
-    c.sz = c.oz + c.uz * c.distAU * frac;
+    c.sx = pose.x; c.sy = pose.y; c.sz = pose.z;
 
     if (ph.phase === 'flip' && !flipCapT0) flipCapT0 = nowMs;
 
+    /* which body owns the close-up orb; unchanged from the shipped beats */
     if (ph.phase === 'depart-zoom' || ph.phase === 'ignite') {
-      /* camGo is already carrying the camera to the parked ship */
-      return;
+      if (c.from.kind === 'p') { centeredStar = -1; orbPlanet = c.from.idx; }
+      else { centeredStar = c.from.idx; orbPlanet = -1; }
+    } else if (ph.phase === 'capture') {
+      orbPlanet = -1; centeredStar = c.star;
+    } else {
+      orbPlanet = -1; centeredStar = -1;
     }
-    camAnim = null;
+
+    /* the free-look offsets ease back to zero across the capture arc, so
+       explore inherits a view with no leftover angle (CL-18) */
     if (ph.phase === 'capture') {
-      var k = clampN(ph.k, 0, 1);
-      var e = easeInOutCubic(k);
-      cam.cx = c.sx + (starX[c.star] - c.sx) * e;
-      cam.cy = c.sy + (starY[c.star] - c.sy) * e;
-      cam.cz = c.sz + (starZ[c.star] - c.sz) * e;
-      cam.logD = 1.5 + (0.75 - 1.5) * e;
-      cam.ppx = W * 0.58 + (W / 2 - W * 0.58) * e;
-      cam.ppy = H * 0.44 + (H * 0.5 - H * 0.44) * e;
-      orbPlanet = -1;
-      centeredStar = c.star;
-      return;
+      if (c.lookAtCap == null) { c.lookAtCap = [lookYaw, lookPitch]; }
+      var dk = 1 - easeInOutCubic(clampN(ph.k / 0.85, 0, 1));
+      lookYaw = c.lookAtCap[0] * dk;
+      lookPitch = c.lookAtCap[1] * dk;
+    } else if (c.lookAtCap != null) { c.lookAtCap = null; }
+
+    /* orientation: spring-follow the ship, then the user's own look */
+    springOrient(pose.shipQ, dtReal);
+    PURE.qAxisAngle(0, 1, 0, lookYaw, QA);
+    PURE.qAxisAngle(1, 0, 0, lookPitch, QB);
+    /* the COCKPIT looks out of the nose, always */
+    viewQ = PURE.qNormalize(PURE.qMul(PURE.qMul(camQ, QA, QC), QB, QG));
+    basisFromQ(viewQ, rigBasis);
+    /* the CHASE camera is a movie camera: while the ship is still on its
+       parking orbit it holds the body being left in frame and eases back
+       onto the nose as the ship escapes. Chase only, and orientation only:
+       the aberration is keyed to the velocity and cannot see this (CL-23). */
+    /* The weight also runs out as soon as the ship is level with the body
+       it left: past that point the direction to that body sweeps through a
+       right angle in a frame or two, and a camera still holding it in frame
+       whipped the ship 287 px across the screen in ONE frame. */
+    var frameW = DEP_FRAME * clampN(pose.depW, 0, 1) *
+                 (1 - PURE.smooth01(pose.travel / DEP_HOLD_AU));
+    /* The framing is carried as a RELATIVE offset on top of camQ and eased
+       with an exponential follower. camQ's own motion (the spring whose lag
+       is what makes the flip read as motion) passes through untouched, and
+       the offset itself can then only ever appear or die at 1/DEP_TAU, so
+       nothing the look-at target does can put a cut in the frame. */
+    QH[0] = 0; QH[1] = 0; QH[2] = 0; QH[3] = 1;    /* target offset */
+    if (frameW > 0.002) {
+      var lx = c.ox - pose.x, ly = c.oy - pose.y, lz = c.oz - pose.z;
+      var ln = Math.sqrt(lx * lx + ly * ly + lz * lz);
+      if (ln > 1e-9) {
+        lx /= ln; ly /= ln; lz /= ln;
+        var cu = PURE.qRot(camQ, 0, 1, 0, VU);
+        var dpu = cu[0] * lx + cu[1] * ly + cu[2] * lz;
+        var qux = cu[0] - dpu * lx, quy = cu[1] - dpu * ly, quz = cu[2] - dpu * lz;
+        var qun = Math.sqrt(qux * qux + quy * quy + quz * quz);
+        if (qun > 1e-6) {
+          qux /= qun; quy /= qun; quz /= qun;
+          var qxx = quy * lz - quz * ly, qxy = quz * lx - qux * lz, qxz = qux * ly - quy * lx;
+          PURE.qFromBasis(qxx, qxy, qxz, qux, quy, quz, lx, ly, lz, QD);
+          /* camQ^-1 * QD, then that much of it */
+          QE[0] = -camQ[0]; QE[1] = -camQ[1]; QE[2] = -camQ[2]; QE[3] = camQ[3];
+          PURE.qMul(QE, QD, QI);
+          PURE.qSlerp(QIDENT, QI, frameW, QH);
+        }
+      }
     }
-    /* accel / flip / decel: ride with the ship, looking along the route */
-    orbPlanet = -1;
-    centeredStar = -1;
-    cam.cx = c.sx; cam.cy = c.sy; cam.cz = c.sz;
-    cam.logD = 1.5;
-    cam.yaw = Math.atan2(-c.uy, -c.ux);
-    cam.pitch = clampN(Math.asin(clampN(-c.uz, -1, 1)), -1.45, 1.45);
-    cam.ppx = W * 0.58;
-    cam.ppy = H * 0.44;
+    var fw = 1 - Math.exp(-(dtReal > 0 ? dtReal : 0) / DEP_TAU);
+    PURE.qSlerp(depRel, QH, fw, QJ);
+    depRel[0] = QJ[0]; depRel[1] = QJ[1]; depRel[2] = QJ[2]; depRel[3] = QJ[3];
+    var chaseQ = camQ;
+    if (Math.abs(depRel[3]) < 0.999999) {
+      chaseQ = PURE.qNormalize(PURE.qMul(camQ, depRel, QE));
+    }
+    var chaseV = PURE.qNormalize(PURE.qMul(PURE.qMul(chaseQ, QA, QC), QB, QF));
+    basisFromQ(chaseV, viewB);
+
+    /* zoom: only ever the input to the LOD ramps and the orb radius law.
+       While the ship is still near the body it left, it tracks the real
+       distance so the departure orb is framed the way it always was. */
+    var dox = pose.x - c.ox, doy = pose.y - c.oy, doz = pose.z - c.oz;
+    var dOrig = Math.sqrt(dox * dox + doy * doy + doz * doz);
+    var lgT = clampN(Math.log(Math.max(1.2, dOrig)) / Math.LN10, 0.08, 1.5);
+    var ppxT = W * 0.58, ppyT = H * 0.44;
+    if (ph.phase === 'capture') {
+      var e = easeInOutCubic(clampN(ph.k, 0, 1));
+      lgT = 1.5 + (0.75 - 1.5) * e;
+      ppxT = W * 0.58 + (W / 2 - W * 0.58) * e;
+      ppyT = H * 0.44 + (H * 0.5 - H * 0.44) * e;
+    }
+
+    var ex = pose.x, ey = pose.y, ez = pose.z;
+    var lg = lgT, px2 = ppxT, py2 = ppyT;
+    var L0 = c.launch;
+    if (L0) {
+      var w = easeInOutCubic(clampN(el / 2400, 0, 1));
+      ex = L0.ex + (pose.x - L0.ex) * w;
+      ey = L0.ey + (pose.y - L0.ey) * w;
+      ez = L0.ez + (pose.z - L0.ez) * w;
+      lg = L0.logD + (lgT - L0.logD) * w;
+      px2 = L0.ppx + (ppxT - L0.ppx) * w;
+      py2 = L0.ppy + (ppyT - L0.ppy) * w;
+      /* into the CHASE orientation, which is what this basis carries once
+         the blend is over. Blending into viewQ (the cockpit's, with no
+         departure framing on it) meant the last blended frame and the first
+         un-blended one disagreed by the whole framing offset, and the ship
+         stepped 57 px sideways at el = 2400 ms exactly. */
+      PURE.qSlerp(L0.q, chaseV, w, QH);
+      basisFromQ(QH, viewB);
+      if (w >= 1) c.launch = null;
+    }
+
+    camAnim = null;
+    cam.cx = ex; cam.cy = ey; cam.cz = ez;
+    cam.logD = lg;
+    /* shake: seeded, thrust-scaled, never more than half a percent of the
+       view height, and exactly zero at coast and under reduced motion */
+    var amp = reduced ? 0 : H * 0.005 * clampN(pose.shake01, 0, 1);
+    cam.ppx = px2 + (amp ? shakeAt(el / 1000, 0) * amp : 0);
+    cam.ppy = py2 + (amp ? shakeAt(el / 1000, 1) * amp : 0);
+    cam.basis = viewB;
+    if (rigProjectShip(pose, cam.ppx, cam.ppy)) {
+      c.shipFade = clampN((c.shipFade || 0) + dt / 0.6, 0, 1);
+    } else {
+      c.shipFade = 0;
+    }
   }
 
   /* ---- cockpit: aberration + Doppler colour table ---- */
@@ -2344,57 +3124,40 @@
     for (var i = 0; i < DUST_N; i++) { dustA[i] = rnd() * 6.2832; dustP[i] = rnd(); }
   }
 
-  /* Build the cockpit view basis: forward along the route, swung 180 degrees
-     through the flip. Returns false if the geometry is degenerate. */
+  /* The cockpit view basis IS the rig basis: the flip and the free look
+     rotate the camera, never the physics (CL-23). The old swing sweep is
+     gone because the flip now lives in the ship's own orientation, which is
+     what lets the whole sky roll instead of yawing past you. */
   var FPB = { fx: 0, fy: 0, fz: 0, rx: 0, ry: 0, rz: 0, ux: 0, uy: 0, uz: 0 };
-  function fpBasis(c, swing) {
-    var fx = c.ux, fy = c.uy, fz = c.uz;
-    var rn = Math.sqrt(fy * fy + fx * fx);
-    var r0x, r0y;
-    if (rn > 1e-9) { r0x = fy / rn; r0y = -fx / rn; }
-    else { r0x = 1; r0y = 0; }
-    var s = Math.PI * clampN(swing, 0, 1);
-    var cs = Math.cos(s), sn = Math.sin(s);
-    var nx = fx * cs + r0x * sn, ny = fy * cs + r0y * sn, nz = fz * cs;
-    var nn = Math.sqrt(nx * nx + ny * ny + nz * nz);
-    if (!(nn > 1e-9)) return false;
-    FPB.fx = nx / nn; FPB.fy = ny / nn; FPB.fz = nz / nn;
-    var q = Math.sqrt(FPB.fy * FPB.fy + FPB.fx * FPB.fx);
-    if (q > 1e-9) { FPB.rx = FPB.fy / q; FPB.ry = -FPB.fx / q; FPB.rz = 0; }
-    else { FPB.rx = 1; FPB.ry = 0; FPB.rz = 0; }
-    FPB.ux = FPB.ry * FPB.fz - FPB.rz * FPB.fy;
-    FPB.uy = FPB.rz * FPB.fx - FPB.rx * FPB.fz;
-    FPB.uz = FPB.rx * FPB.fy - FPB.ry * FPB.fx;
-    return isFinite(FPB.fx) && isFinite(FPB.ux);
+  function fpBasis() {
+    var b = rigBasis;
+    FPB.fx = b.fX; FPB.fy = b.fY; FPB.fz = b.fZ;
+    FPB.rx = b.rX; FPB.ry = b.rY; FPB.rz = b.rZ;
+    FPB.ux = b.uX; FPB.uy = b.uY; FPB.uz = b.uZ;
+    return isFinite(FPB.fx) && isFinite(FPB.ux) &&
+           (FPB.fx !== 0 || FPB.fy !== 0 || FPB.fz !== 0);
   }
 
-  /* project a WORLD point as an aberrated direction seen from the ship */
+  /* project a WORLD point as an aberrated direction seen from the ship.
+     The aberration itself is PURE.aberrateDir, which takes the velocity and
+     nothing else: no view basis is an argument, so where the crew look can
+     never move where the sky bunches up. */
   var FPP = { x: 0, y: 0, ok: false, cos: 0, delta: 1, zc: 0 };
+  var FPD = { x: 0, y: 0, z: 0, cos: 0, delta: 1 };
   function fpProject(c, beta, wx, wy, wz, fpx, ppx, ppy) {
     FPP.ok = false; FPP.zc = 0; FPP.cos = 0; FPP.delta = 1;
     var dx = wx - c.sx, dy = wy - c.sy, dz = wz - c.sz;
     var n = Math.sqrt(dx * dx + dy * dy + dz * dz);
     if (!(n > 1e-9)) return false;
-    dx /= n; dy /= n; dz /= n;
-    /* cos of the angle to the DIRECTION OF TRAVEL, in the star rest frame */
-    var cth = dx * c.ux + dy * c.uy + dz * c.uz;
-    if (cth > 1) cth = 1; else if (cth < -1) cth = -1;
-    var cth2 = PURE.aberrateCos(cth, beta);
-    var s1 = Math.sqrt(Math.max(0, 1 - cth * cth));
-    var s2 = Math.sqrt(Math.max(0, 1 - cth2 * cth2));
-    var ax, ay, az;
-    if (s1 > 1e-9) {
-      var px = (dx - cth * c.ux) / s1, py = (dy - cth * c.uy) / s1, pz = (dz - cth * c.uz) / s1;
-      ax = cth2 * c.ux + s2 * px; ay = cth2 * c.uy + s2 * py; az = cth2 * c.uz + s2 * pz;
-    } else {
-      ax = cth2 >= 0 ? c.ux : -c.ux;
-      ay = cth2 >= 0 ? c.uy : -c.uy;
-      az = cth2 >= 0 ? c.uz : -c.uz;
-    }
+    PURE.aberrateDir(c.ux, c.uy, c.uz, dx, dy, dz, beta, FPD);
+    var ax = FPD.x, ay = FPD.y, az = FPD.z, cth = FPD.cos;
     var zc = ax * FPB.fx + ay * FPB.fy + az * FPB.fz;
     /* recorded before the cull so a caller can count what fell behind the
        camera, not only what survived onto the screen */
-    FPP.zc = zc; FPP.cos = cth; FPP.delta = PURE.dopplerFactor(cth, beta);
+    /* aberrateDir already computed the Doppler factor for this very cos;
+       asking PURE.dopplerFactor for it a second time was 5% of the cockpit
+       frame across 65,000 stars */
+    FPP.zc = zc; FPP.cos = cth; FPP.delta = FPD.delta;
     if (!(zc > 0.02)) return false;
     var sx2 = ppx + (ax * FPB.rx + ay * FPB.ry + az * FPB.rz) / zc * fpx;
     var sy2 = ppy - (ax * FPB.ux + ay * FPB.uy + az * FPB.uz) / zc * fpx;
@@ -2414,27 +3177,71 @@
     var ph = c.ph, cp = c.cp;
     if (!ph || !cp) return;
     var beta = clampN(cp.v, 0, 0.9999999);
-    if (!fpBasis(c, ph.swing)) return;
+    if (!fpBasis()) return;
     var fpx = (H * 0.5) / FOV_T;
     var ppx = W / 2, ppy = H * 0.5;
     var tbl = fpColorTable();
     var m = 6, i, dlt, br, bd, ci, cb;
     fpFront = 0; fpBack = 0; fpBehind = 0; fpRed = 0;
+    /* The aberration is written out inline in both sky loops below rather
+       than called per star. It is the SAME arithmetic in the same order as
+       PURE.aberrateDir + PURE.dopplerFactor (which stay the pinned public
+       versions, used by the destination orb, the look-back and the test
+       hook): what goes away is five function calls and a betaClamp per
+       star across 65,000 stars, plus the Doppler factor that fpProject used
+       to compute twice. Nothing here reads the view basis, so CL-23 is
+       untouched: bv/gv come from the velocity alone. */
+    var bv = beta > 0.9999999 ? 0.9999999 : (beta > 0 ? beta : 0);
+    var gv = 1 / Math.sqrt(1 - bv * bv);
+    var cux = c.ux, cuy = c.uy, cuz = c.uz;
+    var csx = c.sx, csy = c.sy, csz = c.sz;
+    var Bfx = FPB.fx, Bfy = FPB.fy, Bfz = FPB.fz;
+    var Brx = FPB.rx, Bry = FPB.ry, Brz = FPB.rz;
+    var Bux = FPB.ux, Buy = FPB.uy, Buz = FPB.uz;
+    var dx, dy, dz, q2, nn2, cth, cth2, s1, s2, ox, oy, oz, zc, ss, den;
     /* background tier first: this is what makes the sky feel deep */
     if (BG) {
-      var cut = BG.cuts[bgLod];
+      var cut = BG.cuts[bgCutIdx()];
       var cols = isLight() ? BG.colL : BG.colD;
+      var pos = BG.pos, starts = BG.starts;
       for (var b2 = 0; b2 < 12; b2++) {
         var nn = cut[b2];
         if (!nn) continue;
-        var list = BG.lists[b2];
+        var sk2 = bgStride(b2 % 3);
+        var a2 = 0.55 * BG_A[b2 % 3] * strideAlpha(sk2);
+        var sz2 = 1.2 * strideSize(sk2);
         ctx.fillStyle = cols[b2];
-        ctx.globalAlpha = 0.55 * BG_A[b2 % 3];
-        for (var k2 = 0; k2 < nn; k2++) {
-          i = list[k2];
-          if (!fpProject(c, beta, BG.x[i], BG.y[i], BG.z[i], fpx, ppx, ppy)) continue;
-          if (FPP.x < -m || FPP.x > W + m || FPP.y < -m || FPP.y > H + m) continue;
-          ctx.fillRect(FPP.x, FPP.y, 1.2, 1.2);
+        ctx.globalAlpha = a2 > 1 ? 1 : a2;
+        for (var k2 = 0, j2 = starts[b2] * 3; k2 < nn; k2 += sk2, j2 += sk2 * 3) {
+          dx = pos[j2] - csx; dy = pos[j2 + 1] - csy; dz = pos[j2 + 2] - csz;
+          q2 = dx * dx + dy * dy + dz * dz;
+          if (!(q2 > 1e-18)) continue;
+          nn2 = Math.sqrt(q2);
+          dx /= nn2; dy /= nn2; dz /= nn2;
+          cth = dx * cux + dy * cuy + dz * cuz;
+          if (cth > 1) cth = 1; else if (cth < -1) cth = -1;
+          if (bv === 0) cth2 = cth;
+          else {
+            den = 1 + bv * cth;
+            if (!(den > 1e-12)) cth2 = -1;
+            else { cth2 = (cth + bv) / den; if (cth2 > 1) cth2 = 1; else if (cth2 < -1) cth2 = -1; }
+          }
+          s1 = 1 - cth * cth; s1 = s1 > 0 ? Math.sqrt(s1) : 0;
+          s2 = 1 - cth2 * cth2; s2 = s2 > 0 ? Math.sqrt(s2) : 0;
+          if (s1 > 1e-9) {
+            ox = cth2 * cux + s2 * ((dx - cth * cux) / s1);
+            oy = cth2 * cuy + s2 * ((dy - cth * cuy) / s1);
+            oz = cth2 * cuz + s2 * ((dz - cth * cuz) / s1);
+          } else if (cth2 >= 0) { ox = cux; oy = cuy; oz = cuz; }
+          else { ox = -cux; oy = -cuy; oz = -cuz; }
+          zc = ox * Bfx + oy * Bfy + oz * Bfz;
+          if (!(zc > 0.02)) continue;
+          ss = fpx / zc;
+          dx = ppx + (ox * Brx + oy * Bry + oz * Brz) * ss;
+          if (dx < -m || dx > W + m) continue;
+          dy = ppy - (ox * Bux + oy * Buy + oz * Buz) * ss;
+          if (dy < -m || dy > H + m) continue;
+          ctx.fillRect(dx, dy, sz2, sz2);
         }
       }
       ctx.globalAlpha = 1;
@@ -2442,23 +3249,61 @@
     /* the interactive tier, Doppler-shifted */
     var st = SD ? SD.stars : null;
     if (st) {
+      var mags = st.mag, cis = st.ci;
+      /* NOT strided, at any LOD level: these 5,240 are the real, named,
+         clickable stars, they are a twelfth of the background tier's cost,
+         and they are what fpCounts reports. The cruise LOD takes its saving
+         out of the 60,000 anonymous ones above. */
       for (i = 0; i < NS; i++) {
-        var vis = fpProject(c, beta, starX[i], starY[i], starZ[i], fpx, ppx, ppy);
-        if (!(FPP.zc > 0.02)) fpBehind++;
-        if (!vis) continue;
-        if (FPP.x < -m || FPP.x > W + m || FPP.y < -m || FPP.y > H + m) continue;
-        if (FPP.cos > 0) fpFront++; else fpBack++;
-        if (FPP.delta < 1) fpRed++;
-        dlt = FPP.delta;
+        dx = starX[i] - csx; dy = starY[i] - csy; dz = starZ[i] - csz;
+        q2 = dx * dx + dy * dy + dz * dz;
+        if (!(q2 > 1e-18)) { fpBehind++; continue; }
+        nn2 = Math.sqrt(q2);
+        dx /= nn2; dy /= nn2; dz /= nn2;
+        cth = dx * cux + dy * cuy + dz * cuz;
+        if (cth > 1) cth = 1; else if (cth < -1) cth = -1;
+        if (bv === 0) cth2 = cth;
+        else {
+          den = 1 + bv * cth;
+          if (!(den > 1e-12)) cth2 = -1;
+          else { cth2 = (cth + bv) / den; if (cth2 > 1) cth2 = 1; else if (cth2 < -1) cth2 = -1; }
+        }
+        s1 = 1 - cth * cth; s1 = s1 > 0 ? Math.sqrt(s1) : 0;
+        s2 = 1 - cth2 * cth2; s2 = s2 > 0 ? Math.sqrt(s2) : 0;
+        if (s1 > 1e-9) {
+          ox = cth2 * cux + s2 * ((dx - cth * cux) / s1);
+          oy = cth2 * cuy + s2 * ((dy - cth * cuy) / s1);
+          oz = cth2 * cuz + s2 * ((dz - cth * cuz) / s1);
+        } else if (cth2 >= 0) { ox = cux; oy = cuy; oz = cuz; }
+        else { ox = -cux; oy = -cuy; oz = -cuz; }
+        zc = ox * Bfx + oy * Bfy + oz * Bfz;
+        if (!(zc > 0.02)) { fpBehind++; continue; }
+        den = gv * (1 - bv * cth);
+        dlt = (den > 1e-9) ? 1 / den : 1;
+        ss = fpx / zc;
+        dx = ppx + (ox * Brx + oy * Bry + oz * Brz) * ss;
+        dy = ppy - (ox * Bux + oy * Buy + oz * Buz) * ss;
+        if (!isFinite(dx) || !isFinite(dy)) continue;
+        if (dx < -m || dx > W + m || dy < -m || dy > H + m) continue;
+        if (cth > 0) fpFront++; else fpBack++;
+        if (dlt < 1) fpRed++;
         br = dlt * dlt * dlt;
         if (br > 4) br = 4;
-        ci = PURE.bucketOf(st.ci[i]);
+        var al = clampN(0.35 * br * (mags[i] < 4 ? 1.6 : 1), 0.03, 1);
+        /* Once the page is shedding detail, the stars sitting ON the alpha
+           floor go too. At high beta the receding half of the sky is dimmed
+           by delta cubed, so thousands of these are drawn every frame at 3%
+           over black, which is nothing to look at and a fillRect each. The
+           counters above are already taken, so fpCounts still describes the
+           whole sky. */
+        if (cruiseLod >= 2 && al <= 0.0301) continue;
+        ci = PURE.bucketOf(cis[i]);
         bd = fpDopBucket(dlt);
         cb = tbl[ci * FP_DOP + bd];
         ctx.fillStyle = cb;
-        ctx.globalAlpha = clampN(0.35 * br * (st.mag[i] < 4 ? 1.6 : 1), 0.03, 1);
-        var sz = st.mag[i] < 1.5 ? 3 : (st.mag[i] < 4 ? 2.2 : 1.6);
-        ctx.fillRect(FPP.x - sz / 2, FPP.y - sz / 2, sz, sz);
+        ctx.globalAlpha = al;
+        var sz = mags[i] < 1.5 ? 3 : (mags[i] < 4 ? 2.2 : 1.6);
+        ctx.fillRect(dx - sz / 2, dy - sz / 2, sz, sz);
       }
       ctx.globalAlpha = 1;
     }
@@ -2474,7 +3319,10 @@
         drawStarBlob(FPP.x, FPP.y, Math.max(2, rr), starTempOf(di), 1);
       }
     }
+    /* the origin body, red-shifted and dimmed by the real Doppler factor */
+    drawLookBack(c, now, true, beta, fpx, ppx, ppy);
     /* dust motes: NOT physics, they just sell the motion (the copy says so) */
+    if (cruiseLod >= 3) return;          /* first thing dropped when frames slip */
     ensureDust();
     var sp = 0.25 + beta * 2.2;
     ctx.strokeStyle = textColor(0.5);
@@ -2496,9 +3344,118 @@
     ctx.globalAlpha = 1;
   }
 
+  /* ==================================================================
+     D3: the look back.
+
+     The origin body drawn from its OWN world position, so the half of the
+     trip that used to show nothing has an anchor that visibly recedes. Both
+     views draw it; only the cockpit draws it with physics (CL-21). The
+     brightness follows the honest delta cubed with no floor, which means it
+     WILL fade out: the eye's anchor past that point is a reticle, which is
+     chrome and claims nothing (CL-22).
+     ================================================================== */
+  var LBW = { x: 0, y: 0, z: 0 };
+  var LB = { on: false, x: 0, y: 0, r: 0, alpha: 0, sprite: 0, dLy: 0, name: '', faint: false };
+  function originWorld(c, out) {
+    var o = out || LBW;
+    if (c.from.kind === 's') {
+      o.x = starX[c.from.idx]; o.y = starY[c.from.idx]; o.z = starZ[c.from.idx];
+    } else { o.x = 0; o.y = 0; o.z = 0; }
+    return o;
+  }
+  function originArt(c) {
+    if (c.from.kind === 's') return starArtOf(c.from.idx);
+    return (ART && ART.SOL_PARAMS) ? ART.SOL_PARAMS : null;
+  }
+  function originName(c) {
+    return c.from.kind === 's' ? starName(c.from.idx) : 'the Sun';
+  }
+  function originTemp(c) {
+    return c.from.kind === 's' ? starTempOf(c.from.idx) : 5772;
+  }
+  /* the Sun is not in the catalog, so its receding sprite is sized from its
+     real absolute magnitude at the real distance, exactly the way the
+     catalog's own apparent magnitudes were derived */
+  function solSprite(dLy) {
+    var mag = 4.83 + 5 * (Math.log(Math.max(1e-9, dLy)) / Math.LN10 - 1);
+    var band = PURE.bandOf(mag);
+    var row = mag < 1.6 ? 3 : band;
+    return { cx: PURE.bucketOf(0.656) * 32, cy: row * 32, a: BAND_A[band] };
+  }
+
+  /* cockpit === true routes the draw through fpProject and applies the real
+     Doppler factor; chase stays rest-frame and geometric. */
+  function drawLookBack(c, now, cockpit, beta, fpx, ppx, ppy) {
+    LB.on = false;
+    var pose = c.pose;
+    if (!pose) return;
+    /* skip while the ordinary paths already have it on screen */
+    if (c.from.kind === 's' && centeredStar === c.from.idx) return;
+    if (c.from.kind !== 's' && nearSol()) return;
+    var O = originWorld(c, LBW);
+    var dx = O.x - pose.x, dy = O.y - pose.y, dz = O.z - pose.z;
+    var dAU = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (!(dAU > 1)) return;
+    var sx2, sy2, delta = 1;
+    if (cockpit) {
+      if (!fpProject(c, beta, O.x, O.y, O.z, fpx, ppx, ppy)) return;
+      sx2 = FPP.x; sy2 = FPP.y; delta = FPP.delta;
+    } else {
+      if (!projectPt(O.x, O.y, O.z, PRJ)) return;
+      sx2 = PRJ.x; sy2 = PRJ.y;
+    }
+    if (sx2 < -200 || sx2 > W + 200 || sy2 < -200 || sy2 > H + 200) return;
+    var rr = clampN(fpxV * 0.9 / dAU, 0, Math.min(H * 0.32, 240));
+    var blend = PURE.orbBlend(rr);
+    /* honest delta cubed, no floor: this is the same law the star field uses */
+    var dim = clampN(delta * delta * delta, 0, 4);
+    var dLy = dAU / LY_AU;
+    var orbA = clampN(blend * dim, 0, 1);
+    if (orbA > 0.004) {
+      var art = originArt(c);
+      if (art) {
+        orbDrawStar(ctx, sx2, sy2, rr, art, orbT(now),
+                    { quality: orbQuality(), alpha: orbA }, true);
+      } else {
+        drawStarBlob(sx2, sy2, rr, originTemp(c), orbA);
+      }
+    }
+    var sprA = 0;
+    if (c.from.kind !== 's') {
+      var sp = solSprite(dLy);
+      sprA = clampN((1 - blend) * sp.a * dim, 0, 1);
+      if (sprA > 0.004) {
+        var at2 = ensureAtlas();
+        ctx.globalAlpha = sprA;
+        ctx.drawImage(at2, sp.cx, sp.cy, 32, 32, sx2 - 8, sy2 - 8, 16, 16);
+        ctx.globalAlpha = 1;
+      }
+    }
+    LB.on = true; LB.x = sx2; LB.y = sy2; LB.r = rr;
+    /* CL-22 keys the marker off the ORB's alpha, not off whatever sprite is
+       standing in for it: in chase the origin is a rest-frame star that
+       never dims, and the label is the whole point of the look back. */
+    LB.alpha = orbA; LB.sprite = sprA;
+    LB.dLy = dLy; LB.name = originName(c);
+    LB.faint = orbA < 0.08;
+    if (LB.faint) {
+      /* the marker. A reticle is chrome, so it carries no honesty claim and
+         needs none: the caption already says the light itself is gone. */
+      ctx.strokeStyle = textColor(0.45);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(sx2, sy2, 7, 0, 6.2832);
+      ctx.moveTo(sx2 - 12, sy2); ctx.lineTo(sx2 - 9, sy2);
+      ctx.moveTo(sx2 + 9, sy2); ctx.lineTo(sx2 + 12, sy2);
+      ctx.moveTo(sx2, sy2 - 12); ctx.lineTo(sx2, sy2 - 9);
+      ctx.moveTo(sx2, sy2 + 9); ctx.lineTo(sx2, sy2 + 12);
+      ctx.stroke();
+    }
+  }
+
   function drawChase(c, now) {
-    var ph = c.ph, cp = c.cp;
-    if (!ph || !cp) return;
+    var ph = c.ph, cp = c.cp, pose = c.pose;
+    if (!ph || !cp || !pose) return;
     var i = c.star;
     var fpx0 = (H * 0.5) / FOV_T;
     /* the route, from the ship's origin to the destination */
@@ -2509,71 +3466,74 @@
       ctx.beginPath(); ctx.moveTo(SEGA.x, SEGA.y); ctx.lineTo(SEGB.x, SEGB.y); ctx.stroke();
       ctx.globalAlpha = 1;
     }
-    /* the destination star, bright regardless of the star-field fade */
+    /* The destination star, bright regardless of the star-field fade. The
+       same orbBlend the close-up uses drives it, so the disc grows out of
+       the sprite instead of replacing it at a hard 4 px threshold. */
     if (projectPt(starX[i], starY[i], starZ[i], PRJ)) {
       var remain = Math.max(1e-6, (1 - (c.dLy > 0 ? cp.x / c.dLy : 0)) * c.distAU);
       var rr = clampN(fpx0 * 0.8 / remain, 0, Math.min(H * 0.3, 200));
-      if (rr > 4) {
-        var art = starArtOf(i);
-        if (art) ART.drawStar(ctx, PRJ.x, PRJ.y, rr, art, now / 1000, { quality: orbQuality() });
-        else drawStarBlob(PRJ.x, PRJ.y, rr, starTempOf(i), 1);
-      } else {
+      var db = PURE.orbBlend(rr);
+      if (db < 1) {
         var at = ensureAtlas();
+        ctx.globalAlpha = 1 - db;
         ctx.drawImage(at, starCellX[i], starCellY[i], 32, 32, PRJ.x - 12, PRJ.y - 12, 24, 24);
-      }
-    }
-    if (!SHIPS) return;
-    var px = clampN(Math.min(W * 0.30, 140), 40, W <= 768 ? 120 : 200);
-    var sxp, syp, yaw = -0.62;
-    if (ph.phase === 'depart-zoom' || ph.phase === 'ignite') {
-      /* still parked: draw the ship on its orbit, widening as it lights up */
-      if (!projectPt(c.ox, c.oy, c.oz, PRJ)) return;
-      var bodyR = c.from.kind === 'p'
-        ? (planetOrbIdx === c.from.idx ? planetOrbPx : PLANET_R[c.from.idx])
-        : (starOrbPx || 20);
-      var orbR = Math.max(bodyR * 1.7, 26);
-      var spiral = ph.phase === 'ignite' ? (1 + ph.k * ph.k * 3.2) : 1;
-      var th = (now / 3200) % 6.2832;
-      sxp = PRJ.x + orbR * spiral * Math.cos(th);
-      syp = PRJ.y + orbR * 0.34 * spiral * Math.sin(th);
-      yaw = -0.62 + Math.sin(th) * 0.5;
-      if (!isFinite(sxp) || !isFinite(syp)) return;
-      SHIPS.drawShip(ctx, sxp, syp, Math.min(px, 90), yaw, {
-        key: shipKeyOf(accelIdx), thrust: ph.thrust, t: now / 1000,
-        quality: orbQuality(), flip: 0, light: isLight()
-      });
-      return;
-    }
-    if (ph.phase === 'capture') {
-      if (!projectPt(starX[i], starY[i], starZ[i], PRJ)) return;
-      var k = clampN(ph.k, 0, 1);
-      var orbR2 = Math.max((starOrbPx || 40) * 1.7, 40);
-      var th2 = -1.2 + k * 2.6;
-      var rr2 = orbR2 * (3.4 - 2.4 * easeInOutCubic(k));
-      sxp = PRJ.x + rr2 * Math.cos(th2);
-      syp = PRJ.y + rr2 * 0.34 * Math.sin(th2);
-      if (!isFinite(sxp) || !isFinite(syp)) return;
-      SHIPS.drawShip(ctx, sxp, syp, Math.min(px, 90), -0.62, {
-        key: shipKeyOf(accelIdx), thrust: ph.thrust, t: now / 1000,
-        quality: orbQuality(), flip: 1, light: isLight()
-      });
-      /* one soft ring pulse as it settles in */
-      if (k > 0.55) {
-        var kp2 = clampN((k - 0.55) / 0.45, 0, 1);
-        ctx.strokeStyle = gold();
-        ctx.globalAlpha = 0.6 * (1 - kp2);
-        ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.arc(PRJ.x, PRJ.y, 12 + kp2 * 60, 0, 6.2832); ctx.stroke();
         ctx.globalAlpha = 1;
       }
-      return;
+      if (db > 0) {
+        var art = starArtOf(i);
+        if (art) {
+          orbDrawStar(ctx, PRJ.x, PRJ.y, rr, art, orbT(now),
+                      { quality: orbQuality(), alpha: db }, true);
+        } else {
+          drawStarBlob(PRJ.x, PRJ.y, rr, starTempOf(i), db);
+        }
+      }
     }
-    /* accel / flip / decel: the chase seat */
-    sxp = W * 0.40; syp = H * 0.62;
-    SHIPS.drawShip(ctx, sxp, syp, px, yaw, {
-      key: shipKeyOf(accelIdx), thrust: ph.thrust, t: now / 1000,
-      quality: orbQuality(), flip: ph.flip, light: isLight()
+    /* the origin body, receding. Geometric only in this view: the chase sky
+       is rest-frame, so nothing here may claim a colour (CL-21). */
+    drawLookBack(c, now, false, 0, fpx0, cam.ppx, cam.ppy);
+    /* one soft ring pulse as the ship settles into its capture orbit */
+    if (ph.phase === 'capture' && ph.k > 0.55 &&
+        projectPt(starX[i], starY[i], starZ[i], PRJ)) {
+      var kp2 = clampN((ph.k - 0.55) / 0.45, 0, 1);
+      ctx.strokeStyle = gold();
+      ctx.globalAlpha = 0.6 * (1 - kp2);
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(PRJ.x, PRJ.y, 12 + kp2 * 60, 0, 6.2832); ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+    /* the ship, through the local rig projector. There is no phase branch
+       left here: one projector for the whole cinematic is what removed the
+       two position cuts the beats used to have. */
+    if (!SHIPS || !RIG.ok) return;
+    var fade = clampN(c.shipFade == null ? 1 : c.shipFade, 0, 1);
+    if (!(fade > 0.004)) return;
+    var ld = cruiseLightDir(c, pose);
+    ctx.save();
+    ctx.globalAlpha = fade;
+    ctx.translate(RIG.x, RIG.y);
+    ctx.rotate(RIG.sang);
+    SHIPS.drawShip(ctx, 0, 0, RIG.px, RIG.yaw, {
+      key: shipKeyOf(accelIdx), thrust: pose.thrust01, t: now / 1000,
+      /* the hull's procedural detail passes are the second heaviest thing
+         in the frame; from cruise LOD 2 the ship drops to its cheap tier
+         with the rest of the scene */
+      quality: cruiseLod >= 2 ? 0 : orbQuality(), flip: 0, light: isLight(),
+      bank: RIG.bank, lightDir: ld - RIG.sang
     });
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }
+
+  /* CL-25: the light on the hull comes from the body it is nearest to, as a
+     SCREEN angle. Origin star for the first half, destination for the second. */
+  function cruiseLightDir(c, pose) {
+    var wx, wy, wz;
+    if (pose.s01 < 0.5) { var O = originWorld(c, LBW); wx = O.x; wy = O.y; wz = O.z; }
+    else { wx = starX[c.star]; wy = starY[c.star]; wz = starZ[c.star]; }
+    if (!projectPt(wx, wy, wz, PRJ)) return Math.PI;
+    var a = Math.atan2(PRJ.y - RIG.y, PRJ.x - RIG.x);
+    return isFinite(a) ? a : Math.PI;
   }
 
   function cruiseHudLines(c) {
@@ -2614,23 +3574,128 @@
      then through the font size until it fits the canvas. Returns the index of
      the form that was used. */
   var hudDrawn = [];                      /* test hook: what the HUD actually drew */
-  function hudLine(cands, weight, basePx, minPx, maxW, y, color) {
+  /* cx is optional and defaults to the screen centre, which is what every
+     caller before the look-back reticle wanted. Wherever it is asked for,
+     the box is clamped into [8, W-8] so the 390 px HUD bar still holds. */
+  /* Text metrics are pure for a (font, string) pair and the HUD asks for
+     the same handful of strings every frame, sometimes at half a dozen
+     candidate lengths and then again as it steps the size down. Measuring
+     them live cost about 1.5 ms of every cruise frame. The cache is capped
+     and dropped whole, so a long session cannot grow it without bound. */
+  var tmCache = {}, tmN = 0;
+  function textW(f, s) {
+    var k = f + ' ' + s;
+    var v = tmCache[k];
+    if (v !== undefined) return v;
+    ctx.font = f;                        /* only ever on a miss */
+    v = ctx.measureText(s).width;
+    if (tmN > 600) { tmCache = {}; tmN = 0; }
+    tmCache[k] = v; tmN++;
+    return v;
+  }
+  function hudLine(cands, weight, basePx, minPx, maxW, y, color, cx) {
     var px = basePx, used = cands.length - 1, i;
-    ctx.font = weight + px + 'px ' + FONT;
+    var font = weight + px + 'px ' + FONT;
     for (i = 0; i < cands.length; i++) {
-      if (ctx.measureText(cands[i]).width <= maxW) { used = i; break; }
+      if (textW(font, cands[i]) <= maxW) { used = i; break; }
     }
     var txt = cands[used];
-    var w = ctx.measureText(txt).width;
+    var w = textW(font, txt);
     while (px > minPx && w > maxW) {
       px = Math.max(minPx, px - 0.5);
-      ctx.font = weight + px + 'px ' + FONT;
-      w = ctx.measureText(txt).width;
+      font = weight + px + 'px ' + FONT;
+      w = textW(font, txt);
     }
+    ctx.font = font;
+    var x = (typeof cx === 'number' && isFinite(cx)) ? cx : W / 2;
+    var half = w / 2;
+    if (x - half < 8) x = 8 + half;
+    if (x + half > W - 8) x = W - 8 - half;
     ctx.fillStyle = color;
-    ctx.fillText(txt, W / 2, y);
-    hudDrawn.push({ txt: txt, px: px, w: w, y: y, x0: W / 2 - w / 2, x1: W / 2 + w / 2 });
+    ctx.fillText(txt, x, y);
+    hudDrawn.push({ txt: txt, px: px, w: w, y: y, x0: x - half, x1: x + half });
     return used;
+  }
+
+  /* ==================================================================
+     D3: ONE caption track.
+
+     There used to be three of these: a flip caption at a fixed y, a
+     one-shot relativity note behind its own boolean, and nothing at all
+     explaining the rest. This is the single queue that absorbed them, with
+     one priority order (flip > timed > look-back), one persistence key, one
+     measured y band, and one accessible mirror that lives OUTSIDE the
+     collapsible panel where a live region actually announces.
+     ================================================================== */
+  var CAP_KEY = 'voy-fp-seen';
+  var capTrack = PURE.cockpitCaptions();
+  var capNext = 0;                      /* next timed entry to fire */
+  var capCur = null;                    /* {text, alt, two, t0, ms, prio} */
+  var capSeen = false;
+  var capReplay = 0;                    /* replay clock offset, ms */
+  var capSrLast = '';
+  var elCapSr = id('voy-cap-sr');
+  (function loadCapSeen() {
+    try {
+      if (window.sessionStorage && sessionStorage.getItem(CAP_KEY) === '1') capSeen = true;
+    } catch (e9) { /* private mode: the track just plays again */ }
+  })();
+  function markCapSeen() {
+    capSeen = true;
+    try { if (window.sessionStorage) sessionStorage.setItem(CAP_KEY, '1'); } catch (eA) {}
+  }
+  function resetCaptions() {
+    capNext = 0; capCur = null; capReplay = 0;
+    if (elCapSr && capSrLast) { elCapSr.textContent = ''; capSrLast = ''; }
+  }
+  function replayCaptions() {
+    capNext = 0; capCur = null;
+    capReplay = cruiseSt ? (performance.now() - cruiseSt.t0) : 0;
+    capSeen = false;
+    setStatus('Replaying what happens on the way.');
+  }
+  function capShow(entry, prio, now) {
+    if (capCur && capCur.prio < prio) return;      /* lower priority is dropped */
+    capCur = { text: entry.text, alt: entry.alt || [entry.text], two: entry.two || null,
+               t0: now, ms: entry.ms || 3200, prio: prio };
+    if (elCapSr && entry.text !== capSrLast) {
+      elCapSr.textContent = entry.text;
+      capSrLast = entry.text;
+    }
+  }
+  /* the band: under the HUD block and under the live FP bar, or low on the
+     screen when that would push it past the bottom (CL-24) */
+  function capBandY() {
+    var hudBottom = 0, i;
+    for (i = 0; i < hudDrawn.length; i++) {
+      if (hudDrawn[i].y > hudBottom) hudBottom = hudDrawn[i].y;
+    }
+    var barB = 0;
+    if (elFpBar && !elFpBar.hidden && elFpBar.getBoundingClientRect) {
+      var r = elFpBar.getBoundingClientRect();
+      if (r && r.height > 0) barB = r.bottom;
+    }
+    var y = Math.max(hudBottom, barB) + 18;
+    return (y > H - 96) ? H * 0.78 : y;
+  }
+  function drawCaption(now, maxW) {
+    if (!capCur) return;
+    var t = now - capCur.t0;
+    var a = clampN(t / 350, 0, 1) * (1 - ramp(t, capCur.ms - 400, capCur.ms));
+    if (t > capCur.ms) { capCur = null; return; }
+    if (!(a > 0.01)) return;
+    var y = capBandY();
+    var big = capCur.prio === 1;
+    var col = textColor((big ? 0.92 : 0.85) * a);
+    if (capCur.two) {
+      ctx.font = '15px ' + FONT;
+      if (ctx.measureText(capCur.text).width > maxW) {
+        hudLine([capCur.two[0]], '', 15, 10, maxW, y, col);
+        hudLine([capCur.two[1]], '', 15, 10, maxW, y + 20, col);
+        return;
+      }
+    }
+    hudLine(capCur.alt, big ? '600 ' : '', big ? 19 : 15, big ? 12 : 10, maxW, y, col);
   }
 
   function drawCruise(now) {
@@ -2653,33 +3718,56 @@
       hudLine(used >= 2 ? lines.alt2y : lines.alt2, '', 13, 9.5, maxW,
               hudY + 21, textColor(0.75));
     }
-    hudLine(['Esc or tap to jump to the arrival', 'Esc or tap to skip'], '', 12, 9.5,
+    /* CL-40, verbatim: nothing on screen used to say free look existed */
+    hudLine([coarsePointer ? 'Drag to look around. Tap to skip.'
+                           : 'Drag to look around. Esc or tap to skip.'], '', 12, 9.5,
             maxW, hudY + 42, textColor(0.5));
 
-    /* the flip caption */
-    if (flipCapT0 && c.ph.phase === 'flip') {
-      var ka = clampN((now - flipCapT0) / 400, 0, 1) * (1 - ramp(now - flipCapT0, 1600, 2000));
-      if (ka > 0.01) {
-        hudLine(['Halfway. Turn around, burn the other way.'], '600 ', 19, 12,
-                maxW, H * 0.3, textColor(0.92 * ka));
+    /* ---- the queue ---- */
+    var el = now - c.t0;
+    if (c.ph.phase === 'flip' && flipCapT0 && !c.flipCapDone) {
+      c.flipCapDone = true;
+      capShow({ text: 'Halfway. Turn around, burn the other way.',
+                alt: ['Halfway. Turn around, burn the other way.',
+                      'Halfway. Turn around and burn.'],
+                ms: 2600 }, 1, now);
+    }
+    if (!capSeen || capReplay) {
+      var clock = el - capReplay;
+      while (capNext < capTrack.length && clock >= capTrack[capNext].t) {
+        var ent = capTrack[capNext];
+        capNext++;
+        /* the relativity note is a cockpit claim; the rest are for both views */
+        if (ent.two && !fpMode) continue;
+        capShow(ent, 2, now);
+      }
+      if (capNext >= capTrack.length && !capReplay) markCapSeen();
+    }
+    /* the look-back caption: lowest priority, and it says nothing about
+       colour unless the cockpit is actually drawing the colour (CL-21) */
+    if (LB.on && LB.dLy > 0.002) {
+      if (!c.lbCap) {
+        c.lbCap = true;
+        capShow({ text: fpMode
+                    ? 'Looking back: the light behind you is stretched red and dim.'
+                    : 'Looking back: the star you left is already a long way behind.',
+                  alt: fpMode
+                    ? ['Looking back: the light behind you is stretched red and dim.',
+                       'The light behind you is stretched red and dim.']
+                    : ['Looking back: the star you left is already a long way behind.',
+                       'The star you left is a long way behind.'],
+                  ms: 3600 }, 3, now);
       }
     }
-    /* the one-time aberration caption, the first time the cockpit passes 0.5c */
-    if (fpMode && !fpNoteShown && c.cp.v > 0.5) { fpNoteShown = true; fpNoteT0 = now; }
-    if (fpNoteT0) {
-      var kb = clampN((now - fpNoteT0) / 400, 0, 1) * (1 - ramp(now - fpNoteT0, 4200, 4800));
-      if (kb > 0.01) {
-        var one = 'The sky bunches up ahead and turns blue. That is exactly what relativity says you would see.';
-        ctx.font = '15px ' + FONT;
-        if (ctx.measureText(one).width > maxW) {
-          hudLine(['The sky bunches up ahead and turns blue.'], '', 15, 10, maxW,
-                  H * 0.78, textColor(0.85 * kb));
-          hudLine(['That is exactly what relativity says you would see.'], '', 15, 10,
-                  maxW, H * 0.78 + 20, textColor(0.85 * kb));
-        } else {
-          hudLine([one], '', 15, 10, maxW, H * 0.78, textColor(0.85 * kb));
-        }
-      } else if (now - fpNoteT0 > 4800) fpNoteT0 = 0;
+    drawCaption(now, maxW);
+    /* the receding origin's marker label, once its light is effectively gone */
+    if (LB.on && LB.faint) {
+      var d1 = LB.dLy;
+      var dTxt = d1 >= 0.01 ? (Math.round(d1 * 100) / 100) + ' ly behind'
+                            : (Math.round(d1 * LY_AU) + ' AU behind');
+      ctx.font = '12px ' + FONT;
+      hudLine([LB.name + ', ' + dTxt, LB.name], '', 12, 9.5, W - 16,
+              clampN(LB.y + 22, 24, H - 12), textColor(0.55), LB.x);
     }
     ctx.textAlign = 'left';
   }
@@ -2810,6 +3898,63 @@
 
   var galStride = 1;                     /* 2 = decimate if a frame budget slips */
   var galKey = '';                       /* last drawn camera/size signature */
+
+  /* ---- the painted layers (voyage-galaxy.js) ----
+     They are world-anchored in the galactic plane and projected through this
+     page's OWN projector, so the painting swings with the star field instead
+     of sitting behind it like wallpaper. The point cloud is drawn on top of
+     them and carries every frame on its own while the bake is still running,
+     which is also what happens if the file 404s. */
+  var GAL_SEED = 20260727;               /* the same seed the cloud is built with */
+  var galBakeTried = false;
+  var galBasisCache = null;
+  var galCam = { px: 0, py: 0, pz: 0, fX: 0, fY: 0, fZ: 0, rX: 0, rY: 0, rZ: 0,
+                 uX: 0, uY: 0, uZ: 0, fpx: 0, ppx: 0, ppy: 0, D: 0 };
+  var galOpts = { theme: 'dark', basis: null, mesh: 10, lyAu: LY_AU,
+                  layers: { core: true, arms: true, halo: true }, W: 0, H: 0 };
+
+  function galBasisOf() {
+    if (!galBasisCache) galBasisCache = PURE.galBasis();
+    return galBasisCache;
+  }
+  function startGalaxyBake() {
+    var G = GAL();
+    if (!G || typeof G.bake !== 'function') return;
+    try {
+      G.bake(GAL_SEED, { theme: effectiveTheme(), lyAu: LY_AU }, function () {
+        /* a finished bake is a one-off cost; do not let it demote the scene */
+        budgetHold = Math.max(budgetHold, GOV_HOLD_MS);
+      });
+    } catch (e) { /* the painting is an enhancement, never a requirement */ }
+  }
+  function drawGalaxyPaint(ga) {
+    var G = GAL();
+    if (!G || typeof G.draw !== 'function') return false;
+    var b = galBasisOf();
+    if (!b) return false;
+    galCam.px = camPX; galCam.py = camPY; galCam.pz = camPZ;
+    galCam.fX = fX; galCam.fY = fY; galCam.fZ = fZ;
+    galCam.rX = rX; galCam.rY = rY; galCam.rZ = rZ;
+    galCam.uX = uX; galCam.uY = uY; galCam.uZ = uZ;
+    galCam.fpx = fpxV; galCam.ppx = cam.ppx; galCam.ppy = cam.ppy;
+    galCam.D = camD;
+    galOpts.theme = effectiveTheme();
+    galOpts.basis = b;
+    /* the LOD ladder of D7: halo first, then the arms, then the mesh */
+    galOpts.mesh = galLod >= 1 ? 10 : 5;
+    galOpts.layers.core = true;
+    galOpts.layers.arms = galLod >= 1;
+    galOpts.layers.halo = galLod >= 2;
+    galOpts.W = W; galOpts.H = H;
+    var painted = false;
+    try { painted = !!G.draw(ctx, projectPt, galCam, ga, galOpts); }
+    catch (e) { painted = false; }
+    /* whatever the painting did to the context, the cloud below needs it back */
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    return painted;
+  }
+
   /* One path per tint bucket beats one fillRect per point by about 5x in a
      software rasteriser (measured: 22,600 points, 79 ms of fillRect against
      15 ms of batched rects at 4x CPU throttle). While the camera is actually
@@ -2819,6 +3964,7 @@
     var cl = buildGalaxy();
     var O = { x: 0, y: 0, z: 0 };
     if (!projectPt(0, 0, 0, O)) return;
+    drawGalaxyPaint(ga);
     var xs = cl.x, ys = cl.y, zs = cl.z;
     var pal = isLight() ? GAL_TINT_L : GAL_TINT_D;
     var m = 8, b, i, px, py, pz, zc, s, sx2, sy2;
@@ -2826,9 +3972,14 @@
               cam.cy + '|' + cam.cz + '|' + cam.ppx + '|' + cam.ppy + '|' + W + '|' + H;
     var moving = key !== galKey;
     galKey = key;
-    var stride = galStride * (moving ? 3 : 1);
-    /* decimating drops light, so give the survivors it back */
-    var boost = stride > 1 ? Math.min(2.1, 1 + (stride - 1) * 0.42) : 1;
+    /* The painted layers carry the low-frequency light now, so the moving
+       decimation only needs to be 2x. The compensation is retuned to keep
+       the total emitted light flat across the motion boundary: alpha x
+       size^2 x count is boost * 1.15^2 / stride, and 0.512 puts that at
+       1.000 for stride 2 (the old 0.42 with 3x landed at 0.81, a visible
+       step every time a drag stopped). */
+    var stride = galStride * (moving ? 2 : 1);
+    var boost = stride > 1 ? Math.min(2.4, 1 + (stride - 1) * 0.512) : 1;
     for (b = 0; b < 3; b++) {
       var a = GAL_ALPHA[b] * ga * boost;
       if (!(a > 0.003)) continue;
@@ -2842,7 +3993,10 @@
         zc = px * fX + py * fY + pz * fZ;
         if (zc <= nearD) continue;
         s = fpxV / zc;
-        sx2 = cam.ppx + (px * rX + py * rY) * s;
+        /* the third term is new (CL-08): the cruise rig can roll the camera,
+           so rZ is no longer always zero. It costs one multiply-add per
+           point and is bit-identical whenever rZ === 0. */
+        sx2 = cam.ppx + (px * rX + py * rY + pz * rZ) * s;
         if (sx2 < -m || sx2 > W + m) continue;
         sy2 = cam.ppy - (px * uX + py * uY + pz * uZ) * s;
         if (sy2 < -m || sy2 > H + m) continue;
@@ -2902,13 +4056,22 @@
     var counts = new Uint32Array(12);
     var bk = new Uint8Array(n);
     for (i = 0; i < n; i++) { b = PURE.bgBucket(d.ci[i], d.mag[i]); bk[i] = b; counts[b]++; }
-    var lists = [], cursor = new Uint32Array(12);
-    for (b = 0; b < 12; b++) lists.push(new Uint32Array(counts[b]));
+    var cursor = new Uint32Array(12), starts = new Uint32Array(12);
+    for (b = 1; b < 12; b++) starts[b] = starts[b - 1] + counts[b - 1];
     /* cuts[l][b] = how many of bucket b fall inside LOD level l */
     var cuts = [new Uint32Array(12), new Uint32Array(12), new Uint32Array(12)];
+    /* Positions are copied into ONE interleaved array in bucket order, so
+       both sky loops read straight through memory instead of chasing an
+       index list into three separate 480 KB coordinate arrays. Same points,
+       same order, same pixels: this is only about the cache. It is worth
+       about 3 ms a frame of the cruise, which is the frame's single
+       biggest line item. */
+    var pos = new Float64Array(n * 3);
     for (i = 0; i < n; i++) {
       b = bk[i];
-      lists[b][cursor[b]++] = i;
+      var o3 = (starts[b] + cursor[b]) * 3;
+      cursor[b]++;
+      pos[o3] = d.x[i]; pos[o3 + 1] = d.y[i]; pos[o3 + 2] = d.z[i];
       for (var l = 0; l < 3; l++) if (i < BG_LOD[l]) cuts[l][b]++;
     }
     /* colors: 4 ci groups through the same Ballesteros + blackbody path the
@@ -2921,7 +4084,7 @@
       colL.push('rgb(' + Math.round(c.r * 0.42) + ',' + Math.round(c.g * 0.42) + ',' +
                 Math.round(c.b * 0.46) + ')');
     }
-    BG = { n: n, x: d.x, y: d.y, z: d.z, lists: lists, cuts: cuts,
+    BG = { n: n, pos: pos, starts: starts, cuts: cuts,
            colD: colD, colL: colL };
   }
   function loadBgTier() {
@@ -2940,33 +4103,118 @@
     (document.head || document.documentElement).appendChild(s);
   }
 
+  /* ==================================================================
+     The cruise LOD step.
+
+     CL-27 gives the cruise its own budget and forbids it from demoting the
+     explore view, because the cruise is the heaviest scene in the session
+     BY DESIGN: it is the only one that draws both star tiers, the ship and
+     the HUD in the same frame (explore fades the tiers out at every zoom a
+     close-up or the galaxy is drawn at). This is that own step: a stride
+     over each brightness group of both tiers, brightest group last and
+     least, with the per-star alpha and size raised to keep the sky's
+     weight, plus the ship's cheap detail tier from level 2.
+
+     It is measured from the cruise's OWN frames, it is scoped to the
+     flight (reset at every launch), and it recovers. On hardware that
+     holds its frame budget it never leaves level 0, so what a visitor sees
+     is exactly what was there before; it engages when frames actually
+     slip, which is the only honest way to hold a 4x-throttled 33 ms bar
+     against a scene this heavy.
+     ================================================================== */
+  var cruiseLod = 0;                     /* 0 = full scene, 3 = cheapest */
+  /* The background tier is stored brightest first, which is what makes its
+     LOD cuts a prefix, so the cruise step spends the prefix FIRST (the
+     faintest thousands are what a strided sky loses anyway, and dropping
+     them keeps the remaining ones at full density instead of thinning the
+     bright ones) and only then strides inside each brightness group. */
+  var CL_CUT = [-1, 1, 0, 0];            /* -1 = whatever bgLod already says */
+  var CL_BG = [[1, 1, 1], [1, 1, 1], [1, 1, 2], [1, 2, 4]];
+  var CL_STAR = [[1, 1, 1], [1, 1, 2], [1, 2, 4], [2, 4, 8]];
+  var clBuf = new Float32Array(12), clN = 0, clHot = 0, clCool = 0, clHold = 0;
+  /* Two thresholds, because one number cannot be both "never touch a scene
+     that is doing fine" and "keep cutting until the frame is actually good".
+     Evidence above CL_MID counts at its own length and evidence above CL_HI
+     counts five times over, so a frame rate that has collapsed outright
+     (CL_HI is about 18 fps on a vsync-locked browser, where a dropped frame
+     reads as a whole extra 16.7 ms) sheds detail in a third of a second,
+     while a scene merely sitting under 33 fps has to stay there for a second
+     and a half before anything is touched. Leaving level 0 needs three times
+     the evidence of every step after it: once the page has admitted it is
+     struggling it keeps cutting until the frame is inside the budget.
+     Recovery is one step per 4 s of frames back on the 60 Hz grid, and the
+     gap between CL_LO and CL_MID is what stops it hunting. */
+  var CL_HI = 55;                        /* ms: collapsed, act at once */
+  var CL_MID = 30;                       /* ms: over budget, act on patience */
+  var CL_LO = 20;                        /* ms, sustained: recover a step */
+
+  function skyLod() { return mode === 'cruise' ? cruiseLod : 0; }
+  /* stride for brightness group g (0 = brightest) */
+  function bgStride(g) { return CL_BG[skyLod()][g]; }
+  function starStride(b) { return CL_STAR[skyLod()][b]; }
+  function bgCutIdx() {
+    var l = skyLod();
+    if (!l) return bgLod;
+    var c = CL_CUT[l];
+    return (c < 0 || c > bgLod) ? bgLod : c;
+  }
+  function strideAlpha(sk) { return sk > 1 ? Math.sqrt(sk) : 1; }
+  function strideSize(sk) { return sk > 1 ? 1 + (sk - 1) * 0.05 : 1; }
+
+  function clMedian() {
+    var a = [], i;
+    for (i = 0; i < 12; i++) a.push(clBuf[i]);
+    a.sort(function (p, q) { return p - q; });
+    return (a[5] + a[6]) / 2;
+  }
+  function cruiseBudget(dtMs) {
+    if (mode !== 'cruise') { clN = 0; clHot = 0; clCool = 0; clHold = 0; return; }
+    if (!(dtMs > 0) || dtMs > 600) return;
+    if (clHold > 0) { clHold -= dtMs; return; }
+    clBuf[clN % 12] = dtMs;
+    clN++;
+    if (clN < 12) return;
+    var med = clMedian();
+    if (med > CL_MID) { clHot += (med > CL_HI ? dtMs * 5 : dtMs); clCool = 0; }
+    else { clHot = 0; if (med < CL_LO) clCool += dtMs; else clCool = 0; }
+    if (clHot >= (cruiseLod === 0 ? 1500 : 500) && cruiseLod < 3) {
+      cruiseLod += (cruiseLod >= 1 && med > CL_MID * 2) ? 2 : 1;
+      if (cruiseLod > 3) cruiseLod = 3;
+      clHot = 0; clCool = 0; clHold = 250;
+    } else if (clCool >= 4000 && cruiseLod > 0) {
+      cruiseLod--;
+      clHot = 0; clCool = 0; clHold = 250;
+    }
+  }
+
   /* alpha per brightness group, dimmest last */
   var BG_A = [0.85, 0.6, 0.4];
   function drawBgTier(sa) {
     if (!BG) return;
     var light = isLight();
     var cols = light ? BG.colL : BG.colD;
-    var cut = BG.cuts[bgLod];
-    var xs = BG.x, ys = BG.y, zs = BG.z;
-    var m = 4, b, k, i, list, nn, px, py, pz, zc, s, sx2, sy2;
+    var cut = BG.cuts[bgCutIdx()];
+    var pos = BG.pos, starts = BG.starts;
+    var m = 4, b, k, nn, j, px, py, pz, zc, s, sx2, sy2;
+    var ppx = cam.ppx, ppy = cam.ppy;
     for (b = 0; b < 12; b++) {
       nn = cut[b];
       if (!nn) continue;
-      var a = sa * BG_A[b % 3];
+      var sk = bgStride(b % 3);
+      var a = sa * BG_A[b % 3] * strideAlpha(sk);
       if (!(a > 0.004)) continue;
       ctx.globalAlpha = a > 1 ? 1 : a;
       ctx.fillStyle = cols[b];
-      var sz = (b % 3) === 0 ? 1.6 : 1.1;
-      list = BG.lists[b];
-      for (k = 0; k < nn; k++) {
-        i = list[k];
-        px = xs[i] - camPX; py = ys[i] - camPY; pz = zs[i] - camPZ;
+      var sz = ((b % 3) === 0 ? 1.6 : 1.1) * strideSize(sk);
+      j = starts[b] * 3;
+      for (k = 0; k < nn; k += sk, j += sk * 3) {
+        px = pos[j] - camPX; py = pos[j + 1] - camPY; pz = pos[j + 2] - camPZ;
         zc = px * fX + py * fY + pz * fZ;
         if (zc <= nearD) continue;
         s = fpxV / zc;
-        sx2 = cam.ppx + (px * rX + py * rY) * s;
+        sx2 = ppx + (px * rX + py * rY + pz * rZ) * s;   /* CL-08 third term */
         if (sx2 < -m || sx2 > W + m) continue;
-        sy2 = cam.ppy - (px * uX + py * uY + pz * uZ) * s;
+        sy2 = ppy - (px * uX + py * uY + pz * uZ) * s;
         if (sy2 < -m || sy2 > H + m) continue;
         ctx.fillRect(sx2, sy2, sz, sz);
       }
@@ -2975,11 +4223,37 @@
   }
 
   /* Rolling frame budget: drop one LOD tier (and decimate the galaxy) when
-     the median rAF delta stays above 24 ms for about a second. Never climbs
-     back inside the session, so it cannot oscillate. */
+     the median rAF delta stays above 24 ms for about a second. The two point
+     tiers never climb back inside the session, so they cannot oscillate.
+
+     What IS new (D7): the governor ignores the cruise entirely and holds off
+     for 1500 ms after a mode change or a finished galaxy bake. The cruise is
+     the heaviest scene in the session BY DESIGN, and a one-off spike there
+     used to permanently demote the explore view you come back to. The
+     painted galaxy layers get their own step, galLod, which is the one
+     demotion that is allowed to recover. */
   var fdBuf = new Float32Array(30), fdN = 0, fdOver = 0;
+  var fdSort = new Float32Array(30);
+  var galLod = 2;                        /* 2 all layers / 1 core+arms / 0 core, mesh 5 */
+  var galGood = 0;                       /* ms of comfortable frames while demoted */
+  var GOV_HOLD_MS = 1500;
+  var budgetHold = 0;                    /* ms of samples still being ignored */
+
+  function fdMedian() {
+    var i, j, v;
+    for (i = 0; i < 30; i++) fdSort[i] = fdBuf[i];
+    for (i = 1; i < 30; i++) {           /* 30 items: insertion sort is the fast one */
+      v = fdSort[i];
+      for (j = i - 1; j >= 0 && fdSort[j] > v; j--) fdSort[j + 1] = fdSort[j];
+      fdSort[j + 1] = v;
+    }
+    return (fdSort[14] + fdSort[15]) / 2;
+  }
+
   function frameBudget(dtMs) {
     if (!(dtMs > 0) || dtMs > 400) return;
+    if (mode === 'cruise') return;
+    if (budgetHold > 0) { budgetHold -= dtMs; return; }
     fdBuf[fdN % 30] = dtMs;
     fdN++;
     if (fdN < 30) return;
@@ -2988,8 +4262,17 @@
     if (over > 15) fdOver++; else fdOver = 0;
     if (fdOver >= 30) {
       fdOver = 0;
+      galGood = 0;
+      if (galLod > 0) galLod--;
       if (bgLod > 0) bgLod--;
       else if (galStride < 2) galStride = 2;
+    }
+    /* recovery, painted layers only: one step back per 6 s of comfortable
+       frames, and the counter restarts after each one, so it can climb at
+       most one step every 6 s and never faster than the scene earns it. */
+    if (galLod < 2) {
+      if (fdMedian() < 18) galGood += dtMs; else galGood = 0;
+      if (galGood >= 6000) { galGood = 0; galLod++; }
     }
   }
 
@@ -3000,14 +4283,16 @@
     for (b = 0; b < 3; b++) {
       var list = bandLists[b];
       n = list.length;
-      ctx.globalAlpha = sa * BAND_A[b];
-      for (k = 0; k < n; k++) {
+      var sk = starStride(b);
+      var a = sa * BAND_A[b] * strideAlpha(sk);
+      ctx.globalAlpha = a > 1 ? 1 : a;
+      for (k = 0; k < n; k += sk) {
         i = list[k];
         var px = starX[i] - camPX, py = starY[i] - camPY, pz = starZ[i] - camPZ;
         var zc = px * fX + py * fY + pz * fZ;
         if (zc <= nearD) { scrOk[i] = 0; continue; }
         var s = fpxV / zc;
-        var sx2 = cam.ppx + (px * rX + py * rY) * s;   /* rZ = 0 always */
+        var sx2 = cam.ppx + (px * rX + py * rY + pz * rZ) * s;   /* CL-08 third term */
         var sy2 = cam.ppy - (px * uX + py * uY + pz * uZ) * s;
         if (sx2 < -m || sx2 > W + m || sy2 < -m || sy2 > H + m) { scrOk[i] = 0; continue; }
         scrX[i] = sx2; scrY[i] = sy2; scrOk[i] = 1;
@@ -3128,8 +4413,8 @@
         }
         ctx.globalAlpha = 1;
         orbBacking(P2.x, P2.y, opx, pa);
-        ART.drawPlanet(ctx, P2.x, P2.y, opx, solArtOf(i), now / 1000,
-                       { quality: orbQuality(), lightDir: lds, alpha: pa });
+        orbDrawPlanet(ctx, P2.x, P2.y, opx, solArtOf(i), orbT(now),
+                      { quality: orbQuality(), lightDir: lds, alpha: pa }, true);
         planetOrbPx = opx; planetOrbIdx = i;
         /* the ring is a "this one" marker for a dot; on a big orb it is just
            a circle drawn through the middle of a world */
@@ -3277,6 +4562,8 @@
      ================================================================== */
   var exoScr = [];                     /* exoplanet screens, for taps */
   var starOrbPx = 0;                   /* last drawn star-orb radius */
+  var lastOrbBlend = 0;                /* PURE.orbBlend of the centered star */
+  var starSprites = 0;                 /* centered-star sprite draws, for QA */
 
   function orbQuality() { return (W <= 768 || reduced) ? 0 : 1; }
 
@@ -3311,7 +4598,14 @@
   }
 
   /* star disc size: brightness-derived as before, but allowed to grow with
-     the zoom so people can really look at one (still not to scale) */
+     the zoom so people can really look at one (still not to scale).
+
+     Past ORB_HOLD_AU the radius used to be a CONSTANT, which is why the orb
+     vanished the instant the old D < 200 switch fired and left 200 to 5000 AU
+     showing nothing but the background fill. It now shrinks continuously,
+     slowly (K_SHRINK 0.40, so a doubling of distance costs a quarter of the
+     radius), and PURE.orbBlend fades what is left into the atlas sprite. */
+  var ORB_HOLD_AU = PURE.ORB_HOLD_AU, K_SHRINK = PURE.K_SHRINK;
   function starOrbRadius(i, D) {
     var Rsun = A.starRadiusSun(starBolLum(i), starTempOf(i));
     var base = isFinite(Rsun)
@@ -3319,8 +4613,8 @@
       : 8;
     if (!(D > 0)) return base;
     var lim = Math.max(base, Math.min(H * 0.38, 300));
-    if (D >= 30) return base;
-    return clampN(base * (30 / D), base, lim);
+    if (D <= ORB_HOLD_AU) return clampN(base * (ORB_HOLD_AU / D), base, lim);
+    return base * Math.pow(ORB_HOLD_AU / D, K_SHRINK);
   }
 
   /* One small ship on a tilted orbit ellipse around a body it is parked at.
@@ -3355,24 +4649,47 @@
     ctx.globalAlpha = 1;
   }
 
-  function drawCenteredStar(D, now) {
+  /* D4. The old version switched the whole close-up off at D = 200 AU and
+     the star tiers only fade IN at 5,000, so everything between the two was
+     a screen full of nothing but bg(). There is no switch left: the orb
+     shrinks continuously, orbBlend cross-fades it against this one star's
+     atlas sprite, and the sprite is drawn whatever the distance. */
+  function drawCenteredStar(D, now, sa) {
     exoScr.length = 0;
     starOrbPx = 0;
+    lastOrbBlend = 0;
     var i = centeredStar;
     if (i < 0 || i >= NS) return;
-    var fade = 1 - ramp(D, 150, 200);
-    if (fade <= 0.01) return;
     var P = PRJ;
     if (!projectPt(starX[i], starY[i], starZ[i], P)) return;
     var cx0 = P.x, cy0 = P.y;
     if (!isFinite(cx0) || !isFinite(cy0)) return;
     var rpx = starOrbRadius(i, D);
-    starOrbPx = rpx;
+    var fade = PURE.orbBlend(rpx);
+    lastOrbBlend = fade;
+    starOrbPx = fade > 0 ? rpx : 0;
+
+    /* The sprite. One drawImage, at the orb's own projected position, at the
+       16 px the star field draws every other star at. It writes no scrOk
+       entry and is neither hoverable nor clickable: this is the star that is
+       already centered, and `sa`, `starsVis` and the 65,000-point tiers are
+       deliberately left exactly as they were. */
+    var sa0 = (typeof sa === 'number' && isFinite(sa)) ? clampN(sa, 0, 1) : 0;
+    var spriteA = Math.max(sa0 * BAND_A[PURE.bandOf(SD.stars.mag[i])], 1 - fade);
+    if (spriteA > 0.004) {
+      var at0 = ensureAtlas();
+      ctx.globalAlpha = clampN(spriteA, 0, 1);
+      ctx.drawImage(at0, starCellX[i], starCellY[i], 32, 32, cx0 - 8, cy0 - 8, 16, 16);
+      ctx.globalAlpha = 1;
+      starSprites++;
+    }
+    if (fade <= 0) return;
+
     orbBacking(cx0, cy0, rpx, fade);
     var art = starArtOf(i);
     if (art) {
-      ART.drawStar(ctx, cx0, cy0, rpx, art, now / 1000,
-                   { quality: orbQuality(), alpha: fade });
+      orbDrawStar(ctx, cx0, cy0, rpx, art, orbT(now),
+                  { quality: orbQuality(), alpha: fade }, true);
     } else {
       drawStarBlob(cx0, cy0, rpx, starTempOf(i), fade);
     }
@@ -3390,7 +4707,15 @@
     if (mode !== 'cruise' && shipAt.kind === 's' && shipAt.idx === i) {
       drawParkedShip(cx0, cy0, rpx, now, fade);
     }
-    /* known planets: real orbit sizes (a in AU), illustrative positions */
+    /* known planets: real orbit sizes (a in AU), illustrative positions.
+       Below half blend the host star itself is under 4 px, so its planets
+       are far smaller than a pixel: the orbs are not drawn and, separately,
+       nothing is pushed to exoScr. The MODE gate on exoScr is load-bearing
+       and is NOT the same rule as the blend gate: during a cruise capture
+       the destination becomes the centered star at close range, and a tap
+       there means skip-to-arrival, never "open a planet card". */
+    if (fade < 0.5) return;
+    var exoTappable = (mode === 'explore');
     var list = starPlanets[i];
     if (!list || !list.length) return;
     var tAnim = reduced ? 0 : now / 1000 / 600;   /* 600 s per Earth-year of sweep */
@@ -3437,8 +4762,10 @@
           /* the space vignette is there to lift an orb off a near-white SKY;
              over the host star's own bright disc it is just a brown smudge */
           if (Math.hypot(ex2 - cx0, ey2 - cy0) > rpx + er) orbBacking(ex2, ey2, er, fade);
-          ART.drawPlanet(ctx, ex2, ey2, er, eart, now / 1000,
-                         { quality: orbQuality(), lightDir: ld, alpha: fade });
+          /* exoplanet orbs stay on VoyageArt: D1 reserves the two GL blits
+             for the close-up body and the cruise destination */
+          orbDrawPlanet(ctx, ex2, ey2, er, eart, orbT(now),
+                        { quality: orbQuality(), lightDir: ld, alpha: fade }, false);
         } else {
           ctx.globalAlpha = fade;
           ctx.fillStyle = isSel ? gold() : textColor(0.85);
@@ -3463,8 +4790,8 @@
             ], clampN(ex2, W * 0.24, W * 0.76), ey2 + er + 12, W < 700 ? 10 : 11.5);
           }
         }
-        exoScr.push({ j: j, x: ex2, y: ey2, r: er });
-      } else {
+        if (exoTappable) exoScr.push({ j: j, x: ex2, y: ey2, r: er });
+      } else if (exoTappable) {
         exoScr.push({ j: j, x: -9999, y: -9999, r: 3 });
       }
     }
@@ -3529,8 +4856,11 @@
     ctx.fillStyle = textColor(0.65);
     ctx.fillText(ns.label, (x0 + x1) / 2, y - 5);
     sbRect = { x: x0, y: y - 20, w: ns.px, h: 22 };
-    /* honesty whisper while a star or planet disc is on screen */
-    if (centeredStar >= 0 && D < 200) {
+    /* Honesty whisper while a star or planet disc is on screen. It keys off
+       the same blend the disc does, so it lasts exactly as long as the disc
+       it is disclosing (the old D < 200 test would have gone quiet while the
+       disc was still drawn). */
+    if (centeredStar >= 0 && lastOrbBlend > 0) {
       ctx.font = '10px ' + FONT;
       ctx.fillStyle = textColor(0.45);
       ctx.fillText('star disc not to scale', (x0 + x1) / 2, y - 20);
@@ -3713,6 +5043,18 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = bg();
     ctx.fillRect(0, 0, W, H);
+    /* One frame, at most GL_MAX_BLITS orb blits: tell VoyageGL the frame
+       started so the budget is per frame and not per call. This takes the
+       WALL clock, never orbT: VoyageGL resets the counter when the time it
+       is handed CHANGES, and under reduced motion every orb passes tSec 0
+       forever, so without a moving frame stamp the budget would fill up
+       after two frames and never refill. */
+    var Gl = GL();
+    if (Gl && Gl.beginFrame) Gl.beginFrame(now / 1000);
+    /* hold the GL context open through a cinematic: a cruise goes ten
+       seconds with no orb over GL_MIN_R, which used to trip the idle
+       release and buy a context re-creation mid-flight */
+    if (Gl && Gl.setHold) Gl.setHold(mode === 'cruise' || !!pcCruise);
     updateCamBasis();
     var D = camD;
     /* Past a few thousand light years the whole catalogue is a sub-pixel clump
@@ -3737,6 +5079,10 @@
     }
     if (ga > 0.004) drawGalaxy(ga);
     starsVis = sa > 0.004;
+    /* a strided star tier leaves last frame's screen position on the stars
+       it skipped, so clear the flags first and let only what is really
+       drawn this frame carry one */
+    if (skyLod() > 0) scrOk.fill(0);
     if (starsVis) drawBgTier(sa);
     if (starsVis) drawStars(sa);
     /* From another star the Sun is just one more background star: its disc,
@@ -3746,8 +5092,11 @@
     if (atHome) drawSun(D);
     if (atHome && pa > 0.01) drawSolar(pa, now);
     else { planetOrbIdx = -1; planetOrbPx = 0; }
-    if (centeredStar >= 0 && D < 200 && mode !== 'porkchop') drawCenteredStar(D, now);
-    else { exoScr.length = 0; starOrbPx = 0; }   /* stale exo dots must not stay tappable */
+    /* No distance switch: drawCenteredStar owns the whole ramp now, from a
+       screen-filling disc down to the one atlas sprite that keeps the star
+       on screen at any zoom (D4). */
+    if (centeredStar >= 0 && mode !== 'porkchop') drawCenteredStar(D, now, sa);
+    else { exoScr.length = 0; starOrbPx = 0; lastOrbBlend = 0; }
     drawSelectionRings();
     if (mode === 'cruise') drawCruise(now);
     if (mode === 'porkchop') { sbRect = null; drawTimeline(); drawPorkchop(); }
@@ -3804,7 +5153,13 @@
     }
 
     if (mode === 'cruise' && cruiseSt) cruiseStep(nowMs);
-    if (mode !== lastMode) { lastMode = mode; syncFpBar(); }
+    if (mode !== lastMode) {
+      lastMode = mode;
+      syncFpBar();
+      /* a mode change re-costs the whole scene for a moment; do not let that
+         moment demote a tier for the rest of the session */
+      budgetHold = GOV_HOLD_MS;
+    }
     stepPreviews(nowMs);
 
     if (ariaPend && nowMs - ariaLast > 400) {
@@ -3812,8 +5167,12 @@
     }
     draw(nowMs);
     frameBudget(t - lastFrameT);
+    cruiseBudget(t - lastFrameT);
     lastFrameT = t;
     if (!bgTried && ++framesPainted > 1) loadBgTier();
+    /* the galaxy bake starts AFTER the first painted frame, like the
+       background tier: the point cloud carries the view until it lands */
+    if (!galBakeTried) { galBakeTried = true; startGalaxyBake(); }
   }
   var lastFrameT = 0, framesPainted = 0, lastMode = null;
   function start() { if (!raf) { lastT = 0; raf = requestAnimationFrame(loop); } }
@@ -3927,9 +5286,12 @@
         delete pointers[e.pointerId];
         return;
       }
+      /* CL-39: mid-cruise a second finger is a rig-distance gesture and
+         nothing else. It never cancels the free-look drag already running
+         and it never synthesizes the skip tap. */
       orbitDrag = null; downSt = null; dragKind = null;
       var pts = pvals();
-      pinchSt = { d: pdist(pts[0], pts[1]) };
+      pinchSt = { d: pdist(pts[0], pts[1]), rig: mode === 'cruise' };
       if (canvas.setPointerCapture) canvas.setPointerCapture(e.pointerId);
       e.preventDefault();
       return;
@@ -3953,7 +5315,12 @@
       }
     }
     if (mode === 'cruise') {
+      /* free look. The tap that skips the cinematic is still a tap: the
+         6 px threshold below is what separates them. */
       downSt = { x: p.x, y: p.y, t: performance.now(), type: e.pointerType, cruise: true };
+      lookDrag = { x0: p.x, y0: p.y, yaw0: lookYaw, pitch0: lookPitch };
+      if (canvas.setPointerCapture) canvas.setPointerCapture(e.pointerId);
+      e.preventDefault();
       return;
     }
     camAnim = null;                      /* grabbing the sky cancels a fly */
@@ -3971,9 +5338,20 @@
       if (pts.length < 2) return;
       var nd = pdist(pts[0], pts[1]);
       if (pinchSt.d > 0 && nd > 0) {
-        cam.logD = clampN(cam.logD - Math.log(nd / pinchSt.d) / Math.LN10, minLogD(), MAX_LOGD);
+        if (pinchSt.rig) rigD = clampN(rigD * (pinchSt.d / nd), RIG_D_MIN, RIG_D_MAX);
+        else cam.logD = clampN(cam.logD - Math.log(nd / pinchSt.d) / Math.LN10, minLogD(), MAX_LOGD);
       }
       pinchSt.d = nd;
+      return;
+    }
+    if (lookDrag) {
+      var ldx = p.x - lookDrag.x0, ldy = p.y - lookDrag.y0;
+      if (downSt && Math.abs(ldx) + Math.abs(ldy) > 6) downSt = null;
+      if (!downSt) {
+        lookYaw = clampN(lookDrag.yaw0 - ldx * 0.005, -Math.PI, Math.PI);
+        lookPitch = clampN(lookDrag.pitch0 - ldy * 0.005,
+                           -Math.PI * 0.45, Math.PI * 0.45);
+      }
       return;
     }
     if (dragKind === 'pc') { pcPick(p); return; }
@@ -4001,7 +5379,18 @@
     var p = pointers[e.pointerId] ? { x: pointers[e.pointerId].x, y: pointers[e.pointerId].y } : rel(e);
     delete pointers[e.pointerId];
     if (pinchSt) {
-      if (pointerCount() < 2) pinchSt = null;
+      if (pointerCount() < 2) {
+        pinchSt = null;
+        /* the finger that stayed down is still free-looking, so re-anchor
+           its drag instead of letting the stale origin snap the view */
+        if (lookDrag) {
+          var rem = pvals()[0];
+          if (rem) {
+            lookDrag.x0 = rem.x; lookDrag.y0 = rem.y;
+            lookDrag.yaw0 = lookYaw; lookDrag.pitch0 = lookPitch;
+          } else lookDrag = null;
+        }
+      }
       return;                            /* ignore taps until both lift */
     }
     if (dragKind) {
@@ -4022,11 +5411,13 @@
     }
     downSt = null;
     orbitDrag = null;
+    if (pointerCount() === 0) lookDrag = null;
   }
   canvas.addEventListener('pointerup', endPointer);
   canvas.addEventListener('pointercancel', function (e) {
     delete pointers[e.pointerId];
     pinchSt = null; orbitDrag = null; downSt = null; dragKind = null;
+    if (pointerCount() === 0) lookDrag = null;
   });
 
   canvas.addEventListener('wheel', function (e) {
@@ -4035,6 +5426,12 @@
     var dy = e.deltaY;
     if (e.deltaMode === 1) dy *= 16;         /* line-mode mice -> pixels */
     else if (e.deltaMode === 2) dy *= (H || 600);
+    if (mode === 'cruise') {
+      /* CL-09: the wheel is the rig distance here. cam.logD stays pinned as
+         the input to the LOD ramps and minLogD is not consulted at all. */
+      rigD = clampN(rigD * Math.exp(dy * 0.0016), RIG_D_MIN, RIG_D_MAX);
+      return;
+    }
     cam.logD = clampN(cam.logD + dy * 0.005 / Math.LN10, minLogD(), MAX_LOGD);
   }, { passive: false });
 
@@ -4052,11 +5449,22 @@
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (window.GadgetUI && GadgetUI.isTyping(e)) return;
     var tag = (e.target && e.target.tagName || '').toLowerCase();
-    if (tag === 'button' || tag === 'a' || tag === 'summary' || tag === 'label') return;
     var k = e.key;
-    if (mode === 'intro') { endIntro(); if (k === 'Escape') return; }
+    /* Escape runs the page ladder FIRST, before the interactive-element
+       guard below. That guard exists so Enter and Space keep belonging to a
+       focused control (the four-in-a-row lesson), and Escape is never a
+       control's key: leaving it behind the guard meant that clicking the
+       cruise HUD's own info button disarmed Esc-to-skip for the rest of the
+       flight, which is the one key the hint text promises. */
+    if (k === 'Escape') {
+      if (mode === 'intro') { endIntro(); return; }
+      attract = false;
+      escLadder();
+      return;
+    }
+    if (tag === 'button' || tag === 'a' || tag === 'summary' || tag === 'label') return;
+    if (mode === 'intro') { endIntro(); }
     attract = false;
-    if (k === 'Escape') { escLadder(); return; }
     if (k === 'v' || k === 'V') {
       /* one consumer per key: V only means anything mid-cruise */
       if (mode === 'cruise' && !reduced) { setFpMode(!fpMode); e.preventDefault(); }
@@ -4338,8 +5746,10 @@
     setStatus(fpMode ? 'Cockpit view. The sky is drawn as relativity says you would see it.'
                      : 'Chase view.');
   }
+  var elFpInfo = id('voy-fp-info');
   if (elFpChase) elFpChase.addEventListener('click', function () { setFpMode(false); });
   if (elFpCockpit) elFpCockpit.addEventListener('click', function () { setFpMode(true); });
+  if (elFpInfo) elFpInfo.addEventListener('click', function () { replayCaptions(); });
   if (reduced && elFpBar) elFpBar.hidden = true;
 
   /* ---------------- porkchop-row buttons ---------------- */
@@ -4353,6 +5763,18 @@
     atlas.dark = null; atlas.light = null;
     /* the galaxy cloud and the background tier are world-space points whose
        tint is picked per frame, so nothing there needs rebuilding */
+    /* the PAINTED layers are theme-keyed pixels, so they do. invalidateTheme
+       with no argument drops them and marks the bake stale; we then start it
+       ourselves so the completion callback is ours and the frame governor
+       gets its hold-off. The point cloud alone renders in the meantime,
+       which is the same fallback as the first load. */
+    if (galBakeTried) {
+      var G = GAL();
+      if (G && G.invalidateTheme) {
+        try { G.invalidateTheme(); } catch (e) { /* enhancement only */ }
+        startGalaxyBake();
+      }
+    }
   }
   if (window.MutationObserver) {
     new MutationObserver(onThemeChange).observe(document.documentElement,
@@ -4475,8 +5897,136 @@
       return (cruiseSt && cruiseSt.cp) ? cruiseHudLines(cruiseSt) : null;
     },
     hudBoxes: function () { return hudDrawn.slice(); },
+    /* ---- wave 4, builder B ---- */
+    cruisePose: function (tSec) {
+      if (!cruiseSt) return null;
+      var t = (typeof tSec === 'number' && isFinite(tSec))
+        ? tSec : (performance.now() - cruiseSt.t0) / 1000;
+      return PURE.cruisePose(t, cruisePlanOf(cruiseSt));
+    },
+    rig: function () {
+      return { rigD: rigD, lookYaw: lookYaw, lookPitch: lookPitch,
+               shipX: RIG.x, shipY: RIG.y, shipPx: RIG.px,
+               shipYaw: RIG.yaw, shipAng: RIG.sang, shipBank: RIG.bank,
+               ok: RIG.ok };
+    },
+    setLook: function (y, p) {
+      lookYaw = clampN((typeof y === 'number' && isFinite(y)) ? y : 0, -Math.PI, Math.PI);
+      lookPitch = clampN((typeof p === 'number' && isFinite(p)) ? p : 0,
+                         -Math.PI * 0.45, Math.PI * 0.45);
+    },
+    setRigD: function (d) {
+      rigD = clampN((typeof d === 'number' && isFinite(d)) ? d : 1, RIG_D_MIN, RIG_D_MAX);
+    },
+    /* the aberrated WORLD directions of the first n catalog stars at the
+       live beta. Nothing here reads the view, which is the point: a 2 pi
+       sweep of the look offsets must not move a single one of them. */
+    abProbe: function (n) {
+      var c = cruiseSt;
+      if (!c || !c.cp || !SD) return null;
+      var lim = Math.min(NS, (n | 0) || 200);
+      var beta = clampN(c.cp.v, 0, 0.9999999);
+      var out = [], fwd = 0, i, d = { x: 0, y: 0, z: 0, cos: 0, delta: 1 };
+      for (i = 0; i < lim; i++) {
+        PURE.aberrateDir(c.ux, c.uy, c.uz,
+                         starX[i] - c.sx, starY[i] - c.sy, starZ[i] - c.sz, beta, d);
+        out.push([d.x, d.y, d.z]);
+        if (d.cos > 0) fwd++;
+      }
+      return { dirs: out, forward: fwd, beta: beta };
+    },
+    lookBack: function () {
+      return { on: LB.on, x: LB.x, y: LB.y, r: LB.r, alpha: LB.alpha,
+               sprite: LB.sprite, dLy: LB.dLy, name: LB.name, faint: LB.faint };
+    },
+    caption: function () { return capCur ? capCur.text : null; },
+    captionSr: function () { return elCapSr ? elCapSr.textContent : null; },
+    captionTrack: function () { return capTrack.slice(); },
+    replayCaptions: function () { replayCaptions(); },
     artReady: !!ART,
     shipsReady: !!SHIPS,
+    /* ---- wave 4 ---- */
+    gl: function () {
+      var G = GL();
+      var info = (G && G.info) ? G.info() : null;
+      if (!info) {
+        return { supported: false, active: false,
+                 reason: glOff ? 'disabled' : 'absent',
+                 octaves: 0, targetPx: 0, blits: 0 };
+      }
+      return info;
+    },
+    glDisable: function () {
+      glOff = true;
+      var G = window.VoyageGL || null;
+      if (G && G.disable) { try { G.disable(); } catch (e) { /* already gone */ } }
+    },
+    glReady: function () {
+      var G = GL();
+      return !!(G && G.info && G.info().active);
+    },
+    galaxyReady: function () {
+      var G = GAL();
+      return !!(G && G.ready && G.ready());
+    },
+    galaxyStats: function () {
+      var G = GAL();
+      return (G && G.stats) ? G.stats() : null;
+    },
+    orbBlend: function () { return lastOrbBlend; },
+    starSpriteDraws: function () { return starSprites; },
+    lod: function () {
+      return { bgLod: bgLod, galStride: galStride, galLod: galLod,
+               cruiseLod: cruiseLod };
+    },
+    /* TEST ONLY. The painted galaxy layers are the one demotion the
+       governor is allowed to take back, which means a perf harness can
+       never reproduce a given level on purpose and the per-layer budgets
+       stayed unmeasured through the wave-4 review. This forces it; nothing
+       in the page calls it. */
+    /* TEST ONLY, same reason: pin the cruise step so a harness can measure
+       or screenshot a chosen level (and prove level 0 is what an unloaded
+       machine actually draws). Pinning also freezes the governor until the
+       next launch. Nothing in the page calls it. */
+    setCruiseLod: function (n) {
+      n = Math.round(typeof n === 'number' && isFinite(n) ? n : 0);
+      cruiseLod = n < 0 ? 0 : (n > 3 ? 3 : n);
+      clHold = 1e9;
+      return cruiseLod;
+    },
+    setGalLod: function (n) {
+      n = Math.round(typeof n === 'number' && isFinite(n) ? n : 0);
+      galLod = n < 0 ? 0 : (n > 2 ? 2 : n);
+      galGood = 0;
+      galKey = '';                       /* force the next draw to re-place */
+      return galLod;
+    },
+    /* Every backing store the page owns, in bytes. The VoyageArt strip cache
+       is reported at its worst case (a 512x256 texture plus an equal-sized
+       aux layer per entry) because the library does not publish sizes. */
+    mem: function () {
+      var n = 0, k;
+      if (canvas) n += (canvas.width || 0) * (canvas.height || 0) * 4;
+      for (k in atlas) {
+        if (atlas[k]) n += atlas[k].width * atlas[k].height * 4;
+      }
+      if (previews) {
+        var pk, p;
+        for (pk in previews) {
+          p = previews[pk];
+          if (p && p.cv) n += (p.cv.width || 0) * (p.cv.height || 0) * 4;
+        }
+      }
+      var G = GL();
+      if (G && G.memBytes) n += G.memBytes() | 0;
+      var Q = GAL();
+      if (Q && Q.stats) {
+        var s = Q.stats();
+        if (s && isFinite(s.bytes)) n += s.bytes;
+      }
+      if (ART && ART.texCacheSize) n += ART.texCacheSize() * 512 * 256 * 4 * 2;
+      return n;
+    },
     project: function (name) {
       updateCamBasis();
       var ln = String(name).toLowerCase();
@@ -4503,8 +6053,12 @@
     selName: { get: function () { return sel ? bodyLabel(sel) : null; } },
     selExoName: { get: function () { return selExo >= 0 && SD ? SD.planets.name[selExo] : null; } },
     cam: { get: function () {
+      var b = cam.basis;
       return { yaw: cam.yaw, pitch: cam.pitch, logD: cam.logD,
-               center: [cam.cx, cam.cy, cam.cz] };
+               center: [cam.cx, cam.cy, cam.cz],
+               basis: b ? { fX: b.fX, fY: b.fY, fZ: b.fZ,
+                            rX: b.rX, rY: b.rY, rZ: b.rZ,
+                            uX: b.uX, uY: b.uY, uZ: b.uZ } : null };
     } },
     boxes: { get: function () {
       return {

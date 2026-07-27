@@ -26,6 +26,17 @@
    Reads window.VoyageAstro when present (kelvinToRgb / starTempFromCi /
    starBolLum / starRadiusSun). If it is missing the art degrades to neutral
    colors rather than duplicating that library's math here.
+
+   This file is the single source of truth for a body's LOOK. starLook(),
+   planetLook() and flareUniforms() hand out the colors, the limb term, the
+   starspot layout and the prominence placement that the 2D renderer below
+   uses, so a second renderer (the WebGL orb path) can draw the same body
+   without re-deriving a single number. drawStar is additionally split into
+   three passes that can be called separately -- drawStarBack (backing glow),
+   drawStarMid (the disc itself) and drawStarFront (the flare bloom) -- so the
+   corona and the bloom around a GL-rendered disc are literally the same code
+   that draws them around the 2D one. drawStar itself is unchanged: it is
+   those three passes back to back.
    ========================================================================== */
 (function (global) {
   'use strict';
@@ -473,6 +484,74 @@
     };
   }
 
+  /* The Sun. The look-back during a cruise has to draw the star you left
+     even when the camera is nowhere near it, so the origin body always has
+     params; every field here is what starParams() would produce for Sol with
+     its measured effective temperature and its radius by definition. */
+  var SOL_PARAMS = {
+    kind: 'star',
+    teff: 5772,
+    rSun: 1,
+    cls: 'G',
+    seed: hashStr('Sol'),
+    flareRate: ACTIVITY.G.flareRate,
+    spotAmp: ACTIVITY.G.spotAmp,
+    granuleScale: ACTIVITY.G.granuleScale
+  };
+
+  /* ---- starspot layout ----
+     Two to five spots, seeded, hugging low latitudes. Lifted out of the
+     texture baker so the GL renderer bakes the SAME spots into its own
+     surface: u is a longitude fraction, v is sin(latitude), r is the angular
+     radius in radians and amp is the darkening depth. */
+  var SPOT_MAX = 5;
+  function starSpots(seed, spotAmp) {
+    var out = [];
+    if (!(spotAmp > 0.02)) return out;
+    var rnd = mulberry32((seed | 0) ^ 0x9E3779B9);
+    var n = 2 + Math.floor(rnd() * 4);
+    for (var i = 0; i < n; i++) {
+      var u = rnd();
+      var v = (rnd() * 2 - 1) * 0.72;
+      var rad = 0.10 + rnd() * 0.16;
+      out.push({ u: u, v: v, r: rad, amp: spotAmp });
+    }
+    return out;
+  }
+
+  /* ---- starLook(params) ----
+     Everything about how a star looks, in one place: the blackbody color, the
+     derived tints the 2D passes paint with, the limb-darkening term, the
+     granulation scale, the spot layout. A star with no measured temperature
+     comes back `neutral` with the grey tone this file has always used for
+     that case, and never an invented color.
+
+     Returns a FRESH object every call; treat it as read-only. */
+  function starLook(params) {
+    var p = (params && typeof params === 'object') ? params : starParams(null);
+    var hasT = fin(p.teff);
+    var base = hasT ? kelvinRgb(p.teff) : NEUTRAL;
+    var bc = [base.r, base.g, base.b];
+    var seed = (p.seed | 0) || 1;
+    var spotAmp = clamp(num(p.spotAmp, 0), 0, 0.6);
+    return {
+      rgb: bc,
+      neutral: !hasT,
+      /* the limb term drawStar paints with: cooler stars darken harder */
+      limbExp: clamp(0.30 + (hasT ? clamp((6500 - p.teff) / 9000, -0.10, 0.34) : 0.10), 0.16, 0.68),
+      granuleScale: num(p.granuleScale, 0.09),
+      spotAmp: spotAmp,
+      spots: starSpots(seed, spotAmp),
+      seed: seed,
+      /* the derived tints, so no second renderer has to guess at them */
+      hot: mixC(bc, [255, 255, 255], 0.5),
+      cool: mixC(bc, [92, 30, 14], hasT ? 0.34 : 0.22),
+      glow: mixC(bc, [255, 255, 255], 0.25),
+      limb: mixC(bc, [70, 22, 10], hasT ? 0.55 : 0.42),
+      prom: mixC(bc, [255, 130, 80], hasT ? 0.55 : 0.25)
+    };
+  }
+
   /* ---- flare / prominence gates ----
      Slot k of a star is a sine gate: it opens for `dur` seconds around each
      peak of sin(phase + t*w). Deterministic in (seed, k, t), which is what
@@ -522,6 +601,51 @@
     return arr;
   }
 
+  /* ---- prominence placement ----
+     Four numbers per slot: [amp, ang, span, hgt].
+       amp  0..1 gate value, 0 when the slot is shut (nothing is drawn)
+       ang  screen angle of the loop's apex, radians
+       span half-width of the loop's footprint on the limb, radians
+       hgt  apex height as a FRACTION of the star's radius BEFORE the gate;
+            the drawn apex sits at r * (1 + hgt * amp), so the maximum reach
+            is r * 1.46 at hgt 0.46 and amp 1.
+     This is the one place the placement is computed. drawProminences reads
+     it, and so does the GL renderer, which is why the loops line up between
+     the two paths. The math runs in float64 (the drawn geometry is float64
+     everywhere else, and quantizing it here would move the 2D loops by a
+     fraction of a pixel for nothing); flareUniforms below is the float32
+     view of the same numbers, sized for a GPU uniform upload. */
+  var PROM_SCRATCH = new Float64Array(FLARE_SLOTS * 4);
+
+  function flareSlots(params, t, out) {
+    var p = (params && typeof params === 'object') ? params : {};
+    var arr = (out && out.length >= FLARE_SLOTS * 4) ? out : new Float64Array(FLARE_SLOTS * 4);
+    var seed = p.seed | 0;
+    var rate = num(p.flareRate, 0);
+    var tt = num(t, 0);
+    for (var k = 0; k < FLARE_SLOTS; k++) {
+      var i = k * 4;
+      var a = flareAmp(seed, tt, rate, k);
+      if (a <= 0.02) { arr[i] = 0; arr[i + 1] = 0; arr[i + 2] = 0; arr[i + 3] = 0; continue; }
+      var h = hash2(seed, k * 40503 + 17);
+      arr[i] = a;
+      arr[i + 1] = (h & 4095) / 4095 * TWO_PI + tt * 0.03;
+      arr[i + 2] = 0.16 + ((h >>> 12) & 127) / 127 * 0.30;
+      arr[i + 3] = 0.16 + ((h >>> 19) & 63) / 63 * 0.30;
+    }
+    return arr;
+  }
+
+  /* Float32 copy of flareSlots, for uploading straight into a shader. `out`
+     is reused when it is big enough, so a per-frame call allocates nothing. */
+  function flareUniforms(params, t, out) {
+    var src = flareSlots(params, t, PROM_SCRATCH);
+    var n = FLARE_SLOTS * 4;
+    var arr = (out && out.length >= n) ? out : new Float32Array(n);
+    for (var i = 0; i < n; i++) arr[i] = src[i];
+    return arr;
+  }
+
   /* ---- star surface texture ----
      Granulation (value noise with a darker lane network) plus 2 to 5 baked
      starspots, in an equal-area strip so the spots rotate with the surface. */
@@ -532,34 +656,34 @@
     if (!cv || !tc || !tc.createImageData || !tc.putImageData) return null;
     var img = tc.createImageData(TW, TH);
     var dat = img.data;
-    var seed = (params.seed | 0) || 1;
-    var gs = num(params.granuleScale, 0.09);
-    var spotAmp = clamp(num(params.spotAmp, 0), 0, 0.6);
+    var look = starLook(params);
+    var seed = look.seed;
+    var gs = look.granuleScale;
+    var spotAmp = look.spotAmp;
     var nGran = clamp(Math.round(6 / Math.max(0.02, gs)), 12, 128);
     var nSup = Math.max(4, Math.round(nGran / 5));
 
-    var hasT = fin(params.teff);
-    var base = hasT ? kelvinRgb(params.teff) : NEUTRAL;
-    var bc = [base.r, base.g, base.b];
+    var bc = look.rgb;
     /* the visible disc is hotter than the catalog color: push toward white */
-    var hot = mixC(bc, [255, 255, 255], 0.5);
-    var cool = mixC(bc, [92, 30, 14], hasT ? 0.34 : 0.22);
+    var hot = look.hot;
+    var cool = look.cool;
     var hotR = hot[0], hotG = hot[1], hotB = hot[2];
     var coolR = cool[0], coolG = cool[1], coolB = cool[2];
 
-    /* starspot placement: the only mulberry32 use in the star path */
-    var rnd = mulberry32(seed ^ 0x9E3779B9);
-    var nSpots = spotAmp > 0.02 ? (2 + Math.floor(rnd() * 4)) : 0;
+    /* starspot placement comes from starLook, so the strip and any other
+       renderer of this star put the spots in the same places */
+    var spots = look.spots;
+    var nSpots = spots.length;
     var spU = [], spSin = [], spCos = [], spLim = [], spInv = [];
     var si;
     for (si = 0; si < nSpots; si++) {
-      spU.push(rnd());
-      var sl = (rnd() * 2 - 1) * 0.72;                 /* spots hug low lats */
+      spU.push(spots[si].u);
+      var sl = spots[si].v;                            /* spots hug low lats */
       spSin.push(sl);
       spCos.push(Math.sqrt(Math.max(0, 1 - sl * sl)));
       /* the cosine of the angular radius, precomputed: calling Math.cos on
          it inside the pixel loop cost more than all the noise put together */
-      var lim = Math.cos(0.10 + rnd() * 0.16);
+      var lim = Math.cos(spots[si].r);
       spLim.push(lim);
       spInv.push(1 / Math.max(1e-6, 1 - lim));
     }
@@ -633,15 +757,17 @@
   function drawProminences(ctx, cx, cy, r, params, t, tint) {
     var rate = num(params.flareRate, 0);
     if (!(rate > 0.0005)) return;
-    var seed = params.seed | 0;
+    /* placement comes from flareSlots so the 2D loops and the GL ones are
+       the same loops; the scratch buffer keeps this allocation-free */
+    var U = flareSlots(params, t, PROM_SCRATCH);
     var lw = Math.max(0.8, r * 0.055);
     for (var k = 0; k < FLARE_SLOTS; k++) {
-      var a = flareAmp(seed, t, rate, k);
+      var u = k * 4;
+      var a = U[u];
       if (a <= 0.02) continue;
-      var h = hash2(seed, k * 40503 + 17);
-      var ang = (h & 4095) / 4095 * TWO_PI + t * 0.03;
-      var span = 0.16 + ((h >>> 12) & 127) / 127 * 0.30;
-      var hgt = r * (0.16 + ((h >>> 19) & 63) / 63 * 0.30) * a;
+      var ang = U[u + 1];
+      var span = U[u + 2];
+      var hgt = r * U[u + 3] * a;
       var a0 = ang - span, a1 = ang + span;
       var x0 = cx + Math.cos(a0) * r * 0.97, y0 = cy + Math.sin(a0) * r * 0.97;
       var x1 = cx + Math.cos(a1) * r * 0.97, y1 = cy + Math.sin(a1) * r * 0.97;
@@ -754,68 +880,34 @@
     if (circle(ctx, cx, cy, r)) ctx.fill();
   }
 
-  /* ---- drawStar(ctx, cx, cy, rPx, params, t, opts) ----
-     params comes from starParams(). t is seconds. opts:
-       quality: 1 (default) full art, 0 card preview (half-res strip, no
-                prominences, no ring bands)
-       alpha:   0..1 overall fade, for the page's distance ramps (default 1)
-     Nothing here reads or writes any state outside the texture cache, and
-     the call is a no-op on junk geometry rather than a throw. */
-  function drawStar(ctx, cx, cy, rPx, params, t, opts) {
-    if (!ctx || !ctx.beginPath) return;
-    var p = (params && typeof params === 'object') ? params : starParams(null);
-    var o = opts || {};
-    var q = o.quality === 0 ? 0 : 1;
-    /* compose with whatever fade the caller already had on the context, and
-       put it back untouched on the way out */
-    var prevAlpha = clamp(num(ctx.globalAlpha, 1), 0, 1);
-    var alpha = clamp(num(o.alpha, 1), 0, 1) * prevAlpha;
-    var x = num(cx, NaN), y = num(cy, NaN), r = num(rPx, NaN);
-    if (!fin(x) || !fin(y) || !fin(r) || r <= 0 || alpha <= 0.004) return;
-    if (r > 4000) r = 4000;
-    var tt = num(t, 0);
+  /* ---- the three star passes ----
+     drawStar is pass 1 + pass 2 + pass 3, in that order, and that is the only
+     way it is ever assembled. A renderer that draws the DISC some other way
+     (the GL orb) calls pass 1, blits its disc, then calls pass 3, and the
+     glow around it is the same glow, drawn by the same code.
+     None of the three touches globalAlpha; the public entry points do. */
 
-    /* the fade lives on the context and nowhere else, so every layer below
-       carries its own opacity only and the overall fade stays linear */
-    ctx.globalAlpha = alpha;
-    if (p.kind === 'ns') {
-      drawPulsar(ctx, x, y, r, p, tt, q);
-      ctx.globalAlpha = prevAlpha;
-      return;
-    }
-    if (p.kind === 'wd') {
-      drawWhiteDwarf(ctx, x, y, r);
-      ctx.globalAlpha = prevAlpha;
-      return;
-    }
-
-    var hasT = fin(p.teff);
-    var base = hasT ? kelvinRgb(p.teff) : NEUTRAL;
-    var bc = [base.r, base.g, base.b];
-    var glowC = mixC(bc, [255, 255, 255], 0.25);
-    var limbC = mixC(bc, [70, 22, 10], hasT ? 0.55 : 0.42);
-    var promC = mixC(bc, [255, 130, 80], hasT ? 0.55 : 0.25);
-
-    var glow = flareGlow(p.seed | 0, tt, num(p.flareRate, 0));
-    var bright = 1 + 0.12 * glow;
-
+  /* pass 1: the corona. Additive, and it puts the composite mode back. */
+  function starBackPass(ctx, x, y, r, look, bright, q) {
     var prevOp = ctx.globalCompositeOperation;
-
-    /* 1. corona */
     ctx.globalCompositeOperation = 'lighter';
     var cg = rgrad(ctx, x, y, r * 0.72, x, y, r * (q ? 3.1 : 2.4));
     if (cg) {
-      stop(cg, 0, rgba(glowC, 0.42 * bright));
-      stop(cg, 0.24, rgba(glowC, 0.17 * bright));
-      stop(cg, 0.62, rgba(bc, 0.055 * bright));
-      stop(cg, 1, rgba(bc, 0));
+      stop(cg, 0, rgba(look.glow, 0.42 * bright));
+      stop(cg, 0.24, rgba(look.glow, 0.17 * bright));
+      stop(cg, 0.62, rgba(look.rgb, 0.055 * bright));
+      stop(cg, 1, rgba(look.rgb, 0));
       ctx.fillStyle = cg;
       if (circle(ctx, x, y, r * (q ? 3.1 : 2.4))) ctx.fill();
     }
     ctx.globalCompositeOperation = prevOp;
+  }
 
+  /* pass 2: the disc, the limb, the chromosphere and the prominences. Leaves
+     the composite mode on 'lighter' -- everything after it is emission. */
+  function starMidPass(ctx, x, y, r, p, look, tt, q, bright) {
     /* 2. the disc: flat base first so a missing texture still reads as a star */
-    ctx.fillStyle = rgba(mixC(bc, [255, 255, 255], 0.5), 1);
+    ctx.fillStyle = rgba(look.hot, 1);
     if (circle(ctx, x, y, r)) ctx.fill();
 
     /* 3. granulation strip, masked to the disc */
@@ -830,7 +922,8 @@
     }
 
     /* 4. limb darkening (cooler stars darken harder) and a hot core */
-    var ld = clamp(0.30 + (hasT ? clamp((6500 - p.teff) / 9000, -0.10, 0.34) : 0.10), 0.16, 0.68);
+    var limbC = look.limb;
+    var ld = look.limbExp;
     var lg = rgrad(ctx, x, y, r * 0.10, x, y, r);
     if (lg) {
       stop(lg, 0, rgba(limbC, 0));
@@ -857,6 +950,7 @@
        It is drawn as an ANNULUS starting AT the limb and fading outward, never
        as a stroke sitting on the disc: a bright ring on the edge reads as an
        outline and contradicts the limb darkening underneath it. */
+    var promC = look.prom;
     var chOut = r * 1.20;
     var chg = rgrad(ctx, x, y, r, x, y, chOut);
     if (chg && r > 0.5) {
@@ -870,20 +964,143 @@
       ctx.fill();
     }
 
-    /* 6. prominences (full quality only) and the flare brightening */
+    /* 6. prominences (full quality only) */
     if (q) drawProminences(ctx, x, y, r, p, tt, promC);
-    if (glow > 0.01) {
-      var fg = rgrad(ctx, x, y, 0, x, y, r * 1.9);
-      if (fg) {
-        stop(fg, 0, 'rgba(255,250,238,' + clamp(0.34 * glow, 0, 1) + ')');
-        stop(fg, 0.5, rgba(glowC, 0.16 * glow));
-        stop(fg, 1, rgba(glowC, 0));
-        ctx.fillStyle = fg;
-        if (circle(ctx, x, y, r * 1.9)) ctx.fill();
-      }
+  }
+
+  /* pass 3: the whole-disc flare bloom. `manageOp` is false when drawStar
+     calls it (the composite mode is already additive at that point and the
+     caller restores it), true for the standalone entry point. */
+  function starFrontPass(ctx, x, y, r, look, glow, manageOp) {
+    if (!(glow > 0.01)) return;
+    var prevOp;
+    if (manageOp) {
+      prevOp = ctx.globalCompositeOperation;
+      ctx.globalCompositeOperation = 'lighter';
     }
+    var fg = rgrad(ctx, x, y, 0, x, y, r * 1.9);
+    if (fg) {
+      stop(fg, 0, 'rgba(255,250,238,' + clamp(0.34 * glow, 0, 1) + ')');
+      stop(fg, 0.5, rgba(look.glow, 0.16 * glow));
+      stop(fg, 1, rgba(look.glow, 0));
+      ctx.fillStyle = fg;
+      if (circle(ctx, x, y, r * 1.9)) ctx.fill();
+    }
+    if (manageOp) ctx.globalCompositeOperation = prevOp;
+  }
+
+  /* Shared argument sanitizing for the four star entry points. Returns null
+     when there is nothing to draw, so a junk call is a no-op, never a throw. */
+  function starArgs(ctx, cx, cy, rPx, params, t, opts) {
+    if (!ctx || !ctx.beginPath) return null;
+    var o = opts || {};
+    /* compose with whatever fade the caller already had on the context, and
+       put it back untouched on the way out */
+    var prevAlpha = clamp(num(ctx.globalAlpha, 1), 0, 1);
+    var alpha = clamp(num(o.alpha, 1), 0, 1) * prevAlpha;
+    var x = num(cx, NaN), y = num(cy, NaN), r = num(rPx, NaN);
+    if (!fin(x) || !fin(y) || !fin(r) || r <= 0 || alpha <= 0.004) return null;
+    if (r > 4000) r = 4000;
+    return {
+      p: (params && typeof params === 'object') ? params : starParams(null),
+      q: o.quality === 0 ? 0 : 1,
+      x: x, y: y, r: r, t: num(t, 0),
+      alpha: alpha, prevAlpha: prevAlpha
+    };
+  }
+
+  function starGlow(p, tt) {
+    return flareGlow(p.seed | 0, tt, num(p.flareRate, 0));
+  }
+
+  /* ---- drawStar(ctx, cx, cy, rPx, params, t, opts) ----
+     params comes from starParams(). t is seconds. opts:
+       quality: 1 (default) full art, 0 card preview (half-res strip, no
+                prominences, no ring bands)
+       alpha:   0..1 overall fade, for the page's distance ramps (default 1)
+     Nothing here reads or writes any state outside the texture cache, and
+     the call is a no-op on junk geometry rather than a throw. */
+  function drawStar(ctx, cx, cy, rPx, params, t, opts) {
+    var A = starArgs(ctx, cx, cy, rPx, params, t, opts);
+    if (!A) return;
+    var p = A.p, x = A.x, y = A.y, r = A.r, tt = A.t, q = A.q;
+
+    /* the fade lives on the context and nowhere else, so every layer below
+       carries its own opacity only and the overall fade stays linear */
+    ctx.globalAlpha = A.alpha;
+    if (p.kind === 'ns') {
+      drawPulsar(ctx, x, y, r, p, tt, q);
+      ctx.globalAlpha = A.prevAlpha;
+      return;
+    }
+    if (p.kind === 'wd') {
+      drawWhiteDwarf(ctx, x, y, r);
+      ctx.globalAlpha = A.prevAlpha;
+      return;
+    }
+
+    var look = starLook(p);
+    var glow = starGlow(p, tt);
+    var bright = 1 + 0.12 * glow;
+    var prevOp = ctx.globalCompositeOperation;
+
+    starBackPass(ctx, x, y, r, look, bright, q);
+    starMidPass(ctx, x, y, r, p, look, tt, q, bright);
+    starFrontPass(ctx, x, y, r, look, glow, false);
+
     ctx.globalCompositeOperation = prevOp;
-    ctx.globalAlpha = prevAlpha;
+    ctx.globalAlpha = A.prevAlpha;
+  }
+
+  /* ---- the passes as public entry points ----
+     Same arguments as drawStar. Back and front are no-ops for the pulsar and
+     the white dwarf: those two are drawn whole by drawStarMid (and by
+     drawStar), because their look is not a disc with a corona around it. */
+  function drawStarBack(ctx, cx, cy, rPx, params, t, opts) {
+    var A = starArgs(ctx, cx, cy, rPx, params, t, opts);
+    if (!A) return;
+    var p = A.p;
+    if (p.kind === 'ns' || p.kind === 'wd') return;
+    var look = starLook(p);
+    var bright = 1 + 0.12 * starGlow(p, A.t);
+    ctx.globalAlpha = A.alpha;
+    starBackPass(ctx, A.x, A.y, A.r, look, bright, A.q);
+    ctx.globalAlpha = A.prevAlpha;
+  }
+
+  function drawStarMid(ctx, cx, cy, rPx, params, t, opts) {
+    var A = starArgs(ctx, cx, cy, rPx, params, t, opts);
+    if (!A) return;
+    var p = A.p;
+    ctx.globalAlpha = A.alpha;
+    if (p.kind === 'ns') {
+      drawPulsar(ctx, A.x, A.y, A.r, p, A.t, A.q);
+      ctx.globalAlpha = A.prevAlpha;
+      return;
+    }
+    if (p.kind === 'wd') {
+      drawWhiteDwarf(ctx, A.x, A.y, A.r);
+      ctx.globalAlpha = A.prevAlpha;
+      return;
+    }
+    var look = starLook(p);
+    var bright = 1 + 0.12 * starGlow(p, A.t);
+    var prevOp = ctx.globalCompositeOperation;
+    starMidPass(ctx, A.x, A.y, A.r, p, look, A.t, A.q, bright);
+    ctx.globalCompositeOperation = prevOp;
+    ctx.globalAlpha = A.prevAlpha;
+  }
+
+  function drawStarFront(ctx, cx, cy, rPx, params, t, opts) {
+    var A = starArgs(ctx, cx, cy, rPx, params, t, opts);
+    if (!A) return;
+    var p = A.p;
+    if (p.kind === 'ns' || p.kind === 'wd') return;
+    var glow = starGlow(p, A.t);
+    if (!(glow > 0.01)) return;
+    ctx.globalAlpha = A.alpha;
+    starFrontPass(ctx, A.x, A.y, A.r, starLook(p), glow, true);
+    ctx.globalAlpha = A.prevAlpha;
   }
 
   /* ==========================================================================
@@ -1036,6 +1253,61 @@
                    rgb: type === 'hotjup' ? [96, 52, 52] : [186, 118, 88] };
     }
     return out;
+  }
+
+  /* ---- planetLook(params) ----
+     The planet side of starLook: one object holding the type, the palette and
+     every derived tint the renderer paints with, so a second renderer draws
+     the same world. params comes from planetParams() or exoParams().
+
+     `limbExp` is the terminator darkness cap this file feeds to shadeSphere.
+     A planet is shaded by a Lambert term, not by a stellar limb-darkening
+     exponent, so the field carries the number that actually exists rather
+     than an invented exponent; emissive worlds cap lower because their night
+     side glows.
+
+     Returns a FRESH object every call; treat it as read-only. */
+  function planetLook(params) {
+    var p = (params && typeof params === 'object') ? params : {};
+    var type = p.type || 'rock';
+    var pal = p.palette || EXO_PAL.rock;
+    var emissive = !!p.emissive;
+    var rings = p.rings || null;
+    var atmos = (type === 'earth' || type === 'temperate' || type === 'venus' ||
+                 type === 'gas' || type === 'hotjup' || type === 'neptunian' ||
+                 type === 'jupiter' || type === 'saturn' || type === 'uranus' ||
+                 type === 'neptune');
+    var banded = (type === 'jupiter' || type === 'saturn' || type === 'uranus' ||
+                  type === 'neptune' || type === 'gas' || type === 'hotjup' ||
+                  type === 'neptunian');
+    return {
+      type: type,
+      palette: pal,
+      bands: num(p.bands, 0),
+      clouds: !!p.clouds,
+      poles: !!p.poles,
+      craters: num(p.craters, 0),
+      limbExp: emissive ? 0.86 : 0.95,
+      rings: rings,
+      /* the rest is what the 2D passes below actually paint with */
+      seed: p.seed | 0,
+      locked: !!p.locked,
+      eyeball: !!p.eyeball,
+      emissive: emissive,
+      banded: banded,
+      watery: (type === 'earth' || type === 'temperate'),
+      atmos: atmos,
+      tint: p.tint || null,
+      spot: p.spot || null,
+      night: emissive ? [12, 6, 6] : [2, 3, 6],
+      atmC: atmos
+        ? ((type === 'earth' || type === 'temperate')
+            ? [150, 196, 246]
+            : mixC(pal[0], [255, 255, 255], 0.45))
+        : null,
+      emisC: emissive ? (type === 'lava' ? [255, 132, 46] : [214, 108, 78]) : null,
+      ringTint: rings ? mixC(pal[0], [255, 250, 236], 0.55) : null
+    };
   }
 
   /* ---- planet texture strips ---- */
@@ -1427,9 +1699,49 @@
     ctx.lineWidth = 1;
   }
 
+  /* The ring tint: the planet's own base color pushed toward ice white. Pass
+     opts.tint to override it, or opts.palette to derive it from another
+     world; with neither, Saturn's own palette is the default. */
+  function ringTintOf(o) {
+    var t = o && o.tint;
+    if (t && t.length >= 3) return [t[0], t[1], t[2]];
+    var pal = (o && o.palette) || SOLAR.saturn.palette;
+    return mixC(pal[0] || SOLAR.saturn.palette[0], [255, 250, 236], 0.55);
+  }
+
+  /* drawRingsBack / drawRingsFront(ctx, cx, cy, rPx, rings, opts) --
+     the far half (behind the planet) and the near half (over it). `rings` is
+     {inner, outer, tilt} in planet radii; opts is
+     { quality, alpha, tint, palette }. A renderer that draws the globe some
+     other way sandwiches its disc between these two calls, which is exactly
+     what drawPlanet does below. */
+  function ringsEntry(ctx, cx, cy, rPx, rings, opts, half) {
+    if (!ctx || !ctx.beginPath) return;
+    if (!rings || typeof rings !== 'object') return;
+    var o = opts || {};
+    var prevAlpha = clamp(num(ctx.globalAlpha, 1), 0, 1);
+    var alpha = clamp(num(o.alpha, 1), 0, 1) * prevAlpha;
+    var x = num(cx, NaN), y = num(cy, NaN), r = num(rPx, NaN);
+    if (!fin(x) || !fin(y) || !fin(r) || r <= 0 || alpha <= 0.004) return;
+    if (r > 4000) r = 4000;
+    ctx.globalAlpha = alpha;
+    drawRingHalf(ctx, x, y, r, rings, ringTintOf(o), half, o.quality === 0 ? 0 : 1);
+    ctx.globalAlpha = prevAlpha;
+  }
+  function drawRingsBack(ctx, cx, cy, rPx, rings, opts) {
+    ringsEntry(ctx, cx, cy, rPx, rings, opts, -1);
+  }
+  function drawRingsFront(ctx, cx, cy, rPx, rings, opts) {
+    ringsEntry(ctx, cx, cy, rPx, rings, opts, 1);
+  }
+
   /* A soft shadow of the ring plane across the planet, drawn inside the disc
-     clip. Cheap, and it is the detail that makes Saturn read as Saturn. */
+     clip. Cheap, and it is the detail that makes Saturn read as Saturn.
+     Public, because a GL-drawn globe needs the same shadow on it. */
   function drawRingShadow(ctx, cx, cy, r, rings, lightDir) {
+    if (!ctx || !ctx.beginPath) return;
+    if (!rings || typeof rings !== 'object') return;
+    if (!fin(num(cx, NaN)) || !fin(num(cy, NaN)) || !fin(num(r, NaN)) || !(r > 0)) return;
     var tilt = clamp(num(rings.tilt, 0.4665), 0.02, Math.PI / 2 - 0.02);
     var squash = Math.max(0.03, Math.sin(tilt));
     var off = -Math.sin(num(lightDir, Math.PI)) * r * 0.22;
@@ -1481,17 +1793,15 @@
     if (r > 4000) r = 4000;
     var tt = num(t, 0);
     var L = num(o.lightDir, Math.PI);
-    var type = params.type || 'rock';
-    var pal = params.palette || EXO_PAL.rock;
-    var atmos = (type === 'earth' || type === 'temperate' || type === 'venus' ||
-                 type === 'gas' || type === 'hotjup' || type === 'neptunian' ||
-                 type === 'jupiter' || type === 'saturn' || type === 'uranus' ||
-                 type === 'neptune');
+    var look = planetLook(params);
+    var type = look.type;
+    var pal = look.palette;
+    var atmos = look.atmos;
 
     /* rotation: locked worlds keep one face to their star */
     var spin;
     if (fin(o.phaseAngle)) spin = o.phaseAngle;
-    else if (params.locked) {
+    else if (look.locked) {
       var kk = clamp(num(o.phase, 0.92), 0, 1);
       var sinA0 = Math.sqrt(Math.max(0, 1 - (2 * kk - 1) * (2 * kk - 1)));
       spin = Math.PI - Math.asin(clamp(sinA0 * Math.cos(L), -1, 1));
@@ -1505,9 +1815,9 @@
     ctx.globalAlpha = alpha;
 
     /* rings, far half first so the planet occludes it */
-    var rings = params.rings;
+    var rings = look.rings;
     if (rings) {
-      drawRingHalf(ctx, x, y, r, rings, mixC(pal[0], [255, 250, 236], 0.55), -1, q);
+      drawRingHalf(ctx, x, y, r, rings, look.ringTint, -1, q);
     }
 
     /* flat base under the texture: a missing strip still reads as a world */
@@ -1519,17 +1829,15 @@
       ctx.clip();
       if (entry && entry.tex) drawSphere(ctx, x, y, r, entry.tex, spin, slabCount(q));
       /* cloud deck, scrolled a little faster than the ground */
-      if (params.clouds && entry && entry.aux && entry.aux !== entry.glow) {
+      if (look.clouds && entry && entry.aux && entry.aux !== entry.glow) {
         drawSphere(ctx, x, y, r * 1.004, entry.aux,
-                   params.locked ? spin : spin * 1.18 + 0.7, slabCount(q));
+                   look.locked ? spin : spin * 1.18 + 0.7, slabCount(q));
       }
       if (rings && q) drawRingShadow(ctx, x, y, r, rings, L);
       /* day / night */
-      var night = params.emissive ? [12, 6, 6] : [2, 3, 6];
-      shadeSphere(ctx, x, y, r, L, num(o.phase, 0.92),
-                  params.emissive ? 0.86 : 0.95, night);
+      shadeSphere(ctx, x, y, r, L, num(o.phase, 0.92), look.limbExp, look.night);
       /* lava and hot Jupiters glow through their own night side */
-      if (params.emissive && entry && entry.glow) {
+      if (look.emissive && entry && entry.glow) {
         ctx.globalCompositeOperation = 'lighter';
         ctx.globalAlpha = alpha * 0.85;
         drawSphere(ctx, x, y, r, entry.glow, spin, slabCount(q));
@@ -1542,9 +1850,7 @@
 
     /* atmosphere: a rim ring plus a brighter crescent on the lit limb */
     if (atmos) {
-      var atmC = (type === 'earth' || type === 'temperate')
-        ? [150, 196, 246]
-        : mixC(pal[0], [255, 255, 255], 0.45);
+      var atmC = look.atmC;
       ctx.globalCompositeOperation = 'lighter';
       var ag = rgrad(ctx, x, y, r * 0.90, x, y, r * 1.12);
       if (ag) {
@@ -1567,11 +1873,11 @@
     }
 
     /* emissive worlds keep a warm halo even on the night side */
-    if (params.emissive) {
+    if (look.emissive) {
       ctx.globalCompositeOperation = 'lighter';
       var eg = rgrad(ctx, x, y, r * 0.85, x, y, r * 1.7);
       if (eg) {
-        var ec = type === 'lava' ? [255, 132, 46] : [214, 108, 78];
+        var ec = look.emisC;
         stop(eg, 0, rgba(ec, 0.22));
         stop(eg, 1, rgba(ec, 0));
         ctx.fillStyle = eg;
@@ -1582,7 +1888,7 @@
 
     /* rings, near half over the planet */
     if (rings) {
-      drawRingHalf(ctx, x, y, r, rings, mixC(pal[0], [255, 250, 236], 0.55), 1, q);
+      drawRingHalf(ctx, x, y, r, rings, look.ringTint, 1, q);
     }
 
     ctx.globalCompositeOperation = prevOp;
@@ -1661,6 +1967,18 @@
     FLARE_SLOTS: FLARE_SLOTS,
     TEX_MAX: TEX_MAX,
     SOLAR_KEYS: ['mercury', 'venus', 'earth', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune'],
+    /* the look / pass API a second renderer draws from */
+    starLook: starLook,
+    flareUniforms: flareUniforms,
+    drawStarBack: drawStarBack,
+    drawStarMid: drawStarMid,
+    drawStarFront: drawStarFront,
+    planetLook: planetLook,
+    drawRingsBack: drawRingsBack,
+    drawRingsFront: drawRingsFront,
+    drawRingShadow: drawRingShadow,
+    SOL_PARAMS: SOL_PARAMS,
+    SPOT_MAX: SPOT_MAX,
     __demo: __demo
   };
 
