@@ -1,32 +1,66 @@
 /* voyage-ships.js
-   Three parametric starships for /voyage/: a plasma liner (0.3 g), a fusion torch
-   (1 g) and an antimatter torch (2 g), drawn as stacked lathed cross sections so a
-   yaw turntable reads as a real 3D object.
+   Nine parametric starships for /voyage/, drawn as stacked lathed cross sections
+   so a yaw turntable reads as a real 3D object.
+
+   Nine, because a ship is a DRIVE composed with a HULL and there are three of
+   each. The drives are the page's existing acceleration row (ion 0.3 g, fusion
+   1 g, antimatter 2 g) and the hulls are its existing mass row (probe, crewed
+   ship, generation ship). Nothing about the trip maths, the energy line or the
+   share hash changes: this file only draws the pair.
 
    Everything here is deterministic: the only time input is `t` (seconds) and every
    wobble comes from a hashed value-noise, never Math.random. No shadowBlur.
    Every gradient and arc argument is guarded, because one NaN into
    createRadialGradient throws and kills the page's animation loop for good.
 
-   Contract (pinned in .claude/plans/plan-voyage-v2.md, extended by v3 section D6):
+   Contract (pinned in .claude/plans/plan-voyage-v2.md, extended by v3 section D6
+   and by v4 section E1):
      VoyageShips.SHIPS                       ordered [ion, fusion, anti]
+     VoyageShips.HULLS                       ordered [probe, crewed, generation]
+     VoyageShips.CARDS                       nine {name,line}, keyed hull+'/'+drive
      VoyageShips.drawShip(ctx,x,y,px,yaw,opts)
      VoyageShips.drawChemPlume(ctx,x,y,px,ang,power,t)
-     VoyageShips.drawShipTurntable(canvas2d,key,t)
-     VoyageShips.profileOf(key)
+     VoyageShips.drawShipTurntable(canvas2d,key,t,opts)
+     VoyageShips.profileOf(key,hull)         same for rigsOf / emitOf / halfHeightOf
+     VoyageShips.shipByKey(driveKey)         VoyageShips.hullByKey(hullKey)
+     VoyageShips.shipCardOf(hull,drive)      -> { name, line }
      VoyageShips.__demo(canvas)
+
+   SHIPS keeps its three drive rows and its three keys: the hull is a second,
+   independent axis, never a fourth SHIPS entry. Every accessor takes the hull
+   as an OPTIONAL trailing argument defaulting to 'crewed'.
 
    v2 opts (all optional): { key, thrust, t, quality, flip, light }
    v3 adds two, both with pinned defaults so an un-upgraded caller is unaffected:
      bank      roll about the ship's long axis, radians, default 0.
                Positive = right wing down. A surface of revolution does not
                change under roll, so bank moves only the things that sit off
-               the axis: the radiator panels, the nav light, and every surface
+               the axis: the radiator panels, the beacons, and every surface
                feature (seams, greebles, markings).
      lightDir  screen angle in radians pointing TOWARD the light, exactly the
                convention VoyageArt.drawPlanet uses. Default Math.PI, lit from
                screen left. Drives the hull shading gradient, the specular
                streak and the greeble shading.
+   v4 adds two more, same rule:
+     hull      'probe' | 'crewed' | 'generation'. Its PINNED DEFAULT is the
+               whole wave-4 render: the crewed geometry, section for section
+               and rig for rig, drawn with the wave-4 nav light and no gimbal.
+               Anything that is not one of the three names (undefined, null,
+               NaN, a typo) is that default, so a caller who never heard of
+               hulls gets the ship it already had, to the pixel. Naming a hull
+               selects it AND turns the wave-5 moving parts on, which is why
+               `{}` and `{hull:'crewed'}` are deliberately not the same call:
+               the geometry is identical, the motion is not.
+     dishAim   where the probe's high-gain dish points, radians from the nose.
+               Default Math.PI - 0.30, which is back along the route.
+
+   Moving parts, all pure functions of `t` and all frozen at t = 0, which is the
+   reduced-motion render (drawShipTurntable takes { still: true } for that):
+     the generation ship's habitat ring turns, with spokes, modules and lit
+     windows to make the turning visible; the probe's dish hunts a fraction of a
+     degree around its aim; the engine bell gimbals with thrust and swings its
+     own plume; radiators and accelerator grids brighten with thrust; the nav
+     beacons blink on a 2.1 s period with a hashed per-beacon phase.
 
    Detail is procedural and scales with the drawn length O.L, so zooming the
    cruise rig in really does reveal more ship rather than a bigger blur:
@@ -271,6 +305,22 @@
    * ship definitions                                                    *
    * a runs +0.5 at the nose to -0.5 at the tail; r and every offset are  *
    * fractions of the ship LENGTH.                                       *
+   *                                                                     *
+   * A drawn ship is a DRIVE composed with a HULL.                        *
+   *   drive   ion | fusion | anti          the engine, its tail, its     *
+   *           plume, and on the antimatter ship the standoff shield that *
+   *           sits ahead of everything else.                             *
+   *   hull    probe | crewed | generation  what the ship carries,        *
+   *           between the nose and the drive's joint.                    *
+   * Three drives times three hulls is the nine ships the page offers,    *
+   * and they are exactly the existing accel index times the existing     *
+   * mass index: nothing about the trip maths changes here.               *
+   *                                                                     *
+   * The crewed hull reproduces the wave-4 ship section for section, rig  *
+   * for rig, emissive for emissive, in the same order, so a caller that  *
+   * passes no hull gets the design it already had. Its procedural seed   *
+   * is keyed on the DRIVE name alone for that reason: the seed decides   *
+   * where every greeble, seam and fastener lands.                        *
    * ------------------------------------------------------------------ */
   var SHIPS = [
     {
@@ -293,22 +343,70 @@
     }
   ];
 
+  /* the mass classes, in the order the page's mass control already uses */
+  var HULL_LIST = [
+    { key: 'probe', label: 'probe' },
+    { key: 'crewed', label: 'crewed ship' },
+    { key: 'generation', label: 'generation ship' }
+  ];
+
+  /* The nine card strings, keyed hull + '/' + drive. The three crewed lines
+     are the shipped ones, unchanged; the other six are new. Nothing here
+     claims an acceleration or a crew the chosen combination does not have. */
+  var CARDS = {
+    'probe/ion': {
+      name: 'Ion probe',
+      line: 'A one tonne probe on an electric drive. Most of it is the dish and the instruments, and the push is gentle enough to hold for years.'
+    },
+    'probe/fusion': {
+      name: 'Fusion probe',
+      line: 'A small uncrewed probe with a torch engine behind it. The engine weighs far more than anything it carries, which is the usual bargain for arriving sooner.'
+    },
+    'probe/anti': {
+      name: 'Antimatter probe',
+      line: 'A probe on an antimatter drive. The shield at the front is there because the engine behind it is the dangerous part.'
+    },
+    'crewed/ion': { name: SHIPS[0].name, line: SHIPS[0].line },
+    'crewed/fusion': { name: SHIPS[1].name, line: SHIPS[1].line },
+    'crewed/anti': { name: SHIPS[2].name, line: SHIPS[2].line },
+    'generation/ion': {
+      name: 'Ion generation ship',
+      line: 'A habitat ring on an electric drive. The ring turns so there is something to stand on, and the engine pushes gently and never stops.'
+    },
+    'generation/fusion': {
+      name: 'Fusion generation ship',
+      line: 'A million tonnes of habitat behind a fusion torch. The ring turns for gravity, and the shadow shield keeps the engine off the people living in it.'
+    },
+    'generation/anti': {
+      name: 'Antimatter generation ship',
+      line: 'A habitat ring pushed by an antimatter drive. Most of the mass is the ring and the shielding between it and the engine.'
+    }
+  };
+
+  function cardKey(hull, drive) {
+    var h = HULL_SET[hull] ? hull : 'crewed';
+    var d = DRIVES[drive] ? drive : 'fusion';
+    return h + '/' + d;
+  }
+  function shipCardOf(hull, drive) {
+    var c = CARDS[cardKey(hull, drive)];
+    return c ? { name: c.name, line: c.line } : { name: '', line: '' };
+  }
+
   /* sections: [group, a, r, cap] */
-  var SPEC = {
+  var DRIVES = {
     ion: {
-      mats: { fore: 'cool', aft: 'steel' },
-      sections: [
-        ['fore', 0.500, 0.004, 0],
-        ['fore', 0.480, 0.012, 0],
-        ['fore', 0.462, 0.020, 1],
-        ['fore', 0.440, 0.024, 0],
-        ['fore', 0.418, 0.026, 1],
-        ['fore', 0.398, 0.052, 0],
-        ['fore', 0.360, 0.070, 1],
-        ['fore', 0.220, 0.072, 0],
-        ['fore', 0.176, 0.064, 1],
-        ['fore', 0.150, 0.030, 0],
-        ['fore', 0.132, 0.024, 1],
+      key: 'ion',
+      aNose: 0.500,
+      gap: 0.004,
+      /* where the hull's payload ends and the drive begins, per hull:
+         [a, the radius the hull should meet the drive with] */
+      join: { probe: [0.132, 0.020], crewed: [0.132, 0.024], generation: [0.132, 0.032] },
+      genRingR: 0.300,
+      genRingU: 0.700,
+      nose: [],
+      noseRigs: [],
+      aft: [
         ['truss', 0.128, 0.022, 0],
         ['truss', -0.150, 0.020, 1],
         ['aft', -0.156, 0.040, 0],
@@ -321,36 +419,36 @@
         ['aft', -0.470, 0.050, 1],
         ['aft', -0.500, 0.044, 1]
       ],
-      rigs: [
+      aftRigs: [
         { type: 'panel', a0: 0.112, a1: -0.148, i0: 0.030, o0: 0.215, i1: 0.030, o1: 0.275, sign: 1, thick: 0.006 },
         { type: 'panel', a0: 0.112, a1: -0.148, i0: 0.030, o0: 0.215, i1: 0.030, o1: 0.275, sign: -1, thick: 0.006 },
-        { type: 'ring', a: -0.200, R: 0.062, tube: 0.008, m: 'gold' },
-        { type: 'ring', a: 0.176, R: 0.070, tube: 0.007, m: 'gold' }
+        { type: 'ring', a: -0.200, R: 0.062, tube: 0.008, m: 'gold' }
       ],
-      nav: { a: 0.300, up: 0.078 },
-      nozzles: [-0.030, 0.000, 0.030],
+      mats: { aft: 'steel' },
+      ribs: null,
       emit: [
         { type: 'grid', a: -0.498, u: -0.030, R: 0.021, col: [186, 222, 255], idle: 0.12 },
         { type: 'grid', a: -0.498, u: 0.000, R: 0.021, col: [186, 222, 255], idle: 0.12 },
         { type: 'grid', a: -0.498, u: 0.030, R: 0.021, col: [186, 222, 255], idle: 0.12 }
       ],
+      beacons: [{ a: -0.318, up: 0.060, th: Math.PI, ph: 0.63, col: 'gold' }],
+      nozzles: [-0.030, 0.000, 0.030],
       tailA: -0.500,
       tailR: 0.046,
-      halfH: 0.295
+      halfH: 0.295,
+      gimA: -0.150
     },
 
     fusion: {
-      mats: { fore: 'cool', hub: 'steel', spine: 'graphite', engine: 'engine' },
-      ribs: { engine: 1 },
-      sections: [
-        ['fore', 0.500, 0.005, 0],
-        ['fore', 0.486, 0.014, 1],
-        ['fore', 0.466, 0.026, 0],
-        ['fore', 0.440, 0.030, 1],
-        ['fore', 0.418, 0.024, 0],
-        ['fore', 0.400, 0.021, 1],
-        ['hub', 0.396, 0.038, 1],
-        ['hub', 0.300, 0.038, 1],
+      key: 'fusion',
+      aNose: 0.500,
+      gap: 0.002,
+      join: { probe: [0.300, 0.026], crewed: [0.300, 0.038], generation: [0.300, 0.040] },
+      genRingR: 0.276,
+      genRingU: 0.700,
+      nose: [],
+      noseRigs: [],
+      aft: [
         ['spine', 0.298, 0.026, 0],
         ['spine', -0.130, 0.028, 1],
         ['engine', -0.136, 0.070, 0],
@@ -363,8 +461,7 @@
         ['engine', -0.462, 0.224, 0],
         ['engine', -0.500, 0.252, 1]
       ],
-      rigs: [
-        { type: 'ring', a: 0.348, R: 0.134, tube: 0.030, m: 'steel' },
+      aftRigs: [
         { type: 'disc', a: 0.256, R: 0.118, thick: 0.016, m: 'shield' },
         { type: 'sphere', a: 0.205, R: 0.076, m: 'cool' },
         { type: 'sphere', a: 0.070, R: 0.076, m: 'cool' },
@@ -373,35 +470,41 @@
         { type: 'ring', a: -0.266, R: 0.120, tube: 0.013, m: 'gold' },
         { type: 'mouth', a: -0.500, R: 0.252, glow: [255, 246, 226] }
       ],
-      nav: { a: 0.348, up: 0.142 },
-      nozzles: [0],
+      mats: { spine: 'graphite', engine: 'engine' },
+      ribs: { engine: 1 },
       emit: [
         { type: 'radiator', g: 'engine', a0: -0.150, a1: -0.300, th0: 0.18, wrap: 1,
           w: 0.009, col: [255, 148, 72], idle: 0.05 },
         { type: 'radiator', g: 'engine', a0: -0.500, a1: -0.376, th0: 0.42, wrap: 1,
           w: 0.007, col: [255, 178, 98], idle: 0.03 }
       ],
+      beacons: [{ a: -0.152, up: 0.086, th: Math.PI, ph: 0.29, col: 'gold' }],
+      nozzles: [0],
       tailA: -0.500,
       tailR: 0.130,
-      halfH: 0.270
+      halfH: 0.270,
+      gimA: -0.130
     },
 
     anti: {
-      mats: { shield: 'shield', pod: 'cool', mirror: 'graphite' },
-      ribs: { mirror: 1 },
-      sections: [
+      key: 'anti',
+      aNose: 0.446,
+      gap: 0.004,
+      join: { probe: [0.322, 0.014], crewed: [0.322, 0.018], generation: [0.100, 0.022] },
+      genRingR: 0.180,
+      genRingU: 0.500,
+      nose: [
         ['shield', 0.500, 0.022, 0],
         ['shield', 0.494, 0.092, 0],
         ['shield', 0.486, 0.152, 0],
         ['shield', 0.475, 0.204, 0],
         ['shield', 0.462, 0.235, 1],
-        ['shield', 0.448, 0.232, 1],
-        ['pod', 0.446, 0.016, 0],
-        ['pod', 0.432, 0.048, 1],
-        ['pod', 0.392, 0.056, 0],
-        ['pod', 0.352, 0.048, 1],
-        ['pod', 0.336, 0.024, 0],
-        ['pod', 0.322, 0.018, 1],
+        ['shield', 0.448, 0.232, 1]
+      ],
+      noseRigs: [
+        { type: 'ring', a: 0.455, R: 0.236, tube: 0.010, m: 'gold' }
+      ],
+      aft: [
         ['boom', 0.318, 0.011, 0],
         ['boom', -0.208, 0.011, 1],
         ['mirror', -0.214, 0.028, 1],
@@ -412,33 +515,212 @@
         ['mirror', -0.446, 0.182, 0],
         ['mirror', -0.500, 0.212, 1]
       ],
-      rigs: [
-        { type: 'ring', a: 0.455, R: 0.236, tube: 0.010, m: 'gold' },
+      aftRigs: [
         { type: 'sphere', a: -0.232, R: 0.030, m: 'glow' },
         { type: 'ring', a: -0.300, R: 0.096, tube: 0.011, m: 'gold' },
         { type: 'ring', a: -0.392, R: 0.158, tube: 0.011, m: 'gold' },
         { type: 'ring', a: -0.478, R: 0.204, tube: 0.011, m: 'gold' },
         { type: 'mouth', a: -0.500, R: 0.212, glow: [232, 210, 255] }
       ],
-      nav: { a: 0.400, up: 0.064 },
-      nozzles: [0],
+      mats: { shield: 'shield', mirror: 'graphite' },
+      ribs: { mirror: 1 },
       emit: [
         { type: 'radiator', g: 'mirror', a0: -0.500, a1: -0.300, th0: 0.26, wrap: 1,
-          w: 0.008, col: [255, 146, 84], idle: 0.06 },
-        { type: 'radiator', g: 'pod', a0: 0.430, a1: 0.330, th0: 0.85, wrap: 1,
-          w: 0.006, col: [255, 176, 108], idle: 0.03 }
+          w: 0.008, col: [255, 146, 84], idle: 0.06 }
       ],
+      beacons: [{ a: -0.256, up: 0.062, th: Math.PI, ph: 0.41, col: 'gold' }],
+      nozzles: [0],
       tailA: -0.480,
       tailR: 0.030,
-      halfH: 0.250
+      halfH: 0.250,
+      gimA: -0.212
     }
   };
 
+  /* ------------------------------------------------------------------ *
+   * hulls. Each returns the payload section run between the drive's     *
+   * nose contribution and its joint, plus whatever rides on it.          *
+   * ------------------------------------------------------------------ */
+
+  /* the crewed hull IS the wave-4 forward structure, per drive, verbatim */
+  var CREWED_FORE = {
+    ion: {
+      sections: [
+        ['fore', 0.500, 0.004, 0],
+        ['fore', 0.480, 0.012, 0],
+        ['fore', 0.462, 0.020, 1],
+        ['fore', 0.440, 0.024, 0],
+        ['fore', 0.418, 0.026, 1],
+        ['fore', 0.398, 0.052, 0],
+        ['fore', 0.360, 0.070, 1],
+        ['fore', 0.220, 0.072, 0],
+        ['fore', 0.176, 0.064, 1],
+        ['fore', 0.150, 0.030, 0],
+        ['fore', 0.132, 0.024, 1]
+      ],
+      rigs: [{ type: 'ring', a: 0.176, R: 0.070, tube: 0.007, m: 'gold' }],
+      mats: { fore: 'cool' },
+      emit: [],
+      beacons: [
+        { a: 0.300, up: 0.078, th: 0, ph: 0.00, col: 'gold' },
+        { a: 0.412, up: 0.032, th: Math.PI, ph: 0.47, col: 'white' }
+      ],
+      halfH: 0.086
+    },
+    fusion: {
+      sections: [
+        ['fore', 0.500, 0.005, 0],
+        ['fore', 0.486, 0.014, 1],
+        ['fore', 0.466, 0.026, 0],
+        ['fore', 0.440, 0.030, 1],
+        ['fore', 0.418, 0.024, 0],
+        ['fore', 0.400, 0.021, 1],
+        ['hub', 0.396, 0.038, 1],
+        ['hub', 0.300, 0.038, 1]
+      ],
+      rigs: [{ type: 'ring', a: 0.348, R: 0.134, tube: 0.030, m: 'steel' }],
+      mats: { fore: 'cool', hub: 'steel' },
+      emit: [],
+      beacons: [
+        { a: 0.348, up: 0.142, th: 0, ph: 0.00, col: 'gold' },
+        { a: 0.452, up: 0.034, th: Math.PI, ph: 0.52, col: 'white' }
+      ],
+      halfH: 0.164
+    },
+    anti: {
+      sections: [
+        ['pod', 0.446, 0.016, 0],
+        ['pod', 0.432, 0.048, 1],
+        ['pod', 0.392, 0.056, 0],
+        ['pod', 0.352, 0.048, 1],
+        ['pod', 0.336, 0.024, 0],
+        ['pod', 0.322, 0.018, 1]
+      ],
+      rigs: [],
+      mats: { pod: 'cool' },
+      emit: [
+        { type: 'radiator', g: 'pod', a0: 0.430, a1: 0.330, th0: 0.85, wrap: 1,
+          w: 0.006, col: [255, 176, 108], idle: 0.03 }
+      ],
+      beacons: [
+        { a: 0.400, up: 0.064, th: 0, ph: 0.00, col: 'gold' },
+        { a: 0.360, up: 0.056, th: Math.PI, ph: 0.55, col: 'white' }
+      ],
+      halfH: 0.064
+    }
+  };
+
+  var HULLS = {
+    /* an uncrewed flyby craft: an instrument bus, booms, and a high-gain
+       dish that spends the whole trip aimed back the way it came */
+    probe: {
+      key: 'probe',
+      gimK: 0.022,
+      fore: function (d, aJ, rJ) {
+        var aN = d.aNose, S = aN - aJ;
+        function A(u) { return aJ + S * clamp(u, 0, 1); }
+        return {
+          sections: [
+            ['bus', A(1.000), 0.005, 0],
+            ['bus', A(0.962), 0.018, 1],
+            ['bus', A(0.928), 0.027, 0],
+            ['bus', A(0.780), 0.034, 0],
+            ['bus', A(0.700), 0.036, 1],
+            ['bus', A(0.540), 0.033, 0],
+            ['bus', A(0.492), 0.019, 1],
+            ['instr', A(0.462), 0.016, 0],
+            ['instr', A(0.300), 0.015, 1],
+            ['instr', A(0.190), 0.026, 0],
+            ['instr', A(0.080), 0.028, 1],
+            ['instr', A(0.000), rJ, 1]
+          ],
+          rigs: [
+            { type: 'ring', a: A(0.905), R: 0.030, tube: 0.005, m: 'gold' },
+            { type: 'dish', a: A(0.845), R: 0.118, depth: 0.044, mount: 0.052, m: 'shield', sid: 11 },
+            { type: 'mast', a: A(0.660), r0: 0.034, len: 0.150, th: 0, tip: 0.026, m: 'graphite' },
+            { type: 'sphere', a: A(0.600), R: 0.026, m: 'cool' },
+            { type: 'mast', a: A(0.560), r0: 0.030, len: 0.098, th: Math.PI, tip: 0.018, m: 'graphite' },
+            { type: 'mast', a: A(0.330), r0: 0.024, len: 0.118, th: Math.PI * 0.5, tip: 0.021, m: 'graphite' }
+          ],
+          mats: { bus: 'cool', instr: 'steel' },
+          emit: [
+            { type: 'radiator', g: 'bus', a0: A(0.760), a1: A(0.520), th0: 0.92, wrap: 1,
+              w: 0.006, col: [255, 168, 96], idle: 0.03 }
+          ],
+          beacons: [
+            { a: A(0.790), up: 0.042, th: 0, ph: 0.13, col: 'gold' },
+            { a: A(0.360), up: 0.032, th: Math.PI, ph: 0.58, col: 'white' }
+          ],
+          halfH: 0.238
+        };
+      }
+    },
+
+    crewed: {
+      key: 'crewed',
+      gimK: 0.018,
+      fore: function (d) {
+        return CREWED_FORE[d.key] || CREWED_FORE.fusion;
+      }
+    },
+
+    /* a habitat ring that turns for gravity, storage drums, and radiator
+       wings big enough for a town */
+    generation: {
+      key: 'generation',
+      gimK: 0.011,
+      fore: function (d, aJ, rJ) {
+        var aN = d.aNose, S = aN - aJ;
+        function A(u) { return aJ + S * clamp(u, 0, 1); }
+        var R = num(d.genRingR, 0.28);
+        return {
+          sections: [
+            ['gcap', A(1.000), 0.016, 0],
+            ['gcap', A(0.990), 0.078, 0],
+            ['gcap', A(0.976), 0.126, 0],
+            ['gcap', A(0.958), 0.146, 1],
+            ['gcap', A(0.942), 0.142, 1],
+            ['gspine', A(0.936), 0.026, 0],
+            ['gspine', A(0.870), 0.033, 1],
+            ['gspine', A(0.520), 0.035, 1],
+            ['gdrum', A(0.500), 0.084, 0],
+            ['gdrum', A(0.350), 0.094, 1],
+            ['gdrum', A(0.200), 0.090, 0],
+            ['gdrum', A(0.100), 0.062, 1],
+            ['gdrum', A(0.000), rJ, 1]
+          ],
+          /* No radiator wings on this hull. The ring is the thing worth
+             looking at, and a pair of flat panels at anything near its radius
+             reads as one confused disc; the waste heat comes off the drum
+             strips below instead, and the ion drive brings wings of its own. */
+          rigs: [
+            { type: 'ring', a: A(0.912), R: 0.040, tube: 0.006, m: 'gold' },
+            { type: 'habring', a: A(num(d.genRingU, 0.700)), R: R, tube: 0.030, hub: 0.054,
+              spokes: 6, mods: 12, spin: 0.26, m: 'steel', sid: 29 },
+            { type: 'disc', a: A(0.548), R: 0.122, thick: 0.014, m: 'shield' },
+            { type: 'sphere', a: A(0.270), R: 0.050, m: 'cool' }
+          ],
+          mats: { gcap: 'shield', gspine: 'graphite', gdrum: 'cool' },
+          emit: [
+            { type: 'radiator', g: 'gdrum', a0: A(0.470), a1: A(0.120), th0: 0.55, wrap: 1,
+              w: 0.011, col: [255, 162, 90], idle: 0.05 }
+          ],
+          beacons: [
+            { a: A(0.955), up: 0.150, th: 0, ph: 0.08, col: 'gold' },
+            { a: A(num(d.genRingU, 0.700)), up: R + 0.036, th: Math.PI, ph: 0.44, col: 'white' },
+            { a: A(0.280), up: 0.098, th: Math.PI * 0.5, ph: 0.81, col: 'gold' }
+          ],
+          halfH: R + 0.052
+        };
+      }
+    }
+  };
+
+  var HULL_SET = { probe: 1, crewed: 1, generation: 1 };
+
   /* build the draw item list once per ship: lathe groups and rigs, sorted
      nose to tail so the depth order is a plain forward or backward walk. */
-  function prep(key) {
-    var s = SPEC[key];
-    if (!s || s._items) return s;
+  function prep(s, seedKey) {
     var items = [], secs = s.sections, i, run = null;
     for (i = 0; i < secs.length; i++) {
       var g = secs[i][0];
@@ -462,16 +744,66 @@
     /* a stable per-item seed: the procedural detail must land in the same place
        every frame, and a different place on every group of every ship */
     var kh = 0;
-    for (i = 0; i < key.length; i++) kh = (kh * 31 + key.charCodeAt(i)) % 100003;
+    for (i = 0; i < seedKey.length; i++) kh = (kh * 31 + seedKey.charCodeAt(i)) % 100003;
     for (i = 0; i < items.length; i++) items[i].sid = kh * 17 + i * 101 + 7;
     s._items = items;
-    s._key = key;
+    s._key = seedKey;
     return s;
   }
-  prep('ion'); prep('fusion'); prep('anti');
 
-  function profileOf(key) {
-    var s = SPEC[key] || SPEC.fusion;
+  function compose(hullKey, driveKey) {
+    var d = DRIVES[driveKey], H = HULLS[hullKey];
+    var jn = d.join[hullKey] || d.join.crewed;
+    var fore = H.fore(d, jn[0], jn[1]) || {};
+    var secs = [], i, k;
+    for (i = 0; i < d.nose.length; i++) secs.push(d.nose[i]);
+    var fs = fore.sections || [];
+    for (i = 0; i < fs.length; i++) secs.push(fs[i]);
+    for (i = 0; i < d.aft.length; i++) {
+      var row = d.aft[i].slice();
+      if (i === 0) row[1] = jn[0] - d.gap;
+      secs.push(row);
+    }
+    var mats = {};
+    for (k in d.mats) if (Object.prototype.hasOwnProperty.call(d.mats, k)) mats[k] = d.mats[k];
+    if (fore.mats) for (k in fore.mats) if (Object.prototype.hasOwnProperty.call(fore.mats, k)) mats[k] = fore.mats[k];
+    return {
+      sections: secs,
+      rigs: d.noseRigs.concat(fore.rigs || [], d.aftRigs),
+      mats: mats,
+      ribs: d.ribs,
+      emit: (d.emit || []).concat(fore.emit || []),
+      beacons: (fore.beacons || []).concat(d.beacons || []),
+      nozzles: d.nozzles,
+      tailA: d.tailA,
+      tailR: d.tailR,
+      gimA: d.gimA,
+      gimK: H.gimK,
+      halfH: Math.max(d.halfH, num(fore.halfH, 0)),
+      drive: driveKey,
+      hull: hullKey
+    };
+  }
+
+  var SPEC_CACHE = {};
+  function specOf(driveKey, hullKey) {
+    var dk = DRIVES[driveKey] ? driveKey : 'fusion';
+    var hk = HULL_SET[hullKey] ? hullKey : 'crewed';
+    var ck = hk + '/' + dk;
+    var s = SPEC_CACHE[ck];
+    if (!s) {
+      s = compose(hk, dk);
+      /* the crewed hull keeps the wave-4 seed so its procedural detail lands
+         exactly where it always did */
+      prep(s, hk === 'crewed' ? dk : ck);
+      SPEC_CACHE[ck] = s;
+    }
+    return s;
+  }
+  specOf('ion', 'crewed'); specOf('fusion', 'crewed'); specOf('anti', 'crewed');
+
+  function profileOf(key, hull) {
+    var s = specOf(key, hull);
     var out = [], i;
     for (i = 0; i < s.sections.length; i++) {
       var q = s.sections[i];
@@ -479,8 +811,8 @@
     }
     return out;
   }
-  function rigsOf(key) {
-    var s = SPEC[key] || SPEC.fusion, out = [], i;
+  function rigsOf(key, hull) {
+    var s = specOf(key, hull), out = [], i;
     for (i = 0; i < s.rigs.length; i++) {
       var r = s.rigs[i], c = {};
       for (var k in r) if (Object.prototype.hasOwnProperty.call(r, k)) c[k] = r[k];
@@ -489,8 +821,8 @@
     return out;
   }
   /* the hull emissives (radiator strips, accelerator grids) as a defensive copy */
-  function emitOf(key) {
-    var s = SPEC[key] || SPEC.fusion, out = [], i;
+  function emitOf(key, hull) {
+    var s = specOf(key, hull), out = [], i;
     var em = s.emit || [];
     for (i = 0; i < em.length; i++) {
       var e = em[i], c = {};
@@ -502,13 +834,16 @@
     return out;
   }
   /* the drawn half-height as a fraction of px, so callers can fit a ship into a
-     box: total height is about 2 * halfHeightOf(key) * px */
-  function halfHeightOf(key) {
-    var s = SPEC[key] || SPEC.fusion;
-    return s.halfH || 0.3;
+     box: total height is about 2 * halfHeightOf(key, hull) * px */
+  function halfHeightOf(key, hull) {
+    return specOf(key, hull).halfH || 0.3;
   }
   function shipByKey(key) {
     for (var i = 0; i < SHIPS.length; i++) if (SHIPS[i].key === key) return SHIPS[i];
+    return null;
+  }
+  function hullByKey(key) {
+    for (var i = 0; i < HULL_LIST.length; i++) if (HULL_LIST[i].key === key) return HULL_LIST[i];
     return null;
   }
 
@@ -520,6 +855,16 @@
    * ------------------------------------------------------------------ */
   function SX(O, a) { return O.x + num(a, 0) * O.L * O.cy; }
   function SY(O, up) { return O.y - num(up, 0) * O.L; }
+
+  /* The same projection for a free vector in ship space (f = along the axis
+     toward the nose, u = the ship's up, s = the ship's right). SPX/SPY are
+     the (a, r, th) special case of these; the dish and the habitat ring need
+     the general form because their geometry does not lie on a lathe.
+       screen x = f*cy + s*sy      screen y = -u      depth = s*cy - f*sy
+     Depth is positive toward the camera, which matches `facing`. */
+  function P3X(O, f, u, s) { return O.x + O.L * (num(f, 0) * O.cy + num(s, 0) * O.sy); }
+  function P3Y(O, f, u, s) { return O.y - O.L * num(u, 0); }
+  function P3D(O, f, u, s) { return num(s, 0) * O.cy - num(f, 0) * O.sy; }
 
   /* ------------------------------------------------------------------ *
    * hull pieces                                                         *
@@ -1410,6 +1755,423 @@
   }
 
   /* ------------------------------------------------------------------ *
+   * moving parts. Every phase below is a pure function of O.t, so t = 0  *
+   * is one fixed frame and a reduced-motion caller simply passes it.     *
+   * ------------------------------------------------------------------ */
+
+  /* a boom: an instrument or a magnetometer on the end of a stick. It sits
+     at an azimuth on the hull, so bank swings it around with everything
+     else, and it foreshortens through the same surface parametrization. */
+  function drawMast(ctx, O, rg) {
+    var th = O.bank + num(rg.th, 0);
+    var r0 = num(rg.r0, 0.03), r1 = r0 + Math.max(0.004, num(rg.len, 0.1));
+    var x0 = SPX(O, rg.a, r0, th), y0 = SPY(O, r0, th);
+    var x1 = SPX(O, rg.a, r1, th), y1 = SPY(O, r1, th);
+    if (!fin(x0) || !fin(y0) || !fin(x1) || !fin(y1)) return;
+    var T = matRgb(rg.m || 'graphite');
+    var fc = facing(O, th);
+    var lit = clamp(0.30 + 0.50 * (fc * 0.5 + 0.5), 0, 1);
+    var k, n, xa, ya;
+    alpha(ctx, fc < -0.30 ? 0.66 : 1);
+    /* the boom itself: a tapering three sided truss, not a hairline. Two
+       rails a little apart plus their cross bracing is enough at this size. */
+    var wOut = Math.max(1.3, O.L * 0.0095), wIn = Math.max(2, O.L * 0.017);
+    var ux = (x1 - x0), uy = (y1 - y0);
+    var ul = Math.sqrt(ux * ux + uy * uy);
+    if (!(ul > 0.5)) { alpha(ctx, 1); return; }
+    var px = -uy / ul, py = ux / ul;
+    quad(ctx, x0 + px * wIn, y0 + py * wIn, x1 + px * wOut, y1 + py * wOut,
+         x1 - px * wOut, y1 - py * wOut, x0 - px * wIn, y0 - py * wIn);
+    ctx.fillStyle = rgbaOf(toneMix(T, lit * 0.55), 0.55);
+    ctx.fill();
+    ctx.strokeStyle = rgbaOf(toneMix(T, lit), 0.95);
+    ctx.lineWidth = Math.max(0.6, O.L * 0.0030);
+    ctx.beginPath();
+    line(ctx, x0 + px * wIn, y0 + py * wIn, x1 + px * wOut, y1 + py * wOut);
+    line(ctx, x0 - px * wIn, y0 - py * wIn, x1 - px * wOut, y1 - py * wOut);
+    ctx.stroke();
+    if (O.q && O.L > 60) {
+      n = clamp(Math.round((r1 - r0) / 0.022), 3, 10);
+      ctx.beginPath();
+      for (k = 0; k <= n; k++) {
+        var f = k / n, w = wIn + (wOut - wIn) * f;
+        xa = x0 + ux * f; ya = y0 + uy * f;
+        line(ctx, xa + px * w, ya + py * w, xa - px * w, ya - py * w);
+        if (k < n) {
+          var f2 = (k + 1) / n, w2 = wIn + (wOut - wIn) * f2;
+          var xb = x0 + ux * f2, yb = y0 + uy * f2;
+          if (k % 2 === 0) line(ctx, xa + px * w, ya + py * w, xb - px * w2, yb - py * w2);
+          else line(ctx, xa - px * w, ya - py * w, xb + px * w2, yb + py * w2);
+        }
+      }
+      ctx.strokeStyle = rgbaOf(toneMix(T, lit * 0.8), 0.62);
+      ctx.lineWidth = Math.max(0.4, O.L * 0.0020);
+      ctx.stroke();
+    }
+    /* the instrument at the end of it, as a box in the (station, radius)
+       plane: sized through gQuad it collapses to nothing, because a few
+       hundredths of a radian at this radius is three pixels of arc */
+    var tp = num(rg.tip, 0);
+    if (tp > 0.001) {
+      var bx = function (da, dr) {
+        return [SPX(O, rg.a + da, r1 + dr, th), SPY(O, r1 + dr, th)];
+      };
+      var c0 = bx(-tp, -tp * 0.62), c1 = bx(tp, -tp * 0.62);
+      var c2 = bx(tp, tp * 0.62), c3 = bx(-tp, tp * 0.62);
+      quad(ctx, c0[0], c0[1], c1[0], c1[1], c2[0], c2[1], c3[0], c3[1]);
+      var bg = lgrad(ctx, c3[0], c3[1], c0[0], c0[1]);
+      if (bg) {
+        bg.addColorStop(0, rgbaOf(toneMix(T, clamp(lit + 0.30, 0, 1)), 1));
+        bg.addColorStop(1, rgbaOf(toneMix(T, clamp(lit - 0.16, 0, 1)), 1));
+        ctx.fillStyle = bg;
+      } else ctx.fillStyle = rgbaOf(toneMix(T, clamp(lit + 0.2, 0, 1)), 0.96);
+      ctx.fill();
+      ctx.strokeStyle = rgba(20, 24, 30, 0.6);
+      ctx.lineWidth = Math.max(0.4, O.L * 0.0024);
+      ctx.stroke();
+      if (O.det >= 1) {
+        var d0 = bx(-tp * 0.55, tp * 0.10), d1 = bx(tp * 0.55, tp * 0.10);
+        var d2 = bx(tp * 0.55, tp * 0.44), d3 = bx(-tp * 0.55, tp * 0.44);
+        quad(ctx, d0[0], d0[1], d1[0], d1[1], d2[0], d2[1], d3[0], d3[1]);
+        ctx.fillStyle = rgba(236, 244, 254, 0.32);
+        ctx.fill();
+      }
+    }
+    alpha(ctx, 1);
+  }
+
+  /* The probe's high-gain antenna. It is aimed BACKWARD along the route
+     because it is talking to the place it left, and it hunts by a fraction
+     of a degree the whole time, which is the moving part.
+     The rim is a real circle in the plane normal to the aim, so the dish
+     turns into a line edge on and into a full disc face on. */
+  var DISH_N = 30;
+  function dishBasis(O, rg) {
+    var wob = num(rg.wob, 0.085);
+    var sd = num(rg.sid, 7);
+    var phi = O.aim + wob * Math.sin(O.t * 0.21 + h1(sd) * TAU)
+                    + wob * 0.4 * Math.sin(O.t * 0.53 + h1(sd + 3) * TAU);
+    var chi = O.bank + 0.30 * Math.sin(O.t * 0.13 + h1(sd + 7) * TAU);
+    var cp = Math.cos(phi), sp = Math.sin(phi), cc = Math.cos(chi), sc = Math.sin(chi);
+    return {
+      nf: cp, nu: sp * cc, ns: sp * sc,
+      t1f: -sp, t1u: cp * cc, t1s: cp * sc,
+      t2f: 0, t2u: -sc, t2s: cc,
+      mf: rg.a, mu: num(rg.mount, 0) * cc, ms: num(rg.mount, 0) * sc
+    };
+  }
+  function drawDish(ctx, O, rg) {
+    var B = dishBasis(O, rg);
+    var R = Math.max(0.01, num(rg.R, 0.1));
+    var dep = num(rg.depth, R * 0.36);
+    if (!fin(B.nf) || !fin(B.nu) || !fin(B.ns)) return;
+    var i, x, yy;
+    /* the pylon that holds it off the bus */
+    var px0 = P3X(O, rg.a, 0, 0), py0 = P3Y(O, rg.a, 0, 0);
+    var px1 = P3X(O, B.mf, B.mu, B.ms), py1 = P3Y(O, B.mf, B.mu, B.ms);
+    if (fin(px0) && fin(py0) && fin(px1) && fin(py1)) {
+      ctx.strokeStyle = mat('graphite')[2];
+      ctx.lineWidth = Math.max(0.7, O.L * 0.006);
+      ctx.beginPath(); line(ctx, px0, py0, px1, py1); ctx.stroke();
+    }
+    /* the rim, as a polygon: an ellipse in general position */
+    var xs = new Array(DISH_N), ys = new Array(DISH_N), okAll = true;
+    for (i = 0; i < DISH_N; i++) {
+      var ps2 = (i / DISH_N) * TAU;
+      var cw = Math.cos(ps2) * R, sw = Math.sin(ps2) * R;
+      x = P3X(O, B.mf + cw * B.t1f + sw * B.t2f, B.mu + cw * B.t1u + sw * B.t2u,
+              B.ms + cw * B.t1s + sw * B.t2s);
+      yy = P3Y(O, 0, B.mu + cw * B.t1u + sw * B.t2u, 0);
+      if (!fin(x) || !fin(yy)) { okAll = false; break; }
+      xs[i] = x; ys[i] = yy;
+    }
+    if (!okAll) return;
+    /* which face are we looking at */
+    var nd = P3D(O, B.nf, B.nu, B.ns);
+    var conc = nd > 0;
+    var lo = xs[0], hi = xs[0], ylo = ys[0], yhi = ys[0];
+    for (i = 1; i < DISH_N; i++) {
+      if (xs[i] < lo) lo = xs[i]; if (xs[i] > hi) hi = xs[i];
+      if (ys[i] < ylo) ylo = ys[i]; if (ys[i] > yhi) yhi = ys[i];
+    }
+    var cx = (lo + hi) * 0.5, cy2 = (ylo + yhi) * 0.5;
+    var span = Math.max(1.2, Math.max(hi - lo, yhi - ylo) * 0.5);
+    ctx.beginPath();
+    ctx.moveTo(xs[0], ys[0]);
+    for (i = 1; i < DISH_N; i++) ctx.lineTo(xs[i], ys[i]);
+    ctx.closePath();
+    var T = matRgb(rg.m || 'shield');
+    var g;
+    if (conc) {
+      /* the bowl: dark at the rim, brighter toward the middle */
+      g = rgrad(ctx, cx, cy2, 0, cx, cy2, span * 1.05);
+      if (g) {
+        g.addColorStop(0, rgbaOf(toneMix(T, 0.78), 1));
+        g.addColorStop(0.55, rgbaOf(toneMix(T, 0.46), 1));
+        g.addColorStop(1, rgbaOf(toneMix(T, 0.10), 1));
+      }
+    } else {
+      g = lgrad(ctx, cx + span * O.lx, cy2 + span * O.ly, cx - span * O.lx, cy2 - span * O.ly);
+      if (g) {
+        g.addColorStop(0, rgbaOf(toneMix(T, 0.88), 1));
+        g.addColorStop(0.5, rgbaOf(toneMix(T, 0.48), 1));
+        g.addColorStop(1, rgbaOf(toneMix(T, 0.14), 1));
+      }
+    }
+    ctx.fillStyle = g || rgbaOf(toneMix(T, 0.5), 1);
+    ctx.fill();
+    if (O.L > 40) {
+      /* the rim lip: a thick bright edge is most of what says "dish" at a
+         glance, and it survives every angle the aim can take */
+      ctx.strokeStyle = rgbaOf(toneMix(T, conc ? 0.95 : 0.55), 0.95);
+      ctx.lineWidth = Math.max(1, O.L * 0.0075);
+      ctx.stroke();
+      ctx.strokeStyle = rgba(18, 22, 28, 0.6);
+      ctx.lineWidth = Math.max(0.4, O.L * 0.0026);
+      ctx.stroke();
+    }
+    if (!O.q || span < 6) return;
+    /* reflector panels: concentric rings plus radial seams, drawn inside the
+       rim by construction so no clip is needed */
+    var rings = O.det >= 2 ? 4 : 2, k;
+    ctx.lineWidth = Math.max(0.35, O.L * 0.0018);
+    ctx.beginPath();
+    for (k = 1; k <= rings; k++) {
+      var f = k / (rings + 1);
+      for (i = 0; i <= DISH_N; i++) {
+        var pa = (i % DISH_N) / DISH_N * TAU;
+        var cw2 = Math.cos(pa) * R * f, sw2 = Math.sin(pa) * R * f;
+        var xx = P3X(O, B.mf + cw2 * B.t1f + sw2 * B.t2f, 0, B.ms + cw2 * B.t1s + sw2 * B.t2s);
+        var yy2 = P3Y(O, 0, B.mu + cw2 * B.t1u + sw2 * B.t2u, 0);
+        if (i === 0) ctx.moveTo(xx, yy2); else ctx.lineTo(xx, yy2);
+      }
+    }
+    ctx.strokeStyle = rgba(18, 22, 28, conc ? 0.24 : 0.34);
+    ctx.stroke();
+    var nSeam = O.det >= 2 ? 12 : 8;
+    ctx.beginPath();
+    for (k = 0; k < nSeam; k++) {
+      var pb = (k / nSeam) * TAU;
+      var cw3 = Math.cos(pb), sw3 = Math.sin(pb);
+      ctx.moveTo(P3X(O, B.mf, 0, B.ms), P3Y(O, 0, B.mu, 0));
+      ctx.lineTo(P3X(O, B.mf + cw3 * R * B.t1f + sw3 * R * B.t2f, 0, B.ms + cw3 * R * B.t1s + sw3 * R * B.t2s),
+                 P3Y(O, 0, B.mu + cw3 * R * B.t1u + sw3 * R * B.t2u, 0));
+    }
+    ctx.strokeStyle = rgba(18, 22, 28, conc ? 0.20 : 0.28);
+    ctx.stroke();
+    /* the feed horn on its tripod, out at the focus, only when we can see
+       into the dish */
+    if (conc && O.det >= 1) {
+      var ff = B.mf + B.nf * dep * 1.5, fu = B.mu + B.nu * dep * 1.5, fsd = B.ms + B.ns * dep * 1.5;
+      var fx = P3X(O, ff, fu, fsd), fy = P3Y(O, 0, fu, 0);
+      if (fin(fx) && fin(fy)) {
+        ctx.strokeStyle = rgba(206, 216, 230, 0.55);
+        ctx.lineWidth = Math.max(0.4, O.L * 0.0022);
+        ctx.beginPath();
+        for (k = 0; k < 3; k++) {
+          var pc = (k / 3) * TAU + 0.4;
+          var cw4 = Math.cos(pc) * R * 0.86, sw4 = Math.sin(pc) * R * 0.86;
+          line(ctx, fx, fy,
+            P3X(O, B.mf + cw4 * B.t1f + sw4 * B.t2f, 0, B.ms + cw4 * B.t1s + sw4 * B.t2s),
+            P3Y(O, 0, B.mu + cw4 * B.t1u + sw4 * B.t2u, 0));
+        }
+        ctx.stroke();
+        var fr = Math.max(0.8, R * O.L * 0.13);
+        fillEllipse(ctx, fx, fy, fr, fr, rgbaOf(toneMix(T, 0.9), 1));
+        strokeEllipse(ctx, fx, fy, fr, fr, rgba(22, 26, 32, 0.6), Math.max(0.4, O.L * 0.002));
+      }
+    }
+  }
+
+  /* The generation ship's habitat ring. It turns, continuously and slowly,
+     and the spokes and the modules bolted to it are what makes the turning
+     visible: a bare torus of revolution looks identical at every angle.
+     Drawn far half, hub, near half, so it reads as a ring around a hub
+     rather than a flat hoop.
+
+     A point on the ring at azimuth ps is (a, R cos ps, R sin ps) in the
+     (forward, up, side) frame, so its depth is R sin ps * cy and the near
+     half is the one whose sign matches nearSide(O). */
+  function drawHabRing(ctx, O, rg) {
+    var R = Math.max(0.02, num(rg.R, 0.28));
+    var tube = Math.max(0.004, num(rg.tube, 0.028));
+    var hub = Math.max(0.008, num(rg.hub, 0.05));
+    var a = num(rg.a, 0);
+    var spin = O.t * num(rg.spin, 0.26) + h1(num(rg.sid, 3)) * TAU;
+    var nSp = clamp(Math.round(num(rg.spokes, 6)), 3, 10);
+    var nMod = clamp(Math.round(num(rg.mods, 10)), 4, 16);
+    var cx = SX(O, a), ry = R * O.L, rx = Math.max(0.35, R * O.L * Math.abs(O.sy));
+    if (!fin(cx) || !(ry > 0)) return;
+    var lw = Math.max(1, tube * 2 * O.L);
+    var T = matRgb(rg.m || 'steel');
+    var tones = mat(rg.m || 'steel');
+    var side = nearSide(O);
+    /* the axial offset that puts a face toward the camera */
+    var nearA = (O.sy >= 0) ? -1 : 1;
+    /* the modules are beads strung ON the tube, not paddles sticking out of
+       it: they wrap it radially and cover most of their own arc, so the
+       ring reads as a segmented habitat rather than a circular saw */
+    var mw = (TAU / nMod) * 0.40, mh = tube * 1.10, ma = tube * 1.15;
+    var big = ry > 26;
+
+    /* one torus half, as a stroked half ellipse */
+    function halfTorus(sd, lit) {
+      var g = lgrad(ctx, cx, O.y - (ry + lw), cx, O.y + (ry + lw));
+      if (g) {
+        g.addColorStop(0, tones[lit ? 0 : 2]);
+        g.addColorStop(0.44, tones[lit ? 1 : 3]);
+        g.addColorStop(1, tones[3]);
+        ctx.strokeStyle = g;
+      } else ctx.strokeStyle = tones[lit ? 1 : 3];
+      ctx.lineWidth = lw;
+      ctx.beginPath();
+      halfEllipsePath(ctx, cx, O.y, rx, ry, sd);
+      ctx.stroke();
+      if (!lit || !O.q || !big) return;
+      /* a bright edge along one side of the tube, which is what makes it read
+         as a tube instead of a painted band */
+      var k = Math.max(0.05, 1 - lw * 0.30 / ry);
+      ctx.lineWidth = Math.max(0.4, lw * 0.17);
+      ctx.strokeStyle = rgba(255, 255, 255, 0.24);
+      ctx.beginPath();
+      halfEllipsePath(ctx, cx, O.y, rx * k, ry * k, sd);
+      ctx.stroke();
+    }
+    /* spokes: a strut per bay plus its bracing, so they read as structure */
+    function spokes(near) {
+      var k, ps, d, c0, s0;
+      ctx.strokeStyle = rgbaOf(toneMix(T, near ? 0.60 : 0.18), 0.92);
+      ctx.lineWidth = Math.max(0.7, O.L * 0.0052);
+      ctx.beginPath();
+      for (k = 0; k < nSp; k++) {
+        ps = spin + (k / nSp) * TAU;
+        d = Math.sin(ps) * O.cy;
+        if ((d > 0) !== near) continue;
+        c0 = Math.cos(ps); s0 = Math.sin(ps);
+        line(ctx, P3X(O, a, hub * c0, hub * s0), P3Y(O, 0, hub * c0, 0),
+                  P3X(O, a, R * c0, R * s0), P3Y(O, 0, R * c0, 0));
+      }
+      ctx.stroke();
+      if (!O.q || !big) return;
+      ctx.strokeStyle = rgbaOf(toneMix(T, near ? 0.36 : 0.12), 0.7);
+      ctx.lineWidth = Math.max(0.4, O.L * 0.0022);
+      ctx.beginPath();
+      for (k = 0; k < nSp; k++) {
+        ps = spin + (k / nSp) * TAU;
+        d = Math.sin(ps) * O.cy;
+        if ((d > 0) !== near) continue;
+        var pn = ps + TAU / nSp, rm = hub + (R - hub) * 0.55;
+        line(ctx, P3X(O, a, rm * Math.cos(ps), rm * Math.sin(ps)), P3Y(O, 0, rm * Math.cos(ps), 0),
+                  P3X(O, a, R * Math.cos(pn), R * Math.sin(pn)), P3Y(O, 0, R * Math.cos(pn), 0));
+      }
+      ctx.stroke();
+    }
+    /* The habitat modules: blocks straddling the ring, drawn as a shadowed
+       plate at the far station and a lit one at the near station. All four
+       corners of a plate sit at ONE station, which is what keeps them boxes
+       instead of the twisted ribbons a mixed-station quad gives. */
+    function plate(ps, rIn, rOut, at) {
+      var c0 = Math.cos(ps - mw), s0 = Math.sin(ps - mw);
+      var c1 = Math.cos(ps + mw), s1 = Math.sin(ps + mw);
+      ctx.moveTo(P3X(O, at, rIn * c0, rIn * s0), P3Y(O, 0, rIn * c0, 0));
+      ctx.lineTo(P3X(O, at, rOut * c0, rOut * s0), P3Y(O, 0, rOut * c0, 0));
+      ctx.lineTo(P3X(O, at, rOut * c1, rOut * s1), P3Y(O, 0, rOut * c1, 0));
+      ctx.lineTo(P3X(O, at, rIn * c1, rIn * s1), P3Y(O, 0, rIn * c1, 0));
+      ctx.closePath();
+    }
+    function modules(near) {
+      var k, ps, d, drew = 0, lit = [];
+      var rIn = R - tube * 1.10, rOut = R + mh;
+      ctx.beginPath();
+      for (k = 0; k < nMod; k++) {
+        ps = spin + 0.31 + (k / nMod) * TAU;
+        d = Math.sin(ps) * O.cy;
+        if ((d > 0) !== near) continue;
+        plate(ps, rIn, rOut, a - ma * nearA);
+        drew++;
+      }
+      if (!drew) return;
+      ctx.fillStyle = rgbaOf(toneMix(T, near ? 0.28 : 0.09), 1);
+      ctx.fill();
+      /* the outward face of each box, which is what turns two flat plates into
+         a solid: it spans both stations at the outer radius */
+      ctx.beginPath();
+      for (k = 0; k < nMod; k++) {
+        ps = spin + 0.31 + (k / nMod) * TAU;
+        d = Math.sin(ps) * O.cy;
+        if ((d > 0) !== near) continue;
+        var e0 = Math.cos(ps - mw), f0 = Math.sin(ps - mw);
+        var e1 = Math.cos(ps + mw), f1 = Math.sin(ps + mw);
+        ctx.moveTo(P3X(O, a - ma, rOut * e0, rOut * f0), P3Y(O, 0, rOut * e0, 0));
+        ctx.lineTo(P3X(O, a + ma, rOut * e0, rOut * f0), P3Y(O, 0, rOut * e0, 0));
+        ctx.lineTo(P3X(O, a + ma, rOut * e1, rOut * f1), P3Y(O, 0, rOut * e1, 0));
+        ctx.lineTo(P3X(O, a - ma, rOut * e1, rOut * f1), P3Y(O, 0, rOut * e1, 0));
+        ctx.closePath();
+      }
+      ctx.fillStyle = rgbaOf(toneMix(T, near ? 0.46 : 0.14), 1);
+      ctx.fill();
+      ctx.beginPath();
+      for (k = 0; k < nMod; k++) {
+        ps = spin + 0.31 + (k / nMod) * TAU;
+        d = Math.sin(ps) * O.cy;
+        if ((d > 0) !== near) continue;
+        plate(ps, rIn, rOut, a + ma * nearA);
+        if (near) lit.push(ps);
+      }
+      var g = lgrad(ctx, 0, O.y - ry - lw, 0, O.y + ry + lw);
+      if (g) {
+        g.addColorStop(0, rgbaOf(toneMix(T, near ? 0.92 : 0.34), 1));
+        g.addColorStop(0.46, rgbaOf(toneMix(T, near ? 0.62 : 0.22), 1));
+        g.addColorStop(1, rgbaOf(toneMix(T, near ? 0.24 : 0.08), 1));
+        ctx.fillStyle = g;
+      } else ctx.fillStyle = rgbaOf(toneMix(T, near ? 0.6 : 0.2), 1);
+      ctx.fill();
+      if (O.L > 60) {
+        ctx.strokeStyle = rgba(18, 22, 28, 0.55);
+        ctx.lineWidth = Math.max(0.4, O.L * 0.0022);
+        ctx.stroke();
+      }
+      /* lit windows, the only reason to draw a habitat at all */
+      if (!near || O.det < 1 || !lit.length || !big) return;
+      var wr = Math.max(0.8, O.L * 0.0042), rw = R + mh * 0.62;
+      ctx.beginPath();
+      for (k = 0; k < lit.length; k++) {
+        var j;
+        for (j = -1; j <= 1; j++) {
+          var pj = lit[k] + j * mw * 0.56;
+          var cw = Math.cos(pj), sw = Math.sin(pj);
+          var wx = P3X(O, a + ma * nearA, rw * cw, rw * sw), wy = P3Y(O, 0, rw * cw, 0);
+          if (!fin(wx) || !fin(wy)) continue;
+          ctx.rect(wx - wr, wy - wr * 0.66, wr * 2, wr * 1.32);
+        }
+      }
+      ctx.fillStyle = rgba(255, 240, 196, 0.95);
+      ctx.fill();
+    }
+
+    halfTorus(-side, false);
+    spokes(false);
+    modules(false);
+    /* the hub the spokes land on */
+    var hy = hub * O.L, hx = Math.max(0.4, hub * O.L * Math.abs(O.sy));
+    var hg = lgrad(ctx, cx + hx * O.lx, O.y + hy * O.ly, cx - hx * O.lx, O.y - hy * O.ly);
+    if (hg) { hg.addColorStop(0, tones[0]); hg.addColorStop(0.5, tones[1]); hg.addColorStop(1, tones[3]); }
+    fillEllipse(ctx, cx, O.y, hx, hy, hg || tones[1]);
+    if (O.L > 50) strokeEllipse(ctx, cx, O.y, hx, hy, rgba(24, 28, 34, 0.5), Math.max(0.4, O.L * 0.0026));
+    spokes(true);
+    halfTorus(side, true);
+    modules(true);
+    /* the gold trim the rest of the ship carries */
+    if (O.L > 60) {
+      ctx.lineWidth = Math.max(0.4, lw * 0.14);
+      ctx.strokeStyle = rgba(200, 164, 92, 0.5);
+      ctx.beginPath();
+      halfEllipsePath(ctx, cx, O.y, rx, ry + lw * 0.36, side);
+      ctx.stroke();
+    }
+  }
+
+  /* ------------------------------------------------------------------ *
    * exhausts. Drawn behind the hull; length collapses as the ship turns  *
    * tail on, where a nozzle glow (drawn after the hull) takes over.      *
    * ------------------------------------------------------------------ */
@@ -1747,16 +2509,29 @@
     }
   }
 
-  function drawNavLight(ctx, O, spec) {
-    var nav = spec.nav;
+  /* Navigation beacons. One period for the whole fleet, a per-beacon phase
+     out of the same hashed noise everything else uses, so no two lights on a
+     ship blink together and nothing here needs Math.random or stored state.
+     At t = 0 this is one fixed frame, which is the reduced-motion render. */
+  var BEACON_PERIOD = 2.1;
+  var BEACON_COL = {
+    gold: [[200, 164, 92], [232, 200, 130]],
+    white: [[176, 190, 208], [236, 244, 255]]
+  };
+  /* The wave-4 single nav light, kept verbatim for a caller that has not
+     opted into hulls. It is the whole reason `hull: undefined` and
+     `hull: 'crewed'` are not the same call: the geometry is identical, the
+     wave-5 moving parts are not, and an un-upgraded caller gets the render it
+     already had, to the pixel. */
+  function drawNavLegacy(ctx, O, spec) {
+    var nav = spec.beacons && spec.beacons[0];
+    if (!nav) return;
     var ph = frac(O.t * 0.62);
     var on = (ph < 0.07) || (ph > 0.13 && ph < 0.19);
     var x = SPX(O, nav.a, nav.up, O.bank), y = SPY(O, nav.up, O.bank);
     var r = Math.max(0.8, O.L * 0.008);
-    /* a beacon on the far side of a banked hull still shows, just dimmer */
     var far = facing(O, O.bank) < 0;
-    var vis = far ? 0.42 : 1;
-    alpha(ctx, vis);
+    alpha(ctx, far ? 0.42 : 1);
     ctx.fillStyle = on ? GOLD : GOLD_DK;
     ctx.beginPath(); ellipsePath(ctx, x, y, r, r); ctx.fill();
     if (!on || O.L < 40) { alpha(ctx, 1); return; }
@@ -1768,6 +2543,36 @@
       ctx.beginPath(); ellipsePath(ctx, x, y, r * 5, r * 5); ctx.fill();
     }
     alpha(ctx, 1);
+  }
+  function drawBeacons(ctx, O, spec) {
+    var bs = spec.beacons;
+    if (!bs || !bs.length) return;
+    var i, r = Math.max(0.8, O.L * 0.008);
+    for (i = 0; i < bs.length; i++) {
+      var b = bs[i];
+      var ph = frac(O.t / BEACON_PERIOD + num(b.ph, 0));
+      var on = (ph < 0.055) || (ph > 0.100 && ph < 0.155);
+      var th = O.bank + num(b.th, 0);
+      var x = SPX(O, b.a, b.up, th), y = SPY(O, b.up, th);
+      if (!fin(x) || !fin(y)) continue;
+      var pair = BEACON_COL[b.col] || BEACON_COL.gold;
+      var c = on ? pair[1] : pair[0];
+      /* a beacon on the far side of the hull still shows, just dimmer */
+      var far = facing(O, th) < 0;
+      alpha(ctx, far ? 0.42 : 1);
+      ctx.fillStyle = on ? rgba(c[0], c[1], c[2], 1) : rgba(pair[0][0], pair[0][1], pair[0][2], 0.85);
+      ctx.beginPath(); ellipsePath(ctx, x, y, r, r); ctx.fill();
+      if (on && O.L >= 40) {
+        var g = rgrad(ctx, x, y, 0, x, y, r * 5);
+        if (g) {
+          g.addColorStop(0, rgba(c[0], c[1], c[2], 0.55));
+          g.addColorStop(1, rgba(pair[0][0], pair[0][1], pair[0][2], 0));
+          ctx.fillStyle = g;
+          ctx.beginPath(); ellipsePath(ctx, x, y, r * 5, r * 5); ctx.fill();
+        }
+      }
+      alpha(ctx, 1);
+    }
   }
 
   /* ------------------------------------------------------------------ *
@@ -1902,9 +2707,9 @@
    * ------------------------------------------------------------------ */
   function keyFromOpts(opts) {
     if (!opts) return 'fusion';
-    if (typeof opts === 'string') return SPEC[opts] ? opts : 'fusion';
+    if (typeof opts === 'string') return DRIVES[opts] ? opts : 'fusion';
     var k = opts.key || opts.ship || opts.kind;
-    if (typeof k === 'string' && SPEC[k]) return k;
+    if (typeof k === 'string' && DRIVES[k]) return k;
     var i = opts.index;
     if (!fin(i)) i = opts.i;
     if (fin(i)) {
@@ -1912,6 +2717,32 @@
       if (i >= 0 && i < SHIPS.length) return SHIPS[i].key;
     }
     return 'fusion';
+  }
+  /* The mass class, and the wave-4 opt out.
+     Exactly as `bank` and `lightDir` did in v3, `hull` has a pinned default
+     that leaves an un-upgraded caller alone, and here that default is the
+     whole wave-4 render: crewed geometry AND the wave-4 nav light, with the
+     gimbal off. Naming one of the three hulls (or a valid hullIndex) selects
+     a hull and turns the wave-5 moving parts on. Anything else at all,
+     undefined, null, NaN, a typo, is the pinned default. */
+  function hullFromOpts(opts) {
+    if (!opts || typeof opts === 'string') return null;
+    var h = opts.hull;
+    if (typeof h === 'string' && HULL_SET[h]) return h;
+    var i = opts.hullIndex;
+    if (fin(i)) {
+      i = Math.round(i);
+      if (i >= 0 && i < HULL_LIST.length) return HULL_LIST[i].key;
+    }
+    return null;
+  }
+
+  /* the engine gimbal, as a screen rotation about the joint it swings on */
+  function gimPush(ctx, gx, gy, ang) {
+    ctx.save();
+    ctx.translate(gx, gy);
+    ctx.rotate(ang);
+    ctx.translate(-gx, -gy);
   }
 
   /* the colour the drive throws on its own hull */
@@ -1926,7 +2757,9 @@
     if (typeof opts === 'string') opts = { key: opts };
     opts = opts || {};
     var key = keyFromOpts(opts);
-    var spec = prep(key);
+    var asked = hullFromOpts(opts);
+    var hull = asked || 'crewed';
+    var spec = specOf(key, hull);
     var L = clamp(px, 4, 900);
     var flip = clamp(opts.flip, 0, 1);
     var yw = num(yaw, 0) + Math.PI * smooth(flip);
@@ -1942,6 +2775,11 @@
       bank: clamp(num(opts.bank, 0), -Math.PI, Math.PI),
       /* v3: screen angle pointing TOWARD the light, VoyageArt's convention */
       ld: num(opts.lightDir, Math.PI),
+      /* v4: where the probe's high-gain dish is pointed, measured from the
+         nose. The default is back the way the ship came, because that is
+         where whoever launched it is. */
+      aim: num(opts.dishAim, Math.PI - 0.30),
+      hull: hull,
       plumeCol: DRIVE_COL[key] || DRIVE_COL.fusion,
       lx: 0, ly: -1,
       /* procedural detail tier: cheap when small, rich when close */
@@ -1949,6 +2787,20 @@
     };
     if (!fin(O.cy) || !fin(O.sy)) return;
     lightVec(O);
+
+    /* The engine gimbals while it is running: under a degree, slow, and it
+       swings the plume with it. Scaled by |cy| because this is a screen
+       rotation standing in for a pitch, and tail on there is no pitch to
+       see. A million tonne ship moves its bell less than a probe does.
+       Only for a caller that asked for a hull, so the wave-4 render is
+       untouched. */
+    var gimA = num(spec.gimA, -0.2);
+    var gim = !asked ? 0 : num(spec.gimK, 0.04) * O.th * Math.abs(O.cy) *
+      (0.72 * Math.sin(O.t * 0.61 + h1(gimA * 37 + 5) * TAU) +
+       0.28 * Math.sin(O.t * 0.29 + h1(gimA * 91 + 11) * TAU));
+    if (!fin(gim) || Math.abs(gim) < 1e-4) gim = 0;
+    var gimX = SX(O, gimA), gimY = O.y;
+    if (!fin(gimX) || !fin(gimY)) gim = 0;
 
     ctx.save();
     ctx.lineJoin = 'round';
@@ -1959,12 +2811,16 @@
        better; above it the real ship is drawn, however small the marker. */
     if (L < 14) { drawTiny(ctx, O, spec, key); ctx.restore(); return; }
 
+    if (gim) gimPush(ctx, gimX, gimY, gim);
     drawExhaust(ctx, O, spec, key);
+    if (gim) ctx.restore();
 
     var items = spec._items, i;
     var fwd = O.sy >= 0;
     for (i = 0; i < items.length; i++) {
       var it = items[fwd ? i : (items.length - 1 - i)];
+      var swung = gim && it.a < gimA;
+      if (swung) gimPush(ctx, gimX, gimY, gim);
       ctx.save();
       if (it.kind === 'group') {
         if (it.type === 'truss') drawTruss(ctx, O, spec, it);
@@ -1977,14 +2833,21 @@
         else if (rg.type === 'sphere') drawSphere(ctx, O, rg);
         else if (rg.type === 'panel') drawPanel(ctx, O, rg);
         else if (rg.type === 'mouth') drawMouth(ctx, O, rg);
+        else if (rg.type === 'dish') drawDish(ctx, O, rg);
+        else if (rg.type === 'mast') drawMast(ctx, O, rg);
+        else if (rg.type === 'habring') drawHabRing(ctx, O, rg);
       }
       alpha(ctx, 1);
       ctx.restore();
+      if (swung) ctx.restore();
     }
 
+    if (gim) gimPush(ctx, gimX, gimY, gim);
     drawGrids(ctx, O, spec);
     drawTailGlow(ctx, O, spec, key);
-    drawNavLight(ctx, O, spec);
+    if (gim) ctx.restore();
+    if (asked) drawBeacons(ctx, O, spec);
+    else drawNavLegacy(ctx, O, spec);
     ctx.restore();
   }
 
@@ -2070,7 +2933,11 @@
     return ctx && ctx.canvas ? ctx.canvas : null;
   }
 
-  function drawShipTurntable(target, key, t) {
+  /* opts (all optional): { hull, light, still }.
+     `still` is the reduced-motion render: one frame at t = 0 held at a three
+     quarter view, which freezes the turntable, the habitat ring, the tracking
+     dish, the gimbal and the beacons together. */
+  function drawShipTurntable(target, key, t, opts) {
     var ctx = ctxOf(target);
     if (!ctx) return;
     var canvas = canvasOf(target, ctx);
@@ -2084,12 +2951,18 @@
     if (typeof ctx.setTransform === 'function') ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, num(canvas.width, w) || w, num(canvas.height, h) || h);
     ctx.restore();
-    var tt = num(t, 0);
-    var hh = (SPEC[key] && SPEC[key].halfH) || 0.3;
+    opts = opts || {};
+    var still = !!opts.still;
+    /* naming the hull is what opts into the wave-5 moving parts, so a three
+       argument call keeps drawing exactly what it always drew */
+    var hk = HULL_SET[opts.hull] ? opts.hull : null;
+    var tt = still ? 0 : num(t, 0);
+    var hh = halfHeightOf(key, hk || 'crewed');
     var px = clamp(Math.min(w * 0.80, (h * 0.44) / hh), 12, 420);
     var thrust = 0.22 + 0.07 * (0.5 + 0.5 * Math.sin(tt * 1.6));
-    drawShip(ctx, w * 0.54, h * 0.5, px, tt * 0.5, {
-      key: key, thrust: thrust, t: tt, quality: (w < 150 ? 0 : 1), flip: 0
+    drawShip(ctx, w * 0.54, h * 0.5, px, still ? 0.62 : tt * 0.5, {
+      key: key, hull: hk, thrust: thrust, t: tt, quality: (w < 150 ? 0 : 1), flip: 0,
+      light: !!opts.light
     });
   }
 
@@ -2113,11 +2986,13 @@
       ctx.restore();
       ctx.fillStyle = '#0b0e14';
       ctx.fillRect(0, 0, w, h);
-      var idx = Math.floor(t / 5) % SHIPS.length;
+      var n = Math.floor(t / 5);
+      var idx = n % SHIPS.length;
+      var hix = Math.floor(n / SHIPS.length) % HULL_LIST.length;
       var ph = (t / 5) % 1;
       var thrust = ph < 0.2 ? ph / 0.2 : (ph > 0.85 ? (1 - ph) / 0.15 : 1);
       drawShip(ctx, w * 0.5, h * 0.42, Math.min(w * 0.7, 360), t * 0.6, {
-        key: SHIPS[idx].key, thrust: thrust, t: t, quality: 1, flip: 0
+        key: SHIPS[idx].key, hull: HULL_LIST[hix].key, thrust: thrust, t: t, quality: 1, flip: 0
       });
       drawChemPlume(ctx, w * 0.22, h * 0.86, 120, Math.PI, 0.5 + 0.5 * Math.sin(t * 2), t);
       if (typeof requestAnimationFrame === 'function') requestAnimationFrame(frame);
@@ -2129,6 +3004,8 @@
   var API = {
     version: 2,
     SHIPS: SHIPS,
+    HULLS: HULL_LIST,
+    CARDS: CARDS,
     drawShip: drawShip,
     drawChemPlume: drawChemPlume,
     drawShipTurntable: drawShipTurntable,
@@ -2137,6 +3014,8 @@
     emitOf: emitOf,
     halfHeightOf: halfHeightOf,
     shipByKey: shipByKey,
+    hullByKey: hullByKey,
+    shipCardOf: shipCardOf,
     __demo: __demo
   };
 

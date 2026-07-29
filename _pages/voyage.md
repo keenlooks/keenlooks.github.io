@@ -26,7 +26,7 @@ description: "An interactive full-screen trip planner by Keane Lucas: real JPL p
     <div class="voy-panel__body" id="voy-panel-body">
       <p class="voy-blurb">
         The planets here sit where they really are today, and every star is a real star
-        from the HYG catalog, in its true position, distance and color. Pick a destination
+        from the AT-HYG catalog, in its true position, distance and color. Pick a destination
         by tapping it or searching for it: planets get a real transfer-orbit map, stars get
         the honest relativity of a constant-acceleration ship. Nobody knows how to build
         that ship, and the numbers show why. Somewhere out there your ship is waiting in
@@ -41,6 +41,11 @@ description: "An interactive full-screen trip planner by Keane Lucas: real JPL p
                placeholder="Mars, Sirius, TRAPPIST-1 e &hellip;">
         <ul id="voy-search-list" class="voy-search-list" role="listbox"
             aria-label="Search results" hidden></ul>
+        <button id="voy-surprise" class="voy-btn voy-surprise" type="button"
+                aria-haspopup="menu" aria-expanded="false"
+                aria-controls="voy-surprise-list">Surprise me</button>
+        <ul id="voy-surprise-list" class="voy-search-list voy-surprise-list"
+            role="menu" aria-label="Surprise me" hidden></ul>
       </div>
 
       <p class="voy-target-line" id="voy-target"></p>
@@ -66,15 +71,19 @@ description: "An interactive full-screen trip planner by Keane Lucas: real JPL p
         <summary>How honest is this?</summary>
         <p>
           Planet positions come from JPL's published orbital elements and are right for
-          today's date. Star positions, distances and colors are real, from the HYG
+          today's date. Star positions, distances and colors are real, from the AT-HYG
           catalog, and the exoplanets are real discoveries from NASA's archive. The
           transfer orbits and the relativity math are the true equations, but the galaxy
           backdrop is an illustration, exoplanet positions along their orbits are not
-          known, and nobody knows how to build a ship that holds 1&nbsp;g for years.
+          known, and nobody knows how to build a ship that holds a steady push
+          like this for years.
           Star sizes on screen show brightness, not true size.
         </p>
         <p>
-          About 65,000 stars are drawn; the 5,000 brightest are clickable. Star
+          About 110,000 real stars are charted here; 10,000 of them are clickable, along
+          with a few hundred named objects far across the galaxy. As you pull back the
+          faintest of them thin out so the view stays smooth, and they come back as you
+          zoom in. Star
           close-ups are procedural art driven by each star's real temperature, size and
           type; the flares and the surface detail are typical for the type, not
           observations. The eight planets of our own system are drawn the same way, as
@@ -87,8 +96,32 @@ description: "An interactive full-screen trip planner by Keane Lucas: real JPL p
         <p>
           The galaxy itself is a painting. Its shape, its size and the Sun's place in it
           are real, but nobody has ever seen our galaxy from the outside. The stars drawn
-          on top of it, about 65,000 of them, are real stars at their real measured
-          positions, and they only reach a few thousand light years out.
+          on top of it, about 110,000 of them, are real stars at their real measured
+          positions, and almost all of them are within a few thousand light years. The
+          handful of objects farther out are the ones astronomers have individual
+          distances for.
+        </p>
+        <p>
+          A few thousand light years from home the map thins out. That is not because the
+          stars end. Dust between us blocks the view, and the simple one-over-parallax
+          distances in this catalog stretch by five to fifteen percent out there, and by
+          much more beyond that. What is charted individually on the far side is a few
+          hundred beacons: pulsating stars measured in the infrared, and gas clouds
+          measured by radio telescopes linked across the planet. Those are the ones you
+          can visit here. The ordinary stars over there are not on anybody's map with a
+          distance you could fly to.
+        </p>
+        <p>
+          Those far objects are drawn as markers, never as discs. A globular cluster is a
+          swarm because that is what it is, the Magellanic Clouds are soft patches whose
+          shape is an impression, and the black hole at the center of the galaxy has no
+          picture at all, because it has no surface to draw. None of them carry a
+          temperature, a size or a color here, because nobody measured one.
+        </p>
+        <p>
+          The background star tier is a separate file of up to 100,000 stars, about
+          1.07 MB on disk after base64, loaded only after the page has drawn its first
+          frame. If it never arrives the map still works.
         </p>
         <p>
           The four-point crosses on the brightest stars are a camera effect. Real
@@ -98,18 +131,35 @@ description: "An interactive full-screen trip planner by Keane Lucas: real JPL p
 
       <p class="voy-status-line"><span id="voy-status" role="status"></span></p>
       <p class="voy-credit">
-        Star data from the HYG catalog (astronexus.com, CC BY-SA). Planets and exoplanets
-        from NASA. All code original.
+        Star data from the AT-HYG catalog v4.0 (astronexus.com, CC BY-SA 4.0), modified.
+        Far-side beacons from Skowron and colleagues 2024 and Reid and colleagues 2019;
+        Sagittarius A* from the GRAVITY Collaboration 2021; cluster distances from
+        Baumgardt and Vasiliev 2021; the Magellanic Clouds from Pietrzynski and colleagues
+        2019 and Graczyk and colleagues 2020. Planets and exoplanets from NASA. All code
+        original.
       </p>
       <p class="voy-verify" id="voy-verify"></p>
     </div>
   </div>
 
-  <div class="voy-fpbar voy-seg" id="voy-fp" role="group" aria-label="Cruise view" hidden>
-    <button id="voy-fp-chase" class="voy-seg__btn voy-seg__btn--on" type="button" aria-pressed="true">Chase</button>
-    <button id="voy-fp-cockpit" class="voy-seg__btn" type="button" aria-pressed="false">Cockpit</button>
-    <button id="voy-fp-info" class="voy-seg__btn" type="button" style="flex:0 0 34px"
-            aria-label="Replay what is happening" title="Replay what is happening">&#9432;</button>
+  <button id="voy-return" class="voy-return" type="button" aria-pressed="false"
+          hidden>Return to ship</button>
+
+  <div class="voy-fpbar" id="voy-fp" hidden>
+    <div class="voy-seg" role="group" aria-label="Cruise view">
+      <button id="voy-fp-chase" class="voy-seg__btn voy-seg__btn--on" type="button" aria-pressed="true">Chase</button>
+      <button id="voy-fp-cockpit" class="voy-seg__btn" type="button" aria-pressed="false">Cockpit</button>
+      <button id="voy-fp-map" class="voy-seg__btn" type="button" aria-pressed="false" hidden>Map</button>
+      <button id="voy-fp-info" class="voy-seg__btn" type="button" style="flex:0 0 34px"
+              aria-label="Replay what is happening" title="Replay what is happening">&#9432;</button>
+    </div>
+    <div class="voy-tsrow" id="voy-ts-row">
+      <span class="voy-tsrow__lab">Slower</span>
+      <input id="voy-ts" class="voy-tsrow__range" type="range" min="0.4" max="2.5" step="0.05"
+             value="1" aria-label="How fast the flight plays">
+      <span class="voy-tsrow__lab">Faster</span>
+      <span class="voy-tsrow__out" id="voy-ts-out">45 s</span>
+    </div>
   </div>
 
   <p id="voy-cap-sr" role="status" aria-live="polite"
@@ -143,6 +193,35 @@ html[data-theme="light"] .voy-topfade {
       rgba(243,245,248,0.96) 0%, rgba(243,245,248,0.82) 32%, rgba(243,245,248,0) 100%);
   }
 }
+
+/* ---- the DARK SPACE WINDOW (wave-5 round 5, ruling R7 option B) ----
+   In light theme voyage.js keeps painting the sky with the DARK palette
+   (space is black; a photograph of the galaxy does not invert), and marks the
+   body `.voy-darksky`. Everything in a panel or a card stays light-theme and
+   needs nothing here. What DOES need re-inking is the chrome that sits
+   directly on the sky with no background of its own: the masthead links, the
+   top vignette, and the two floating corner buttons. Without these three
+   blocks they are the light theme's near-black ink on a near-black sky.
+   Scoped to this page and to light theme only; the dark theme never gets the
+   class, so nothing below can affect it. */
+body.voy-darksky .voy-topfade {
+  background: linear-gradient(to bottom,
+    rgba(14,16,20,0.96) 0%, rgba(14,16,20,0.82) 32%, rgba(14,16,20,0) 100%);
+}
+body.voy-darksky .greedy-nav .visible-links a { color: #d6d6d6; }
+body.voy-darksky .greedy-nav .visible-links a:hover { color: #a3c2e0; }
+body.voy-darksky .greedy-nav .visible-links a:before { background: #82a6cc; }
+body.voy-darksky .greedy-nav button { background-color: #82a6cc; }
+body.voy-darksky #theme-toggle,
+body.voy-darksky #life-link {
+  color: #d6d6d6;
+  border-color: rgba(255,255,255,0.22);
+  background: rgba(255,255,255,0.10);
+  box-shadow: none;
+}
+body.voy-darksky #theme-toggle:focus-visible,
+body.voy-darksky #life-link:focus-visible,
+body.voy-darksky .greedy-nav .visible-links a:focus-visible { outline-color: #82a6cc; }
 
 .voy-canvas {
   position: fixed; inset: 0; width: 100vw; height: 100vh; height: 100dvh;
@@ -208,6 +287,48 @@ html[data-theme="light"] .voy-search__opt:hover, html[data-theme="light"] .voy-s
   html:not([data-theme="dark"]) .voy-search__opt--hi { background: rgba(52,86,138,0.14); }
 }
 .voy-search__kind { font-size: 0.82em; opacity: 0.55; white-space: nowrap; }
+
+/* "Surprise me" and its in-flow menu. The panel is overflow:auto with a
+   max-height, so this list stays IN FLOW under its own button, exactly like
+   the search results above it. */
+.voy-surprise { align-self: flex-start; margin-top: 0.15rem; }
+.voy-surprise-list { margin-top: 0.3rem; }
+.voy-surprise__opt { padding: 0; display: block; }
+.voy-surprise__btn {
+  display: block; width: 100%; text-align: left; background: none; border: 0;
+  color: inherit; font: inherit; font-size: 0.92em; cursor: pointer;
+  padding: 0.45em 0.6em;
+}
+.voy-surprise__btn:hover, .voy-surprise__btn:focus-visible {
+  background: rgba(130,166,204,0.18);
+}
+html[data-theme="light"] .voy-surprise__btn:hover,
+html[data-theme="light"] .voy-surprise__btn:focus-visible { background: rgba(52,86,138,0.14); }
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .voy-surprise__btn:hover,
+  html:not([data-theme="dark"]) .voy-surprise__btn:focus-visible { background: rgba(52,86,138,0.14); }
+}
+
+/* The Return-to-ship chip. Bottom-left is #theme-toggle / #voy-back and the
+   top-left corner is the masthead over a 120 px vignette, so it sits just
+   below the vignette. */
+.voy-return {
+  position: fixed; top: 132px; left: 12px; z-index: 12;
+  pointer-events: auto;
+  padding: 0.38em 0.75em; font-size: 0.86em; line-height: 1.2;
+  border-radius: 999px; cursor: pointer;
+  background: rgba(255,255,255,0.10); color: inherit;
+  border: 1px solid rgba(127,127,127,0.45);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  opacity: 0.85;
+}
+.voy-return:hover, .voy-return:focus-visible { opacity: 1; }
+.voy-return[hidden] { display: none !important; }
+html[data-theme="light"] .voy-return { background: rgba(0,0,0,0.04); }
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .voy-return { background: rgba(0,0,0,0.04); }
+}
+body.voy-sheet-open .voy-return { display: none !important; }
 
 .voy-target-line { margin: 0; font-size: 0.88em; opacity: 0.85; }
 .voy-legend { margin: 0; font-size: 0.8em; opacity: 0.55; }
@@ -367,10 +488,16 @@ html[data-theme="light"] .voy-shipprev { border-color: rgba(0,0,0,0.10); backgro
 .voy-shipname { margin: 0; font-size: 0.88em; font-weight: 600; }
 .voy-shipline { margin: 0; font-size: 0.8em; opacity: 0.7; line-height: 1.4; }
 
-/* ---- chase / cockpit toggle, under the cruise HUD ---- */
+/* ---- the cruise control bar, under the cruise HUD ----
+   Row 1 is the view toggle (Chase / Cockpit, or Chase / Map in an in-system
+   flight); row 2 is the time slider. Both live INSIDE this one element on
+   purpose: the caption band measures max(hudBottom, .voy-fpbar bottom) and
+   knows about nothing else, so a sibling fixed element would silently
+   reopen the caption-overlap fix. */
 .voy-fpbar {
   position: fixed; left: 50%; transform: translateX(-50%);
-  top: 11.8rem; z-index: 29; width: 190px; pointer-events: auto;
+  top: 11.8rem; z-index: 29; width: 260px; pointer-events: auto;
+  border-radius: 6px;
   background: rgba(18,20,24,0.86);
   -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
 }
@@ -380,7 +507,29 @@ html[data-theme="light"] .voy-fpbar { background: rgba(255,255,255,0.9); }
   html:not([data-theme="dark"]) .voy-fpbar { background: rgba(255,255,255,0.9); }
 }
 @media (max-width: 768px) {
-  .voy-fpbar { top: 10.4rem; width: 170px; }
+  .voy-fpbar { top: 10.4rem; width: 230px; }
+}
+.voy-tsrow {
+  display: flex; align-items: center; gap: 5px;
+  padding: 5px 8px 6px;
+}
+/* the theme's forms CSS gives inputs an explicit display, so [hidden] needs
+   help here exactly as it does on the utility pages */
+.voy-tsrow[hidden] { display: none !important; }
+.voy-seg__btn[hidden] { display: none !important; }
+.voy-tsrow__lab { font-size: 0.68em; opacity: 0.62; flex: 0 0 auto; white-space: nowrap; }
+.voy-tsrow__out {
+  font-size: 0.72em; opacity: 0.85; flex: 0 0 auto;
+  min-width: 30px; text-align: right; font-variant-numeric: tabular-nums;
+}
+.voy-tsrow__range {
+  flex: 1 1 auto; min-width: 0; width: auto; margin: 0; padding: 0;
+  height: 18px; background: none; border: 0; box-shadow: none;
+  accent-color: #82a6cc; cursor: pointer;
+}
+html[data-theme="light"] .voy-tsrow__range { accent-color: #34568a; }
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .voy-tsrow__range { accent-color: #34568a; }
 }
 
 /* The info (i) replay button shares the segmented bar with Chase / Cockpit, but
@@ -437,8 +586,9 @@ html[data-theme="light"] #voy-fp-info:focus-visible { background: rgba(52,86,138
   /* a fingertip needs more than the 34px the markup asks for, and the bar grows
      to match so Chase / Cockpit keep their width. The inline flex basis on the
      button can only be beaten with !important. */
-  .voy-fpbar { width: 200px; }
+  .voy-fpbar { width: 260px; }
   #voy-fp-info { flex: 0 0 44px !important; }
+  .voy-tsrow__range { height: 40px; }
   .voy-collapse { width: 2.3em; height: 2.3em; }
   .voy-panel .gadget-help { min-width: 36px; min-height: 36px; }
   .voy-details summary { padding: 0.35em 0; }
@@ -446,6 +596,9 @@ html[data-theme="light"] #voy-fp-info:focus-visible { background: rgba(52,86,138
   .voy-chip { min-height: 40px; }
   .voy-search { min-height: 40px; }
   .voy-search__opt { min-height: 40px; align-items: center; }
+  .voy-surprise__opt { min-height: 40px; }
+  .voy-surprise__btn { min-height: 40px; }
+  .voy-return { min-height: 40px; }
 }
 </style>
 

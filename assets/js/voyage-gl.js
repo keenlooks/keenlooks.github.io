@@ -44,6 +44,15 @@
   var LACUNARITY = 2.02;
   var GAIN = 0.50;
   var WARP1_AMP = 0.55, WARP2_AMP = 0.22;
+  /* The three convection bands, as multiples of the granulation frequency
+     (freq = GRAN_F0 / granuleScale). They are the retune of the shipped
+     0.14 / 0.45 pair: 0.14 drops to 0.038 and becomes the supergranulation
+     band, 0.45 drops to 0.30 and becomes the granulation network itself. Read
+     as cells across the visible disc, a G star lays down roughly fifty
+     granules edge to edge inside about half a dozen supergranules, which is
+     what a white-light photograph of the Sun shows at this apparent size. */
+  var FSUP = 0.038;
+  var FCELL = 0.300;
   var SPOT_MAX = 5;            /* VoyageArt.SPOT_MAX                        */
   var FLARE_SLOTS = 6;         /* VoyageArt.FLARE_SLOTS                     */
   var TWO_PI = Math.PI * 2;
@@ -173,6 +182,10 @@
     '#define LAC 2.02',
     '#define GAIN 0.50',
     '#define TAU 6.283185307179586',
+    /* the amplitude sums of the two fixed-octave fBms, so a band can be
+       normalised to 0..1 without a divide chain */
+    '#define N2 1.5',
+    '#define N3 1.75',
     'varying vec2 vP;',
     '',
     'float hash3(vec3 p) {',
@@ -205,32 +218,44 @@
        not, the sub-pixel fizz that would otherwise alias into grain is gone
        and the orb simply gets smoother as it gets smaller. */
     'float oFade(float fpx) { return smoothstep(1.1, 2.4, fpx); }',
+    /* The break is not an approximation of the mean substitution, it IS the
+       mean substitution, computed in closed form. oFade only ever falls as
+       the octave scale rises, so once one octave is under the fade floor
+       every octave after it is too, and their whole contribution is
+       0.5 * (the amplitudes that are left). `rem` carries exactly that sum.
+       Without the break the sampled value3 is still evaluated at full price
+       and then thrown away by mix(..., 0.0) -- which, at the resolutions
+       this page actually renders, was most of the shader's cost. */
     'float fbm2(vec3 p, float fpx) {',
-    '  float s = 0.0, a = 1.0, sc = 1.0;',
+    '  float s = 0.0, a = 1.0, sc = 1.0, rem = N2;',
     '  for (int i = 0; i < 2; i++) {',
-    '    s += a * mix(0.5, value3(p * sc), oFade(fpx / sc));',
-    '    a *= GAIN; sc *= LAC;',
+    '    float w = oFade(fpx / sc);',
+    '    if (w < 0.003) { s += 0.5 * rem; break; }',
+    '    s += a * mix(0.5, value3(p * sc), w);',
+    '    rem -= a; a *= GAIN; sc *= LAC;',
     '  }',
     '  return s;',
     '}',
     'float fbm3(vec3 p, float fpx) {',
-    '  float s = 0.0, a = 1.0, sc = 1.0;',
+    '  float s = 0.0, a = 1.0, sc = 1.0, rem = N3;',
     '  for (int i = 0; i < 3; i++) {',
-    '    s += a * mix(0.5, value3(p * sc), oFade(fpx / sc));',
-    '    a *= GAIN; sc *= LAC;',
+    '    float w = oFade(fpx / sc);',
+    '    if (w < 0.003) { s += 0.5 * rem; break; }',
+    '    s += a * mix(0.5, value3(p * sc), w);',
+    '    rem -= a; a *= GAIN; sc *= LAC;',
     '  }',
     '  return s;',
     '}',
     'float fbmM(vec3 p, float fpx) {',
-    '  float s = 0.0, a = 1.0, sc = 1.0;',
+    '  float s = 0.0, a = 1.0, sc = 1.0, rem = FBM_NORM;',
     '  for (int i = 0; i < OCT; i++) {',
-    '    s += a * mix(0.5, value3(p * sc), oFade(fpx / sc));',
-    '    a *= GAIN; sc *= LAC;',
+    '    float w = oFade(fpx / sc);',
+    '    if (w < 0.003) { s += 0.5 * rem; break; }',
+    '    s += a * mix(0.5, value3(p * sc), w);',
+    '    rem -= a; a *= GAIN; sc *= LAC;',
     '  }',
     '  return s;',
     '}',
-    '#define N2 1.5',
-    '#define N3 1.75',
     'vec3 spherePt(float lon, float sLat) {',
     '  float cLat = sqrt(max(0.0, 1.0 - sLat * sLat));',
     '  return vec3(cLat * cos(lon), sLat, cLat * sin(lon));',
@@ -247,9 +272,12 @@
   var FRAG_STAR = [
     COMMON,
     'uniform vec3 uHot, uCool, uLimb, uProm, uSeedOff;',
+    /* the convection temperature ramp and the spot temperatures, all from
+       VoyageArt.starLook so the two renderers share one palette */
+    'uniform vec3 uGranHot, uGranCool, uUmbra, uPen, uCore;',
     'uniform vec4 uSpots[5];',   /* u, sinLat, cos(angular radius), amp */
     'uniform vec4 uFlare[6];',   /* amp, angle, span, height             */
-    'uniform vec4 uGeom;',       /* rDevPx, pixel, spin, tSec            */
+    'uniform vec4 uGeom;',       /* rEffPx, pixel, spin, tSec            */
     'uniform vec4 uMisc;',       /* limbExp, activity, bright, frequency */
     'uniform float uSpotN;',
     '',
@@ -305,7 +333,7 @@
     '    p.z += tt * 0.035;',
     '    float fpx = rdev / freq;',
     '    vec3 qw = p;',
-    '    float g = 0.5, gCell = 0.5, gMid = 0.5;',
+    '    float g = 0.5, gSup = 0.5, cellCore = 0.60, cellLane = 0.0, cellSide = 0.0;',
     '    if (act > 0.05) {',
     '      float w1 = ' + WARP1_AMP.toFixed(4) + ' * act;',
     '      qw = p + w1 * vec3(fbm3(p, fpx),',
@@ -317,86 +345,220 @@
     '                          fbm2(qw * 2.1 + vec3(8.3, 2.9, 1.1), f2),',
     '                          fbm2(qw * 2.1 + vec3(4.4, 5.6, 7.7), f2));',
     '      g = fbmM(qw, fpx) / FBM_NORM;',
-    '      float fCell = freq * 0.14;',
-    '      float fMid = freq * 0.45;',
-    '      vec3 pCell = sph * fCell + uSeedOff * 1.7; pCell.z += tt * 0.006;',
-    '      vec3 pMid = sph * fMid + uSeedOff * 2.6; pMid.z += tt * 0.018;',
-    '      gCell = fbm3(pCell, rdev / fCell) / N3;',
-    '      gMid = fbm3(pMid, rdev / fMid) / N3;',
+    /* The two convection bands the shipped build already had, retuned. The
+       lower one is supergranulation: a cell system twenty times the size of
+       a granule and a hundred times slower, which is what that band always
+       physically was. The upper one becomes the granulation network itself. */
+    '      float fSup = freq * ' + FSUP.toFixed(4) + ';',
+    '      vec3 pSup = sph * fSup + uSeedOff * 1.7; pSup.z += tt * 0.0075;',
+    '      gSup = fbm3(pSup, rdev / fSup) / N3;',
+    /* --- the cell network ---
+       A convecting surface is not noise: it is bright polygons of rising gas
+       separated by a narrow dark lane where the gas sinks back down. The
+       cheap way to get polygons out of value noise is to read the field's own
+       midpoint contour as the lane, because the level set of a smooth field
+       is a closed network of curves that partitions the surface into patches.
+       So `lane` is a narrow band around |n - 0.5| = 0 and `core` is
+       everything comfortably away from it. It is far cheaper than a real
+       Voronoi F2-F1 and, at the sizes this page renders, indistinguishable.
+
+       The widths are in FIELD units, not in a normalised ridge: an fBm sum
+       piles up near its own mean, so thresholding a 0..1 ridge covers most of
+       the disc with lane and leaves a few isolated blobs of core, which is
+       the opposite of a granulation network.
+
+       The domain is dragged around by the supergranulation value, so the
+       cells are carried by the larger flow instead of sitting on a fixed
+       lattice, and it drifts in z so a cell lives about twenty seconds. */
+    '      float fGran = freq * ' + FCELL.toFixed(4) + ';',
+    '      vec3 pG = sph * fGran + uSeedOff * 2.3;',
+    '      pG += (gSup - 0.5) * 1.5 * vec3(0.87, -0.42, 0.61);',
+    '      pG.z += tt * 0.052;',
+    /* TWO octaves, not three: a third octave branches the contour into
+       nested lobes and the cells come out wildly uneven, where real granules
+       are all within a factor of two or so of each other. The second octave
+       is what keeps the outlines from looking drawn with a compass. */
+    '      float nG = fbm2(pG, rdev / fGran) / N2;',
+    '      float dev = abs(nG - 0.5);',
+    /* The network fades out with the band that carries it. The floor is not
+       the octave fade's two pixels but about EIGHT rendered pixels per
+       granule, because a cell that small is a texture rather than a thing
+       you can see: it reads as noise, and it crawls when the sphere turns.
+       A real star behaves the same way, which is why the Sun looks like a
+       plain disc in a small telescope. Note it is measured per GRANULE, so a
+       giant, whose granules really are coarser, keeps its network down to a
+       smaller apparent size. */
+    '      float cellVis = smoothstep(3.4, 8.0, rdev / fGran);',
+    /* A granule is not a flat tile with a line drawn round it. It is
+       brightest over the middle of the rising column and dims continuously
+       out to the downflow, so the profile is ONE smooth ramp in the distance
+       from the contour. Thresholding it into a fixed-width line instead
+       gives a scratchy ink contour that reads as crackle glaze rather than
+       as a photosphere, and it aliases badly on top of that. */
+    '      float cellB = smoothstep(0.0, 0.128, dev);',
+    '      cellCore = mix(0.60, cellB, cellVis);',
+    /* No two granules are equally bright. The field's own signed value
+       varies exactly at the cell scale and is already in hand, so it costs
+       nothing to let it push whole cells up and down a little. */
+    '      cellSide = (nG - 0.5) * cellVis;',
+    /* the narrow deepest part of the downflow. It carries no brightness of
+       its own; it is where the bright magnetic elements live. `aaw` is one
+       rendered pixel measured in field units, so a lane thinner than a pixel
+       keeps its width and loses amplitude, which is what the pixel average
+       actually is. Sampling it instead is the classic thin-line crawl. */
+    '      float aaw = 0.55 / max(0.6, rdev / fGran);',
+    '      float lw = 0.022;',
+    '      float laneAmp = clamp(lw / max(1e-4, aaw), 0.0, 1.0);',
+    '      cellLane = (1.0 - smoothstep(0.0, lw + aaw, dev)) * laneAmp * cellVis;',
     '    }',
     '',
-    /* Three bands of the same machinery. The pinned recipe is the finest
-       one; two lower bands carry the cell network the eye actually reads as
-       a boiling surface. Every band fades out on its own as the orb
-       shrinks, so a small orb goes smooth instead of turning into scribble. */
-    /* each band is squashed so that most of its area is a broad bright cell
-       and only the deepest minima survive as narrow darker lanes, which is
-       the shape of a granulation network; the whole deviation is scaled by
-       the activity row, so a hot star's disc stays flat */
-    /* the pinned fine layer IS the granulation and carries most of the
-       contrast; the two lower bands are slow mottling and the bright
-       faculae network, all of it scaled by the activity row so a hot star's
-       disc stays flat */
-    '    float facula = pow(smoothstep(0.60, 0.92, gCell), 2.0);',
-    /* faculae stand out near the limb, where you look along the hot walls
-       of the magnetic flux tubes rather than down into them */
-    '    facula *= 0.55 + 0.85 * smoothstep(0.45, 0.97, d);',
-    '    float b = 1.0 + (gCell - 0.5) * 0.14 * act',
-    '                  + (gMid - 0.5) * 0.24 * act',
-    '                  + (g - 0.5) * 0.20 * act',
-    '                  + pow(smoothstep(0.56, 0.86, g), 2.0) * 0.10 * act',
-    '                  + facula * 0.11 * act;',
-    '    float lane = pow(clamp((0.50 - gMid) / 0.50, 0.0, 1.0), 1.3) * act',
-    '               + pow(clamp((0.42 - g) / 0.42, 0.0, 1.0), 2.2) * act * 0.35;',
-    /* Exposure. The palette's hot tone is already at the top of the range,
-       so painting the disc at full strength clips the red channel first and
-       every granule boundary turns into a hard white contour. Sitting the
-       surface at 0.78 leaves headroom for the hot core, the faculae and the
-       flare brightening, and it is the difference between a marbled ball
-       and a photosphere. A quiet star has no granulation contrast to
-       protect, so it keeps nearly all of its brightness. */
-    '    col = mix(uHot * b, uCool * 0.58, clamp(lane * 0.85, 0.0, 1.0))',
-    '        * mix(0.93, 0.78, act);',
+    /* Granulation contrast falls away toward the limb: near the edge you are
+       looking through a long slant path and seeing higher, cooler, smoother
+       gas rather than down into the cells. */
+    '    float cellK = mix(1.0, 0.40, smoothstep(0.52, 0.995, d));',
+    /* A radiative envelope has no solar-type convection at all, so the cell
+       network does not merely fade on a hot star, it is absent. Painting one
+       on an A star would be an invented fact about a named star. */
+    '    float cellAct = smoothstep(0.12, 0.58, act) * act;',
+    /* the one signed convection number every later term reads. Positive is
+       a rising granule core, negative is a sinking lane. */
+    /* 0.60 is the area mean of the granule profile, subtracted so the cell
+       network changes the surface's texture and not its exposure. The
+       supergranulation does not paint brightness of its own: it MODULATES
+       the granule contrast, strong over a supergranule and quiet in its
+       network, which is what stops the low band reading as cloud. */
+    '    float supF = gSup - 0.5;',
+    '    float conv = (((cellCore - 0.60) * (0.48 + 1.6 * supF) + cellSide * 0.42) * cellAct',
+    '                + (supF * 0.16 + (g - 0.5) * 0.24) * act) * cellK;',
+    /* Colour follows temperature, not a tint slider: the ramp stops are
+       kelvinToRgb at the star's own temperature plus and minus the activity
+       row's contrast, computed once in VoyageArt. A K star therefore roils
+       deep red against orange and an F star white against cream, and the
+       mean over the surface is still exactly the base tone. */
+    '    float tw = clamp(conv * 2.6, -1.0, 1.0);',
+    /* The cool stop leans past the granulation temperature toward the star's
+       own cool tone, because a downflow lane is not only a few hundred
+       kelvin colder, it is also seen deeper into the star's own reddening
+       and it is where the light is weakest. Leaving it at the ramp
+       temperature alone gives a hue swing of a couple of units in green on a
+       red supergiant, which is a difference nobody can see. */
+    '    vec3 coolStop = mix(uGranCool, uCool, 0.55);',
+    '    vec3 tint = (tw >= 0.0) ? mix(uHot, uGranHot, tw) : mix(uHot, coolStop, -tw);',
+    /* Exposure. The palette's hot tone is near the top of the range, so
+       painting the disc at full strength clips the red channel first and the
+       chroma the class is judged on drains out of exactly the middle of the
+       disc. The activity row runs the same way the temperature does, so the
+       cool, strongly convecting stars are also the ones that keep the most
+       headroom, which is both what they need and, per unit of surface, what
+       they actually radiate. */
+    '    col = tint * (1.0 + conv * 0.66) * mix(0.94, 0.80, act);',
+    /* Faculae: bright magnetic elements that sit IN the lanes and light up
+       toward the limb, where you look along the hot wall of the flux tube
+       instead of down into it. That is why the network is a limb feature. */
+    '    float facula = cellLane * smoothstep(0.40, 0.99, d)',
+    '                 * (0.30 + 0.70 * smoothstep(0.54, 0.88, g));',
+    '    col += uGranHot * (facula * 0.26 * cellAct);',
     '',
-    /* starspots: the same angular-distance test the 2D strip runs, on the
-       same seeded layout, so a star's spots sit where they always sat */
-    '    float dark = 0.0;',
-    '    float cLat = sqrt(max(0.0, 1.0 - sLat * sLat));',
-    '    for (int k = 0; k < 5; k++) {',
-    '      if (float(k) < uSpotN) {',
-    '        vec4 S = uSpots[k];',
-    '        float cosd = sLat * S.y',
-    '          + cLat * sqrt(max(0.0, 1.0 - S.y * S.y)) * cos(lon - S.x * TAU);',
-    '        if (cosd > S.z) {',
-    '          float f = (cosd - S.z) / max(1e-6, 1.0 - S.z);',
-    '          float dd = S.w * (0.45 * smoothstep(0.0, 1.0, clamp(f * 1.6, 0.0, 1.0))',
-    '                          + 0.55 * smoothstep(0.0, 1.0, clamp((f - 0.35) / 0.65, 0.0, 1.0)));',
-    '          dark = max(dark, dd);',
+    /* --- starspots ---
+       Same seeded layout the 2D strip uses, so a star's spots sit where they
+       always sat; what is new is that each one is a GROUP rather than a
+       smudge: a dark umbra, a lighter penumbra combed into radial filaments
+       aimed at the umbra, a frayed outline, and a scatter of pores in the
+       surrounding field. Umbra and penumbra are given as temperatures (about
+       0.70 and 0.86 of the photosphere), which is why a real sunspot
+       photographs orange-brown rather than grey. */
+    '    float spotA = 0.0;',
+    '    vec3 spotC = vec3(0.0);',
+    '    float nearSpot = 0.0;',
+    '    if (uSpotN > 0.5) {',
+    '      for (int k = 0; k < 5; k++) {',
+    '        if (float(k) < uSpotN) {',
+    '          vec4 S = uSpots[k];',
+    '          vec3 Sv = spherePt(S.x * TAU, S.y);',
+    '          float cosd = dot(sph, Sv);',
+    /* cos(2R) by the double angle, so the pore field reaches one spot
+       radius outside the group without an acos in the gate */
+    '          if (cosd > 2.0 * S.z * S.z - 1.0) {',
+    '            float R = acos(clamp(S.z, -1.0, 1.0));',
+    '            float ang = acos(clamp(cosd, -1.0, 1.0));',
+    '            float f = 1.0 - ang / max(1e-4, R);',
+    '            vec3 e1 = normalize(cross(Sv, vec3(0.0, 1.0, 0.0)) + vec3(1e-5, 0.0, 0.0));',
+    '            vec3 e2 = cross(Sv, e1);',
+    '            vec2 off = vec2(dot(sph, e1), dot(sph, e2));',
+    '            vec2 dir = off / max(1e-5, length(off));',
+    '            float hs = hash3(vec3(S.x * 7.31, S.y * 5.17, 2.7));',
+    /* the outline of a spot group is never a circle */
+    '            float edgeN = value3(vec3(dir * 1.7, hs * 40.0 + tt * 0.004)) - 0.5;',
+    '            float fe = f + edgeN * 0.22;',
+    '            float ff = clamp(fe, 0.0, 1.0);',
+    /* Penumbral filaments: noise that turns fast around the group and
+       slowly outward from it, which is a comb of radial striations. The
+       azimuthal frequency is deliberately low, about thirty strands round
+       the group: a real penumbra has hundreds, and drawing hundreds at the
+       size a spot occupies here would be a grey blur with an aliasing
+       problem rather than the thing it is a picture of. */
+    '            float fil = value3(vec3(dir * 4.5, hs * 31.0 + ff * 1.6 + tt * 0.010))',
+    '                      + 0.5 * value3(vec3(dir * 9.5, hs * 53.0 + ff * 3.0));',
+    '            fil = fil / 1.5;',
+    '            float uEdge = 0.48 + 0.18 * hs;',
+    '            float umbK = smoothstep(uEdge - 0.14, uEdge + 0.10, ff);',
+    '            float penK = smoothstep(0.0, 0.12, ff) * (1.0 - umbK);',
+    '            penK *= 0.35 + 1.30 * fil;',
+    /* pores: small dark grains of the same field, scattered through the
+       ring just outside the group and dying out inside the penumbra */
+    /* value3 is a trilinear average of eight uniform hashes, so it clusters
+       hard around 0.5 and a threshold up near 0.8 fires almost nowhere */
+    '            float pn = value3(vec3(off * (14.0 / max(0.06, R)), hs * 23.0 + tt * 0.003));',
+    '            float pore = smoothstep(0.615, 0.780, pn)',
+    '                       * (1.0 - smoothstep(-0.26, 0.06, fe))',
+    '                       * smoothstep(-1.00, -0.66, fe);',
+    '            float amp = clamp(0.65 + 1.5 * S.w, 0.0, 1.0);',
+    '            float a = clamp((umbK * 1.20 + penK * 0.88 + pore * 0.80) * amp, 0.0, 1.0);',
+    '            if (a > spotA) {',
+    '              spotA = a;',
+    '              spotC = mix(uPen * 0.58, uUmbra * 0.24, umbK);',
+    '            }',
+    /* the facular ring sits just OUTSIDE the group, not over it */
+    '            nearSpot = max(nearSpot, smoothstep(-0.55, -0.10, fe)',
+    '                                   * (1.0 - smoothstep(0.0, 0.26, fe)) * amp);',
+    '          }',
     '        }',
     '      }',
     '    }',
-    /* the granulation field frays the spot edge into something closer to a
-       penumbra than a painted ellipse */
-    '    dark *= 0.80 + 0.40 * g;',
-    '    float sm = smoothstep(0.0, 0.03, dark);',
-    '    col = mix(col, (1.0 - dark) * mix(col, uCool, 0.55), sm);',
-    /* faculae: the bright network that rings a real spot group */
-    '    float plage = smoothstep(0.02, 0.30, dark) * (1.0 - smoothstep(0.30, 0.85, dark));',
-    '    col *= 1.0 + 0.12 * plage * act;',
+    /* the granulation frays the spot edge rather than the edge cutting
+       across the granulation */
+    '    spotA *= 0.82 + 0.36 * g;',
+    '    col = mix(col, spotC, clamp(spotA, 0.0, 1.0));',
+    /* plage: the bright facular lace that rings a real active region */
+    '    col *= 1.0 + 0.20 * nearSpot * (1.0 - spotA) * act',
+    '                 * (0.30 + 0.70 * cellLane);',
     '',
     '    float s = clamp((d - 0.10) / 0.90, 0.0, 1.0);',
     '    col = mix(col, uLimb, clamp(ldProfile(s) * ldExp, 0.0, 1.0));',
     '',
     /* the hot core. The 2D pass paints this at 0.30 over a texture that is
        already washed out by its own blur; per fragment that much additive
-       white erases the granulation across the middle third of the disc, so
+       light erases the granulation across the middle third of the disc, so
        it is carried at a little over half strength here and the corona
-       (unchanged, VoyageArt's) does the rest of the glow. */
+       (unchanged, VoyageArt's) does the rest of the glow. Its colour is
+       starLook's, the same value the 2D gradient uses, so the two renderers
+       brighten the middle of the disc with the same light. */
     '    float hd = length(P - vec2(-0.12, -0.12)) / 0.92;',
     '    if (hd < 1.0) {',
-    '      float ha = (hd < 0.5) ? mix(0.17, 0.05, hd / 0.5)',
-    '                            : mix(0.05, 0.0, (hd - 0.5) / 0.5);',
-    '      col += vec3(1.0, 0.980, 0.930) * (ha * bright);',
+    '      float ha = (hd < 0.5) ? mix(0.12, 0.035, hd / 0.5)',
+    '                            : mix(0.035, 0.0, (hd - 0.5) / 0.5);',
+    /* a spot does not glow: the whole-disc brightening is masked out of it */
+    '      col += uCore * (ha * bright * (1.0 - spotA * 0.85));',
+    '    }',
+    /* Highlight shoulder, applied to the BRIGHTEST channel and shared by all
+       three, so a bright granule rolls off instead of clipping. A hard clamp
+       pins red at 1.0 first and lets green and blue keep climbing, which
+       turns exactly the parts of the disc the eye rests on from the star's
+       colour into cream. That desaturation was the whole reason a red
+       supergiant read as a beige ball. */
+    '    float mx = max(col.r, max(col.g, col.b));',
+    '    if (mx > 0.84) {',
+    '      col *= (0.84 + (mx - 0.84) / (1.0 + (mx - 0.84) * 3.4)) / mx;',
     '    }',
     '  }',
     '',
@@ -468,7 +630,7 @@
     'uniform vec4 uSpot;',    /* lon, sinLat, w, h                          */
     'uniform vec4 uFlagA;',   /* banded, watery, emissive, eyeball          */
     'uniform vec4 uFlagB;',   /* clouds, poles, paletteCount, atmosphere    */
-    'uniform vec4 uGeom;',    /* rDevPx, pixel, spin, tSec                  */
+    'uniform vec4 uGeom;',    /* rEffPx, pixel, spin, tSec                  */
     'uniform vec4 uFreq;',    /* freqA, freqB, freqPole, seaLevel           */
     'uniform vec4 uMisc;',    /* maxDark, typeId, bands, craterCount        */
     '',
@@ -1116,14 +1278,31 @@
     return lru;
   }
 
-  function sideFor(slot, r, dprEff) {
-    var other = (st.slots[0] === slot) ? st.slots[1] : st.slots[0];
-    var cap = (other.key !== null) ? (st.target >> 1) : st.target;
+  function sideOf(r, dprEff, cap) {
     var want = 2 * K_GL * r * dprEff;
     var side = Math.ceil(want / 64) * 64;
     if (side < 64) side = 64;
     if (side > cap) side = cap;
     return side;
+  }
+  function sideFor(slot, r, dprEff) {
+    var other = (st.slots[0] === slot) ? st.slots[1] : st.slots[0];
+    return sideOf(r, dprEff, (other.key !== null) ? (st.target >> 1) : st.target);
+  }
+
+  /* The resolution the shader is ACTUALLY rendering at, in device pixels per
+     unit of footprint, which is what decides whether an octave is resolvable.
+
+     This used to be uploaded as `r * dprEff` -- the resolution the orb would
+     have had if the target were unbounded. Whenever the target clamps (which
+     is every large orb, and every orb at all once two slots are live) that
+     over-states the real resolution by up to about 4x, so the finest octave
+     the fade left alive was being evaluated well under a rendered pixel and
+     then magnified by the blit. The result was a surface that shimmered and
+     crawled as the orb turned: sub-pixel noise, enlarged. It is the same
+     number `pixU` already derives for the antialiasing width. */
+  function effRes(side) {
+    return side / (2 * K_GL);
   }
 
   /* ---------------- render + present ---------------- */
@@ -1308,7 +1487,7 @@
       var bright = 1 + 0.12 * clamp(num(A.flareGlow ? A.flareGlow(seed, t, num(sp.flareRate, 0)) : 0, 0), 0, 1);
       var act = activityOf(look);
       var freq = GRAN_F0 / gran;
-      var rdev = rr * dprEff;
+      var rdev = effRes(side);
       var spin = t * TWO_PI / 45;
       var spots = look.spots || [];
       var ns = Math.min(SPOT_MAX, spots.length | 0);
@@ -1326,6 +1505,13 @@
         }
       }
       if (!fin(freq) || !fin(rdev) || !fin(spin) || !fin(act) || !fin(bright)) return false;
+      /* the convection ramp and the spot temperatures. They are starLook's,
+         never re-derived here; a build of voyage-art.js without them falls
+         back to the 2D orb rather than being handed a substituted colour. */
+      var gH = look.granHot, gC = look.granCool, umb = look.umbra;
+      var pen = look.penumbra, core = look.core;
+      if (!finArr(gH, 3) || !finArr(gC, 3) || !finArr(umb, 3) ||
+          !finArr(pen, 3) || !finArr(core, 3)) return false;
       seedOffset(seed, seedBuf);
       var pixU = (2 * K_GL) / side;
 
@@ -1334,6 +1520,11 @@
         gl.uniform3f(uloc(pr, 'uCool'), look.cool[0] / 255, look.cool[1] / 255, look.cool[2] / 255);
         gl.uniform3f(uloc(pr, 'uLimb'), look.limb[0] / 255, look.limb[1] / 255, look.limb[2] / 255);
         gl.uniform3f(uloc(pr, 'uProm'), look.prom[0] / 255, look.prom[1] / 255, look.prom[2] / 255);
+        gl.uniform3f(uloc(pr, 'uGranHot'), gH[0] / 255, gH[1] / 255, gH[2] / 255);
+        gl.uniform3f(uloc(pr, 'uGranCool'), gC[0] / 255, gC[1] / 255, gC[2] / 255);
+        gl.uniform3f(uloc(pr, 'uUmbra'), umb[0] / 255, umb[1] / 255, umb[2] / 255);
+        gl.uniform3f(uloc(pr, 'uPen'), pen[0] / 255, pen[1] / 255, pen[2] / 255);
+        gl.uniform3f(uloc(pr, 'uCore'), core[0] / 255, core[1] / 255, core[2] / 255);
         gl.uniform3f(uloc(pr, 'uSeedOff'), seedBuf[0], seedBuf[1], seedBuf[2]);
         gl.uniform4fv(uloc(pr, 'uSpots[0]'), spotBuf);
         gl.uniform4fv(uloc(pr, 'uFlare[0]'), U);
@@ -1476,7 +1667,10 @@
       var f = freqsFor(look);
       var fA = f[0], fB = f[1], fP = 18 / TWO_PI;
       var sea0 = (look.type === 'temperate') ? 0.545 : 0.515;
-      var rdev = rr * dprEff;
+      /* the same corrected resolution input the star path uploads: every
+         `rdev / f` in the planet shader is an octave-fade term too, and a
+         clamped planet orb crawled for exactly the same reason */
+      var rdev = effRes(side);
       var craters = num(look.craters, 0);
       var bands = num(look.bands, 0);
       var spot = look.spot;
@@ -1615,8 +1809,14 @@
     GL_REDRAW_MS: GL_REDRAW_MS,
     SURF_ROT: SURF_ROT,
     GRAN_F0: GRAN_F0,
+    FSUP: FSUP,
+    FCELL: FCELL,
     LACUNARITY: LACUNARITY,
     GAIN: GAIN,
+    /* pure, exported so the octave-fade input can be asserted for a clamped
+       case without a GL context */
+    sideOf: sideOf,
+    effRes: effRes,
     WARP1_AMP: WARP1_AMP,
     WARP2_AMP: WARP2_AMP,
     TYPES: TYPE_ID,

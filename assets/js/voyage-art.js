@@ -215,6 +215,21 @@
     return 'rgba(' + (c[0] | 0) + ',' + (c[1] | 0) + ',' + (c[2] | 0) + ',' +
            (fin(a) ? clamp(a, 0, 1) : 1) + ')';
   }
+  /* Deepen a tint along its own vector away from white: the hue and the
+     brightest channel are untouched, only the chroma moves. k = 0 is a
+     no-op, which is what every star above 6,000 K gets. */
+  function deepen(c, k) {
+    if (!(k > 0)) return [c[0], c[1], c[2]];
+    return [clamp(Math.round(c[0] + (c[0] - 255) * k), 0, 255),
+            clamp(Math.round(c[1] + (c[1] - 255) * k), 0, 255),
+            clamp(Math.round(c[2] + (c[2] - 255) * k), 0, 255)];
+  }
+  /* the same, taking and returning the {r,g,b} form kelvinRgb hands back */
+  function deepRgb(o, k) {
+    if (!(k > 0)) return o;
+    var d = deepen([o.r, o.g, o.b], 0.35 * k);
+    return { r: d[0], g: d[1], b: d[2] };
+  }
 
   /* ---------------- canvas helpers (all NaN-guarded) ---------------- */
 
@@ -531,11 +546,50 @@
     var p = (params && typeof params === 'object') ? params : starParams(null);
     var hasT = fin(p.teff);
     var base = hasT ? kelvinRgb(p.teff) : NEUTRAL;
-    var bc = [base.r, base.g, base.b];
+    var bc0 = [base.r, base.g, base.b];    /* the catalog colour, untouched */
+    var bc = bc0;
+    /* Chroma, not hue (wave-5 fix). The blackbody-to-sRGB curve normalises
+       to the brightest channel, so 3,100 K comes back (255, 180, 117) --
+       a pale apricot. Physically that is the right hue, but it renders a
+       red supergiant as peach: the verifier scored Betelgeuse ~5/10 on
+       colour against its class, and Proxima and Capella with it.
+       `deepen` pulls the tint AWAY from white along its own blackbody
+       vector, so the hue is untouched and only the chroma moves, and the
+       amount tapers to zero by 6,000 K -- every A/F star, and both halves
+       of the GL/2D palette pair, render exactly as they did. */
+    var coolK = hasT ? clamp((6500 - p.teff) / 3000, 0, 1) : 0;
+    if (coolK > 0) bc = deepen(bc0, 0.35 * coolK);
     var seed = (p.seed | 0) || 1;
     var spotAmp = clamp(num(p.spotAmp, 0), 0, 0.6);
+    /* Local temperature contrast. A convecting photosphere is not one
+       colour: the granule cores are the tops of rising hot gas and the lanes
+       between them are cooler gas on its way back down. The swing is taken
+       through the SAME blackbody curve the base tone comes from, so a K star
+       roils deep red against orange and an F star white against cream, and
+       nothing here invents a hue the temperature does not imply.
+       The amplitude rides the activity row: a radiative envelope has no
+       solar-type convection, so a hot star's swing collapses to nothing. */
+    var act = clamp(spotAmp / 0.11, 0, 1);
+    var dT = 0.040 + 0.040 * act;
+    var hotT = hasT ? deepRgb(kelvinRgb(p.teff * (1 + dT)), coolK) : base;
+    var coolT = hasT ? deepRgb(kelvinRgb(p.teff * (1 - dT)), coolK) : base;
+    /* A sunspot umbra is a real temperature, not a grey wash: about 0.70 of
+       the photosphere, which is why umbrae photograph orange-red rather than
+       black. The penumbra sits between the two. */
+    var umbT = hasT ? deepRgb(kelvinRgb(Math.max(1200, p.teff * 0.70)), coolK) : base;
+    var penT = hasT ? deepRgb(kelvinRgb(Math.max(1400, p.teff * 0.86)), coolK) : base;
+    /* The white mix is what makes a photosphere read as a lit surface
+       rather than a flat swatch, but a flat 0.28 is wrong at the cool end:
+       it was adding peach on top of an already pale apricot. It now tapers
+       out with the same temperature ramp, so hot stars keep it exactly and
+       cool ones keep their colour. */
+    var whiteMix = hasT ? 0.28 * (1 - coolK) : 0.40;
     return {
-      rgb: bc,
+      /* `rgb` stays the plain blackbody the catalog implies -- it is the
+         value the colour chip on the card shows and the one other renderers
+         check against VoyageAstro.kelvinToRgb. The deepening lives in the
+         painted tints below, which is where the eye reads colour. */
+      rgb: bc0,
       neutral: !hasT,
       /* the limb term drawStar paints with: cooler stars darken harder */
       limbExp: clamp(0.30 + (hasT ? clamp((6500 - p.teff) / 9000, -0.10, 0.34) : 0.10), 0.16, 0.68),
@@ -544,11 +598,27 @@
       spots: starSpots(seed, spotAmp),
       seed: seed,
       /* the derived tints, so no second renderer has to guess at them */
-      hot: mixC(bc, [255, 255, 255], 0.5),
-      cool: mixC(bc, [92, 30, 14], hasT ? 0.34 : 0.22),
+      hot: mixC(bc, [255, 255, 255], whiteMix),
+      cool: mixC(bc, [92, 30, 14], hasT ? 0.42 : 0.26),
       glow: mixC(bc, [255, 255, 255], 0.25),
       limb: mixC(bc, [70, 22, 10], hasT ? 0.55 : 0.42),
-      prom: mixC(bc, [255, 130, 80], hasT ? 0.55 : 0.25)
+      prom: mixC(bc, [255, 130, 80], hasT ? 0.55 : 0.25),
+      /* the convection ramp, anchored to `hot` the same way so the three
+         stops are one continuous blackbody sweep and their mean is the base */
+      tempAmp: dT,
+      activity: act,
+      granHot: mixC([hotT.r, hotT.g, hotT.b], [255, 255, 255], whiteMix),
+      granCool: mixC([coolT.r, coolT.g, coolT.b], [255, 255, 255], whiteMix),
+      /* The bright middle of the disc. It is the star's own light seen
+         straight down through the least atmosphere, so it carries the
+         star's own colour: painting it white made every cool star read
+         cream at the one place the eye looks first. */
+      /* the second whitening tapers with the first, or the middle of a red
+         supergiant's disc -- the one place the eye lands -- stays cream */
+      core: mixC(mixC([hotT.r, hotT.g, hotT.b], [255, 255, 255], whiteMix),
+                 [255, 252, 244], 0.35 - 0.21 * coolK),
+      umbra: mixC([umbT.r, umbT.g, umbT.b], [255, 255, 255], whiteMix * 0.5),
+      penumbra: mixC([penT.r, penT.g, penT.b], [255, 255, 255], whiteMix * 0.7)
     };
   }
 
@@ -937,9 +1007,10 @@
     ctx.globalCompositeOperation = 'lighter';
     var hg = rgrad(ctx, x - r * 0.12, y - r * 0.12, 0, x, y, r * 0.92);
     if (hg) {
-      stop(hg, 0, 'rgba(255,252,244,' + clamp(0.30 * bright, 0, 1) + ')');
-      stop(hg, 0.5, 'rgba(255,246,230,' + clamp(0.09 * bright, 0, 1) + ')');
-      stop(hg, 1, 'rgba(255,240,220,0)');
+      var coreC = look.core || look.hot;
+      stop(hg, 0, rgba(coreC, clamp(0.30 * bright, 0, 1)));
+      stop(hg, 0.5, rgba(coreC, clamp(0.09 * bright, 0, 1)));
+      stop(hg, 1, rgba(coreC, 0));
       ctx.fillStyle = hg;
       if (circle(ctx, x, y, r * 0.92)) ctx.fill();
     }

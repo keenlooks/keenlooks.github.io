@@ -23,10 +23,14 @@
        + Kepler solver -> heliocentric ecliptic-J2000 position AND velocity
      - Stumpff functions, universal-variable Lambert solver, universal-
        variable Kepler propagator
-     - the mission delta-v model: LEO departure; circular capture at
-       Mercury/Venus/Mars, elliptical capture (apoapsis = 100 rp) at the
-       giants, the way real missions arrive
-     - per-planet porkchop specs + the resumable grid job (step(budgetMs))
+     - the mission delta-v model: departure from a circular parking orbit at
+       the ORIGIN planet (Earth 300 km, everything else 500 km); circular
+       capture at Mercury/Venus/Mars, elliptical capture (apoapsis = 100 rp)
+       at the giants, the way real missions arrive
+     - per-PAIR porkchop specs + the resumable grid job (step(budgetMs)).
+       The origin is a parameter everywhere and defaults to 'earth', so every
+       Earth-departure number (including the 5.65 km/s Mars 2026 anchor) is
+       bit-identical to the single-origin version this grew from.
      - synodic period helper (synMonths)
      - special relativity: brachistochrone (constant-acceleration flip
        trips), voyageEnergy, coastTimes (fixed-speed comparison rows)
@@ -151,9 +155,12 @@
     neptune: { muKm: 6835100,      radiusKm: 24764,    parkAltKm: 500, capture: 'elliptical' }
   };
 
-  /* Per-planet porkchop time-of-flight grids [loDays, hiDays, stepDays].
-     Neptune's hi clears the ~11,180-day Hohmann half-period so the minimum
-     is not pinned to the grid edge. */
+  /* EARTH-ORIGIN time-of-flight grids [loDays, hiDays, stepDays]. Hand-tuned
+     and load-bearing: these ranges are what put the Mars 2026 minimum at
+     5.65 km/s / 310 d off the grid edge, so they stay an override table for
+     departures from Earth. Any other origin derives its window from the pair
+     (tofWindow below). Neptune's hi clears the ~11,180-day Hohmann half-period
+     so the minimum is not pinned to the grid edge. */
   var PORKCHOP_TOF = {
     mercury: [40, 260, 3],
     venus:   [60, 300, 5],
@@ -304,12 +311,52 @@
     return TWO_PI * Math.sqrt(a * a * a / MU_SUN) / 365.25;
   }
 
-  /* Earth-planet synodic period in MONTHS. The x12 is load-bearing: the bare
-     reciprocal 1/|1/Ty_e - 1/Ty_p| is in YEARS. */
-  function synMonths(body) {
-    var te = periodYears('earth');
-    var tp = periodYears(body);
-    return 12 / Math.abs(1 / te - 1 / tp);
+  /* Synodic period of a PAIR of planets, in MONTHS. The x12 is load-bearing:
+     the bare reciprocal 1/|1/Ty_o - 1/Ty_t| is in YEARS.
+     synMonths(originKey, targetKey) is the current form. The one-argument
+     legacy form synMonths(targetKey) still means "against Earth", so every
+     shipped Earth-departure caller keeps returning the same number. Same body
+     twice has no lineup to wait for and returns Infinity; callers guard. */
+  function synMonths(originKey, targetKey) {
+    var o = originKey, t = targetKey;
+    if (t === undefined || t === null) { t = o; o = 'earth'; }
+    var to = periodYears(o);
+    var tt = periodYears(t);
+    return 12 / Math.abs(1 / to - 1 / tt);
+  }
+
+  /* Time-of-flight window [loDays, hiDays, stepDays] for one origin/target
+     pair. Earth departures use the tuned override table above. Everything
+     else is derived from the Hohmann half-period between the two orbits:
+     the transfer ellipse has semi-major axis (a_o + a_t)/2, so its period is
+     ((a_o + a_t)/2)^1.5 years and half of that is the reference transfer
+     time. The window then spans 0.45x to 2.2x that time (fast direct arcs
+     through to the slow side of the ellipse), floored at 20 days, in about
+     90 steps so every pair costs the same grid as the shipped ones.
+     Sanity, measured: applied to Earth, this window contains the shipped
+     table's minimum-delta-v transfer for all seven targets. */
+  function hohmannDays(aO, aT) {
+    var aTr = 0.5 * (aO + aT);                     /* transfer semi-major axis, AU */
+    return 0.5 * Math.pow(aTr, 1.5) * 365.25;      /* half the transfer period, days */
+  }
+  function tofWindow(originKey, targetKey) {
+    var o = originKey || 'earth';
+    if (o === targetKey) {
+      throw new Error('porkchop origin and target are the same: ' + o);
+    }
+    var tab = PORKCHOP_TOF[targetKey];
+    if (o === 'earth' && tab) return [tab[0], tab[1], tab[2]];
+    var elO = ELEMENTS[o], elT = ELEMENTS[targetKey];
+    if (!elO || !elT) {
+      throw new Error('no porkchop spec for: ' + o + ' -> ' + targetKey);
+    }
+    /* whole days: the readout prints "N days" and a fractional TOF reads as
+       a bug, so the pinned coefficients are applied and then rounded */
+    var tHoh = hohmannDays(elO.a0, elT.a0);
+    var lo = Math.max(20, Math.round(0.45 * tHoh));
+    var hi = Math.round(2.2 * tHoh);
+    var step = Math.max(3, Math.round((hi - lo) / 90));
+    return [lo, hi, step];
   }
 
   /* ---------------- Stumpff functions ---------------- */
@@ -394,28 +441,41 @@
   /* ---------------- universal-variable Kepler propagation ----------------
      Propagate (r0, v0) by dt days around the Sun. Same Stumpff machinery;
      Newton on the universal Kepler equation (F is monotone in chi, so a
-     bracketed bisection fallback makes it robust). */
-  function propagateKepler(r0, v0, dt) {
+     bracketed bisection fallback makes it robust).
+     Two call forms, both supported for the life of the page:
+       propagateKepler(r0, v0, dtDays)          -- heliocentric, mu = MU_SUN
+       propagateKepler(r0, v0, mu, dtDays)      -- explicit gravitational
+                                                   parameter (AU^3/day^2)
+     The 3-argument form is the shipped one and is bit-identical (it takes the
+     same MU_SUN through the same arithmetic). The 4-argument form exists so a
+     caller that passes a mu can never have it silently read as a dt. */
+  function propagateKepler(r0, v0, a3, a4) {
+    var mu = MU_SUN, dt = a3;
+    if (arguments.length >= 4 && typeof a4 === 'number') {
+      mu = (typeof a3 === 'number' && isFinite(a3) && a3 > 0) ? a3 : MU_SUN;
+      dt = a4;
+    }
+    if (!isFinite(dt)) dt = 0;
     if (dt === 0) return { r: [r0[0], r0[1], r0[2]], v: [v0[0], v0[1], v0[2]] };
-    var sqmu = Math.sqrt(MU_SUN);
+    var sqmu = Math.sqrt(mu);
     var r0n = norm3(r0);
     var v0n = norm3(v0);
     var rdotv = dot3(r0, v0);
-    var alpha = 2 / r0n - v0n * v0n / MU_SUN;  /* 1/a */
+    var alpha = 2 / r0n - v0n * v0n / mu;  /* 1/a */
     var sgn = dt >= 0 ? 1 : -1;
     var chi;
     if (alpha > 1e-6) {
       chi = sqmu * dt * alpha;
     } else if (alpha < -1e-6) {
       var am = -1 / alpha;
-      var num = -2 * MU_SUN * alpha * dt;
-      var den = rdotv + sgn * Math.sqrt(MU_SUN * am) * (1 - r0n * alpha);
+      var num = -2 * mu * alpha * dt;
+      var den = rdotv + sgn * Math.sqrt(mu * am) * (1 - r0n * alpha);
       var argl = num / den;
       chi = (argl > 0) ? sgn * Math.sqrt(am) * Math.log(argl) : sqmu * dt / r0n;
     } else {
       var h = cross3(r0, v0);
-      var p = dot3(h, h) / MU_SUN;
-      var s = 0.5 * Math.atan(1 / (3 * Math.sqrt(MU_SUN / (p * p * p)) * dt));
+      var p = dot3(h, h) / mu;
+      var s = 0.5 * Math.atan(1 / (3 * Math.sqrt(mu / (p * p * p)) * dt));
       var tw = Math.tan(s);
       var w = Math.atan(tw < 0 ? -Math.pow(-tw, 1 / 3) : Math.pow(tw, 1 / 3));
       chi = Math.sqrt(p) * 2 / Math.tan(2 * w);
@@ -482,14 +542,19 @@
     return dvFromVinf(vinfKms, body.muKm, rp);
   }
 
-  /* Core of the porkchop cell: precomputed Earth + target states -> dv. */
-  function transferDv(eSt, tSt, tofDays, targetKey) {
-    var sol = lambert(eSt.r, tSt.r, tofDays, true);
+  /* Core of the porkchop cell: precomputed origin + target states -> dv.
+     originKey defaults to 'earth', so the shipped four-argument call is
+     numerically untouched. Departure is always modelled from the origin's
+     CIRCULAR parking orbit (radiusKm + parkAltKm) even at the giants, which
+     is why leaving low Jupiter orbit costs so much: that is real. */
+  function transferDv(oSt, tSt, tofDays, targetKey, originKey) {
+    var O = BODIES[originKey || 'earth'], T = BODIES[targetKey];
+    if (!O || !T) return null;
+    var sol = lambert(oSt.r, tSt.r, tofDays, true);
     if (!sol) return null;
-    var vinf1 = KMS_PER_AUDAY * norm3(sub3(sol.v1, eSt.v));
+    var vinf1 = KMS_PER_AUDAY * norm3(sub3(sol.v1, oSt.v));
     var vinf2 = KMS_PER_AUDAY * norm3(sub3(sol.v2, tSt.v));
-    var E = BODIES.earth, T = BODIES[targetKey];
-    var dv1 = dvFromVinf(vinf1, E.muKm, E.radiusKm + E.parkAltKm);
+    var dv1 = dvFromVinf(vinf1, O.muKm, O.radiusKm + O.parkAltKm);
     var dv2 = captureDv(vinf2, T);
     var total = dv1 + dv2;
     if (!isFinite(total)) return null;
@@ -502,28 +567,32 @@
 
   /* Full mission solution for one (departure JD, TOF) cell, with the states
      the page needs for the ghost arc and markers. Null when Lambert fails. */
-  function missionDv(depJD, tofDays, targetKey) {
-    var eSt = planetState('earth', depJD);
+  function missionDv(depJD, tofDays, targetKey, originKey) {
+    var oKey = originKey || 'earth';
+    var oSt = planetState(oKey, depJD);
     var tSt = planetState(targetKey, depJD + tofDays);
-    var res = transferDv(eSt, tSt, tofDays, targetKey);
+    var res = transferDv(oSt, tSt, tofDays, targetKey, oKey);
     if (!res) return null;
     res.depJD = depJD;
     res.tofDays = tofDays;
-    res.rDep = eSt.r; res.vDep = eSt.v;
+    res.origin = oKey;
+    res.target = targetKey;
+    res.rDep = oSt.r; res.vDep = oSt.v;
     res.rArr = tSt.r; res.vArr = tSt.v;
     return res;
   }
 
   /* ---------------- porkchop grid ---------------- */
   /* Departure: 240 points at 5-day spacing (1200 days of span, at least one
-     synodic period of every planet). TOF from the per-planet table. */
-  function porkchopSpec(targetKey, jd0) {
-    var tof = PORKCHOP_TOF[targetKey];
-    if (!tof) throw new Error('no porkchop spec for: ' + targetKey);
+     synodic period of every planet). TOF from tofWindow(origin, target).
+     originKey defaults to 'earth': porkchopSpec('mars', jd0) is unchanged. */
+  function porkchopSpec(targetKey, jd0, originKey) {
+    var origin = originKey || 'earth';
+    var tof = tofWindow(origin, targetKey);
     var nDep = Math.round(DEP_SPAN_DAYS / DEP_STEP_DAYS);   /* 240 */
     var nTof = Math.floor((tof[1] - tof[0]) / tof[2]) + 1;
     return {
-      target: targetKey, jd0: jd0,
+      target: targetKey, origin: origin, jd0: jd0,
       nDep: nDep, depStep: DEP_STEP_DAYS,
       tof0: tof[0], tofStep: tof[2], nTof: nTof,
       tofMax: tof[0] + (nTof - 1) * tof[2],
@@ -532,14 +601,22 @@
   }
 
   /* Resumable computation: call job.step(budgetMs) until job.done. Cell
-     (i, j) lives at index i * nTof + j; NaN marks a no-converge cell. */
-  function makePorkchopJob(spec) {
+     (i, j) lives at index i * nTof + j; NaN marks a no-converge cell.
+     Two call forms:
+       makePorkchopJob(spec)                      -- the shipped one
+       makePorkchopJob(targetKey, jd0, originKey) -- builds its own spec
+     A spec made before this wave has no `origin` field and departs Earth. */
+  function makePorkchopJob(specOrTarget, jd0, originKey) {
+    var spec = (typeof specOrTarget === 'string')
+      ? porkchopSpec(specOrTarget, jd0, originKey)
+      : specOrTarget;
+    var origin = spec.origin || 'earth';
     var n = spec.nDep, m = spec.nTof, cells = n * m;
     var total = new Float64Array(cells);
     for (var q = 0; q < cells; q++) total[q] = NaN;
     var idx = 0, bad = 0;
     var minDv = Infinity, minI = -1, minJ = -1;
-    var eCol = -1, eSt = null;
+    var oCol = -1, oSt = null;    /* the origin's state, cached per grid column */
     var job = {
       spec: spec, total: total, cells: cells,
       done: false, doneCount: 0, badCount: 0, progress: 0,
@@ -552,9 +629,9 @@
           var j = idx - i * m;
           var dep = spec.jd0 + i * spec.depStep;
           var tof = spec.tof0 + j * spec.tofStep;
-          if (i !== eCol) { eCol = i; eSt = planetState('earth', dep); }
+          if (i !== oCol) { oCol = i; oSt = planetState(origin, dep); }
           var tSt = planetState(spec.target, dep + tof);
-          var res = transferDv(eSt, tSt, tof, spec.target);
+          var res = transferDv(oSt, tSt, tof, spec.target, origin);
           if (res) {
             total[idx] = res.total;
             if (res.total < minDv) { minDv = res.total; minI = i; minJ = j; }
@@ -702,13 +779,66 @@
      knots (-2 at 3000 K, -4 at 2600 K) Proxima's radius computes to
      0.044 R_sun and Proxima b lands outside the habitable zone; with these
      knots Proxima comes out at 0.12 R_sun (real: 0.15) and Proxima b and
-     TRAPPIST-1e both sit in the zone, which is what the sky actually says. */
+     TRAPPIST-1e both sit in the zone, which is what the sky actually says.
+
+     This table is the DWARF sequence. See BC_KNOTS_GIANT below for why a
+     cool giant needs its own. */
   var BC_KNOTS = [
     [2600, -4.0], [3000, -3.9], [3500, -3.7], [4000, -1.2],
     [5000, 0], [7000, 0], [8000, -0.1], [15000, -1], [30000, -3]
   ];
-  function bcFromTeff(T) {
-    var k = BC_KNOTS;
+
+  /* ---- the cool GIANT / SUPERGIANT branch (post-hoc fix round 2) ----
+     Betelgeuse used to print "about 1968 times the Sun's width" (published
+     764-887) and Antares 1902 (published ~680). Both errors come from
+     applying the dwarf curve above to an evolved star, and both are the same
+     defect seen twice:
+
+       - B-V saturates on the red giant branch. An M giant's colour barely
+         moves below about B-V 1.6 while its temperature keeps falling, and
+         the catalog colours for the reddest supergiants carry interstellar
+         reddening on top of that (AT-HYG has Betelgeuse at B-V 2.08 against
+         a published 1.85). Ballesteros, a DWARF calibration, therefore hands
+         this code roughly 3,100 K for a star that is really near 3,600 K, and
+         the Stefan-Boltzmann (5772/T)^2 term inflates by about 1.36.
+       - The dwarf BC at that temperature is a late-M-DWARF correction near
+         -3.9. The published value for an M supergiant is about -1.6
+         (Levesque et al. 2005 give BC_V = -1.61 for M2 I; Johnson 1966 and
+         Buzzoni et al. 2010 put cool giants in the same band). Using -3.9
+         inflates the luminosity by a further factor of about 2.8.
+
+     So the knots below are stated against the temperature THIS code derives
+     for an evolved star, not against a true effective temperature, and they
+     are anchored on published radii rather than restating a textbook BC(T)
+     curve at a temperature that is known to be low. Read across the row and
+     the values are ordinary: -1.08 at 4,100 K, about -1.5 at 3,600 K, about
+     -1.9 at 3,100 K, never past -2.6. Result on the marquee giants (estimate
+     vs published radius in solar radii): Betelgeuse 788 vs 764-887, Antares
+     790 vs 680, Aldebaran 63 vs 45, Scheat 114 vs 95, Menkar 144 vs 89,
+     Enif 382 vs 185, Eltanin 92 vs 48. Mean absolute error over the eleven
+     marquee cool giants falls from 0.52 dex (a factor of 3.3) to 0.22 dex
+     (a factor of 1.7). Two get worse in the other direction (Gacrux 65 vs
+     120, Rasalgethi 93 vs 284); the copy says "roughly" for that reason.
+
+     WHICH branch a star takes is decided by luminosity, not by a label: at
+     4,100 K the main sequence sits at M_V near +8, so nothing fainter-lined
+     than +4 can be a dwarf. Cross-checked against the catalog's own
+     published MK luminosity class -- of the 1,710 stars under 4,100 K that
+     carry one, this test agrees with class I/II/III/IV for 1,688. The 22 it
+     disagrees on are bad parses or bad parallaxes either way.
+
+     Hosts with a measured archive luminosity never reach this code at all
+     (starBolLum prefers st_lum), so no habitable-zone verdict moves: checked
+     over all 387 catalog planets, zero host luminosities and zero HZ chips
+     change. */
+  var BC_KNOTS_GIANT = [
+    [2600, -2.6], [3000, -1.95], [3400, -1.62], [3800, -1.25], [4100, -1.08]
+  ];
+  /* the temperature under which the giant branch applies, and the absolute
+     magnitude above which a star that cool cannot be on the main sequence */
+  var GIANT_T_MAX = 4100, GIANT_ABSMAG = 4.0;
+
+  function bcInterp(k, T) {
     if (!(T > k[0][0])) return k[0][1];
     var last = k.length - 1;
     if (T >= k[last][0]) return k[last][1];
@@ -720,12 +850,23 @@
     }
     return k[last][1];
   }
+  /* absmag is OPTIONAL: without it every call keeps the dwarf sequence, so
+     one-argument callers are byte-for-byte unchanged. */
+  function bcFromTeff(T, absmag) {
+    if (T < GIANT_T_MAX && typeof absmag === 'number' && isFinite(absmag) &&
+        absmag < GIANT_ABSMAG) {
+      return bcInterp(BC_KNOTS_GIANT, T);
+    }
+    return bcInterp(BC_KNOTS, T);
+  }
 
   /* Bolometric luminosity in solar units from the V absolute magnitude and
-     the temperature: M_bol = absmag + BC(T), M_bol(Sun) = 4.74. */
+     the temperature: M_bol = absmag + BC(T), M_bol(Sun) = 4.74. The absolute
+     magnitude is handed on to bcFromTeff, which is what tells a red giant
+     from a red dwarf. */
   function lumBol(absmag, T) {
     if (typeof absmag !== 'number' || !isFinite(absmag) || !isFinite(T)) return NaN;
-    return Math.pow(10, (4.74 - (absmag + bcFromTeff(T))) / 2.5);
+    return Math.pow(10, (4.74 - (absmag + bcFromTeff(T, absmag))) / 2.5);
   }
 
   /* Best bolometric luminosity for a star: the archive's measured value when
@@ -813,13 +954,19 @@
   }
 
   /* Decoded share payloads are UNTRUSTED. Whatever comes in, the result is a
-     valid cell of the given grid spec. Unknown targets fall back to mars. */
+     valid cell of the given grid spec. The one planet that can never be the
+     target is the one the ship is departing FROM (Earth for a spec built
+     without an origin, so this is unchanged for every shipped share link);
+     anything else unknown falls back to mars, or to earth when mars is the
+     origin. */
   function clampShare(obj, spec) {
     var o = (obj && typeof obj === 'object') ? obj : {};
+    var origin = (spec && spec.origin) || 'earth';
+    var fallback = (origin === 'mars') ? 'earth' : 'mars';
     /* PLANETS.indexOf, not ELEMENTS[o.t]: "__proto__" is truthy on any
        object lookup and must not survive as a target key. */
-    var t = (typeof o.t === 'string' && PLANETS.indexOf(o.t) >= 0 && o.t !== 'earth')
-      ? o.t : 'mars';
+    var t = (typeof o.t === 'string' && PLANETS.indexOf(o.t) >= 0 && o.t !== origin)
+      ? o.t : fallback;
     var d = (typeof o.d === 'number') ? o.d : parseFloat(o.d);
     if (!isFinite(d)) d = spec.jd0;
     var i = Math.round((d - spec.jd0) / spec.depStep);
@@ -867,10 +1014,13 @@
     orbitPoints: orbitPoints,
     periodYears: periodYears,
     synMonths: synMonths,
+    hohmannDays: hohmannDays,
+    tofWindow: tofWindow,
     lambert: lambert,
     propagateKepler: propagateKepler,
     dvFromVinf: dvFromVinf,
     captureDv: captureDv,
+    transferDv: transferDv,
     missionDv: missionDv,
     porkchopSpec: porkchopSpec,
     makePorkchopJob: makePorkchopJob,
