@@ -697,16 +697,16 @@
       draw: function (s, ctx, w, h, t) {
         var cx = w / 2, cy = h / 2, i;
         var gold = light() ? '#a07c2c' : '#c8a45c';
-        s.f = (s.f + 1) % 300;
+        s.f = (s.f + 1) % 240;
         var f = s.f;
         s.a1 += 0.030; s.a2 += 0.0161;               /* inner year is shorter */
-        /* zoom: hold at 1 to f=120, shrink to 0.12 by f=180, ease back at the end */
+        /* zoom: brief hold to f=36, shrink to 0.12 by f=80, ease back at the end */
         var z = 1;
-        if (f > 120) z = Math.max(0.12, 1 - (f - 120) / 60 * 0.88);
-        if (f > 285) z = 0.12 + (f - 285) / 14 * 0.88;
+        if (f > 36) z = Math.max(0.12, 1 - (f - 36) / 44 * 0.88);
+        if (f > 225) z = 0.12 + (f - 225) / 14 * 0.88;
         var starA = 0;
-        if (f > 130) starA = Math.min(1, (f - 130) / 40);
-        if (f > 285) starA *= Math.max(0, (299 - f) / 14);
+        if (f > 44) starA = Math.min(1, (f - 44) / 32);
+        if (f > 225) starA *= Math.max(0, (239 - f) / 14);
         /* orbits fade out as the camera pulls away */
         var oa = Math.max(0, Math.min(1, (z - 0.12) / 0.5));
         var r1 = Math.min(w, h) * 0.20 * z, r2 = Math.min(w, h) * 0.38 * z;
@@ -739,17 +739,19 @@
           ctx.fillStyle = gold;
           ctx.beginPath(); ctx.arc(tx, ty, 2.2, 0, 6.2832); ctx.fill();
           /* the route draws out, a spark rides it, a ring greets arrival */
-          if (f > 190) {
-            var u = Math.min(1, (f - 190) / 55);
+          if (f > 88) {
+            var u = Math.min(1, (f - 88) / 62);
             ctx.strokeStyle = gold; ctx.lineWidth = 1;
             ctx.globalAlpha = starA * 0.7;
             ctx.beginPath(); ctx.moveTo(cx, cy);
             ctx.lineTo(cx + (tx - cx) * u, cy + (ty - cy) * u); ctx.stroke();
-            ctx.globalAlpha = starA;
-            ctx.fillStyle = accent();
-            ctx.beginPath();
-            ctx.arc(cx + (tx - cx) * u, cy + (ty - cy) * u, 2, 0, 6.2832); ctx.fill();
-            var p = f - 245;
+            if (u < 1) {
+              ctx.globalAlpha = starA;
+              ctx.fillStyle = accent();
+              ctx.beginPath();
+              ctx.arc(cx + (tx - cx) * u, cy + (ty - cy) * u, 2, 0, 6.2832); ctx.fill();
+            }
+            var p = f - 150;
             if (u >= 1 && p > 0 && p < 14) {
               ctx.strokeStyle = gold; ctx.globalAlpha = (14 - p) / 14 * starA;
               ctx.beginPath(); ctx.arc(tx, ty, 4 + p, 0, 6.2832); ctx.stroke();

@@ -187,7 +187,7 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
     </div>
     <div class="xp-card__body">
       <h2 class="xp-card__title">Mission to Anywhere</h2>
-      <p class="xp-card__desc">Plan a trip from Earth to any planet or any real star, and see what relativity does to the clocks.</p>
+      <p class="xp-card__desc">Plan a trip to any planet or any real star, and see what relativity does to the clocks.</p>
     </div>
   </a>
 

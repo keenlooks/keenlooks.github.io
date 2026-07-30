@@ -42,12 +42,12 @@ Originally from [Alaska](https://www.frontiersman.com/news/trio-of-valley-studen
       <span class="home-strip__title">Loan Calculator</span>
       <span class="home-strip__desc">Visualize what interest really costs over the life of a loan.</span>
     </a>
-    <a class="xp-card" href="/gravity/">
-      <div class="xp-card__art" aria-hidden="true" data-thumb="gravity">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"></circle><ellipse cx="12" cy="12" rx="9.5" ry="4.6" transform="rotate(-22 12 12)"></ellipse><circle cx="20" cy="8.4" r="1.7" fill="currentColor" stroke="none"></circle></svg>
+    <a class="xp-card" href="/voyage/">
+      <div class="xp-card__art" aria-hidden="true" data-thumb="voyage">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="15" r="5.5" stroke-opacity="0.5"></circle><circle cx="9" cy="15" r="1.1" fill="currentColor" stroke="none"></circle><circle cx="13" cy="11.3" r="1.4" fill="currentColor" stroke="none"></circle><path d="M13 11.3 L19 4.8" stroke-opacity="0.6" stroke-dasharray="2 2"></path><path d="M19.5 3.2 l0.7 1.6 1.6 0.7 -1.6 0.7 -0.7 1.6 -0.7 -1.6 -1.6 -0.7 1.6 -0.7 Z" fill="currentColor" stroke="none"></path></svg>
       </div>
-      <span class="home-strip__title">Gravity Simulator</span>
-      <span class="home-strip__desc">Create different sized masses, then watch them orbit, collide, or drift off.</span>
+      <span class="home-strip__title">Mission to Anywhere</span>
+      <span class="home-strip__desc">Plan a trip to any planet or any real star, and see what relativity does to the clocks.</span>
     </a>
     <a class="xp-card" href="/pdftools/">
       <div class="xp-card__art" aria-hidden="true">
@@ -57,7 +57,7 @@ Originally from [Alaska](https://www.frontiersman.com/news/trio-of-valley-studen
       <span class="home-strip__desc">Free private PDF merging, splitting, and signing, entirely in your browser. Nothing is uploaded.</span>
     </a>
   </div>
-  <p class="home-strip__note">There is more on the <a href="/fun/">Fun page</a>, including <a href="/adversarial/">fooling a neural network</a>, a <a href="/transformer/">tiny transformer</a>, <a href="/hash/">hash collisions</a>, <a href="/bonds/">bonds and interest rates</a>, a playable <a href="/life/">Game of Life</a>, and <a href="/imagetools/">Image Studio</a> for quick image edits.</p>
+  <p class="home-strip__note">There is more on the <a href="/fun/">Fun page</a>, including <a href="/adversarial/">fooling a neural network</a>, a <a href="/transformer/">tiny transformer</a>, <a href="/hash/">hash collisions</a>, a <a href="/gravity/">gravity sandbox</a>, <a href="/bonds/">bonds and interest rates</a>, a playable <a href="/life/">Game of Life</a>, and <a href="/imagetools/">Image Studio</a> for quick image edits.</p>
 </div>
 
 ## Research & Writing
