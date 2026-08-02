@@ -34,6 +34,7 @@
   var btnPause = id('grav-pause'), btnClear = id('grav-clear'), btnPreset = id('grav-preset'), btnAccrete = id('grav-accrete');
   var elPanel = id('grav-panel'), elCollapse = id('grav-collapse');
   var status = id('grav-status');
+  if (window.GadgetUI) GadgetUI.liveStatus(status);
 
   // ---- state -------------------------------------------------------------
   var bodies = [];                 // {x,y,vx,vy,m,color,hue,trail:[]}

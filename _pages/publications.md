@@ -3,6 +3,7 @@ layout: archive
 title: "Publications"
 permalink: /publications/
 author_profile: true
+description: "Peer-reviewed publications on adversarial machine learning and security, plus technical reports from Anthropic's Frontier Red Team on measuring AI cyber capability."
 ---
 
 {% if author.googlescholar %}
@@ -102,18 +103,28 @@ Not peer-reviewed; published on [Anthropic's Frontier Red Team blog](https://red
 
 <style>
 .report-list { margin: 1em 0 2.5em; display: flex; flex-direction: column; gap: 1.1em; }
-.report { display: flex; gap: 1em; align-items: flex-start; }
-.report__fig { flex: 0 0 150px; line-height: 0; }
+/* A fixed figure column, held open on rows that have no figure, so every
+   title and blurb starts at the same x. With a plain flex row the rows
+   without a thumbnail began 168px to the left of the ones with one, and the
+   section read as two unrelated lists. */
+.report {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  column-gap: 1em;
+  align-items: start;
+}
+.report__fig { grid-column: 1; grid-row: 1; line-height: 0; }
 .report__fig img {
   width: 150px; height: auto; border-radius: 6px;
   border: 1px solid rgba(127,127,127,0.28);
 }
-.report__body { flex: 1; min-width: 0; }
+.report__body { grid-column: 2; grid-row: 1; min-width: 0; }
 .report__body p { margin: 0.2em 0 0; opacity: 0.85; font-size: 0.95em; }
 .report__year { opacity: 0.6; font-size: 0.9em; margin-left: 0.2em; }
 @media (max-width: 520px) {
-  .report { flex-direction: column; gap: 0.5em; }
-  .report__fig, .report__fig img { width: 100%; flex-basis: auto; }
+  .report { display: block; }
+  .report__fig { display: block; margin-bottom: 0.5em; }
+  .report__fig, .report__fig img { width: 100%; }
 }
 </style>
 

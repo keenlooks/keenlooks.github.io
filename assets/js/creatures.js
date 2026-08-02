@@ -33,6 +33,7 @@
   var btnPause = id('cre-pause'), btnRestart = id('cre-restart');
   var btnReplay = id('cre-replay'), btnShare = id('cre-share'), btnSave = id('cre-save');
   var status = id('cre-status');
+  if (window.GadgetUI) GadgetUI.liveStatus(status);
   var buildbar = id('cre-buildbar'), buildMsg = id('cre-buildmsg');
   var btnEvolve = id('cre-evolve'), btnBUndo = id('cre-undo'), btnBClear = id('cre-clear');
   var btnEdit = id('cre-edit');
@@ -67,6 +68,7 @@
   var buildStatus = '';           /* one-shot status line text for build mode */
   var buildMsgFlash = null;       /* timeout restoring the validity note */
   var hintBuild = null, hintEvolve = null;  /* lazy GadgetUI first-run hints */
+  var barReserve = 0;             /* px of screen bottom owned by the build bar */
 
   var paused = reduced, started = !reduced;
   var speed = 1, pending = 0;
@@ -113,17 +115,28 @@
       chart.height = Math.round(CHART_H * dpr);
       chartLen = -1;                /* the cached stride depends on the width */
     }
+    layoutBuildBar();
   }
-  function groundY() { return H * 0.78; }
+  /* In build mode the bar owns the bottom of the screen, so the ground line
+     (and therefore the whole creature, whose feet sit ON it) has to end above
+     it: otherwise the feet are drawn UNDER the bar and every drag aimed at
+     them lands on the bar instead of the canvas. barReserve is measured, not
+     assumed, because the bar wraps to two or three rows on narrow screens. */
+  function groundY() {
+    var gy = H * 0.78;
+    if (mode === 'build') gy = Math.max(H * 0.34, Math.min(gy, H - barReserve));
+    return gy;
+  }
   function morphOf() { return mode === 'evolve' ? (run && run.morph) : (solo && solo.morph); }
   /* build mode anchors x at mid-screen (the evolve anchor W*0.40 would clip
      ~10% of the +-1.6 m editable region off the left edge) */
   function anchorX() { return W * (mode === 'build' ? 0.50 : 0.40); }
   function scalePx() {
     if (mode === 'build') {
-      /* fixed scale that fits the 3.4 m x 1.8 m editable region between the
-         ground line and the nav zone, independent of the morph */
-      return Math.min((W * 0.94) / 3.4, (H * 0.58) / 1.8);
+      /* fit the 3.4 m x 1.8 m editable region into what is left between the
+         ground line and the top nav zone, independent of the morph */
+      var vSpace = Math.max(70, groundY() - H * 0.20);
+      return Math.min((W * 0.94) / 3.4, vSpace / 1.8);
     }
     var m = morphOf(), top = 1.0;
     if (m) {
@@ -139,6 +152,69 @@
   }
   function sx(wx, S) { return anchorX() + (wx - cam.x) * S; }
   function sy(wy, S) { return groundY() - wy * S; }
+
+  /* how much of the screen bottom the build bar covers, plus a margin so the
+     lowest dots keep a visible gap above it (read-only; safe per frame) */
+  function measureBar() {
+    if (mode !== 'build' || !buildbar || buildbar.hidden) { barReserve = 0; return; }
+    var r = buildbar.getBoundingClientRect();
+    barReserve = r.height ? Math.max(0, Math.round(H - r.top) + 18) : 0;
+  }
+
+  function fixedRect(el) {
+    if (!el) return null;
+    var r = el.getBoundingClientRect();
+    return (r.width < 2 || r.height < 2) ? null : r;
+  }
+
+  /* Wide screens center the bar by CSS, but three pieces of fixed furniture
+     can share that band: the corner buttons bottom-left, the chat widget
+     bottom-right (injected a second or two after load, so it has to be
+     measured, never assumed), and the control panel when it is open on a
+     short window. All three paint OVER the bar, which clipped its readout
+     mid-word. Re-center the bar in whatever room is actually left.
+     Limits only tighten within a call, so it settles instead of oscillating. */
+  function layoutBuildBar() {
+    if (!buildbar) return;
+    if (buildbar.hidden || window.innerWidth <= 768) {
+      /* <=768px: CSS pins the bar beside the corner buttons and the chat
+         widget is hidden on .life-app pages */
+      buildbar.style.left = ''; buildbar.style.right = '';
+      buildbar.style.transform = ''; buildbar.style.maxWidth = '';
+      measureBar();
+      return;
+    }
+    buildbar.style.left = ''; buildbar.style.right = '';
+    buildbar.style.transform = ''; buildbar.style.maxWidth = '';
+    var vw = window.innerWidth, lo = 12, hi = vw - 12, pass, i, r;
+    var lefts = [id('theme-toggle'), id('life-link')];
+    var rights = [id('chat-widget'), id('cre-panel')];
+    for (pass = 0; pass < 3; pass++) {
+      var br = buildbar.getBoundingClientRect();
+      var top = br.top - 8, bot = br.bottom + 8, lo0 = lo, hi0 = hi;
+      for (i = 0; i < lefts.length; i++) {
+        r = fixedRect(lefts[i]);
+        if (r && r.bottom > top && r.top < bot && r.right > br.left - 8) lo = Math.max(lo, r.right + 12);
+      }
+      for (i = 0; i < rights.length; i++) {
+        r = fixedRect(rights[i]);
+        if (r && r.bottom > top && r.top < bot && r.left < br.right + 8) hi = Math.min(hi, r.left - 12);
+      }
+      if (lo === lo0 && hi === hi0) break;
+      if (hi - lo < 200) {
+        /* nowhere sensible left: fall back to the CSS centering rather than
+           squeeze the bar into a column */
+        buildbar.style.left = ''; buildbar.style.right = '';
+        buildbar.style.transform = ''; buildbar.style.maxWidth = '';
+        break;
+      }
+      buildbar.style.left = Math.round((lo + hi) / 2) + 'px';
+      buildbar.style.right = 'auto';
+      buildbar.style.transform = 'translateX(-50%)';
+      buildbar.style.maxWidth = Math.round(Math.min(hi - lo, 544)) + 'px';
+    }
+    measureBar();
+  }
 
   /* ------------------------------- runs ---------------------------------- */
 
@@ -284,6 +360,7 @@
     if (buildMsg && !buildMsgFlash && msg !== lastBuildMsg) {
       buildMsg.textContent = msg;
       lastBuildMsg = msg;
+      layoutBuildBar();          /* a longer note can wrap the bar to a new row */
     }
     if (btnEvolve) btnEvolve.disabled = !v.ok;
     if (btnBUndo) btnBUndo.disabled = !bm.undo.length;
@@ -295,6 +372,7 @@
     if (chart) chart.hidden = (mode === 'build');
     if (btnEdit) btnEdit.hidden = !(mode === 'evolve' || mode === 'replay');
     if (mode === 'build') { lastBuildMsg = ''; updateBuildUI(); }
+    layoutBuildBar();
   }
 
   function makeSolo(morph, genome, gen, label) {
@@ -656,6 +734,23 @@
 
   /* ------------------------------ chart ---------------------------------- */
 
+  /* The chart is a transparent HUD canvas laid over the running swarm, so its
+     labels sat on whatever creature happened to be behind them. Back each one
+     with a small theme-toned plate (page background, not a new color). */
+  function labelPlate(g, x, y, w, h) {
+    g.fillStyle = effectiveTheme() === 'light'
+      ? 'rgba(243,245,248,0.86)' : 'rgba(14,16,20,0.82)';
+    var r = 3;
+    g.beginPath();
+    g.moveTo(x + r, y);
+    g.arcTo(x + w, y, x + w, y + h, r);
+    g.arcTo(x + w, y + h, x, y + h, r);
+    g.arcTo(x, y + h, x, y, r);
+    g.arcTo(x, y, x + w, y, r);
+    g.closePath();
+    g.fill();
+  }
+
   function drawChart() {
     if (!chctx || !chart.clientWidth) return;   /* hidden on landscape phones */
     chctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -671,8 +766,9 @@
     } else head = '';
     chctx.font = '600 12px "Source Sans 3", system-ui, sans-serif';
     chctx.textAlign = 'left'; chctx.textBaseline = 'top';
+    if (head) labelPlate(chctx, 0, 0, Math.min(CHART_W, chctx.measureText(head).width + 8), 17);
     chctx.fillStyle = textColor(0.75);
-    chctx.fillText(head, 0, 2);
+    chctx.fillText(head, 3, 2);
 
     /* panel */
     var top = 20, x0 = 30, x1 = CHART_W - 6, y1 = CHART_H - 16, y0 = top + 6;
@@ -707,9 +803,14 @@
 
     /* axes labels */
     chctx.font = '10px "Source Sans 3", system-ui, sans-serif';
-    chctx.fillStyle = textColor(0.5);
     chctx.textAlign = 'right'; chctx.textBaseline = 'middle';
-    chctx.fillText(ymax.toFixed(ymax < 3 ? 1 : 0) + ' m', x0 - 3, y0);
+    var ymaxTxt = ymax.toFixed(ymax < 3 ? 1 : 0) + ' m';
+    labelPlate(chctx, Math.max(0, x0 - 5 - chctx.measureText(ymaxTxt).width - 3), y0 - 7,
+               Math.min(x0 - 1, chctx.measureText(ymaxTxt).width + 8), 14);
+    labelPlate(chctx, Math.max(0, x0 - 5 - chctx.measureText('0').width - 3), y1 - 7,
+               chctx.measureText('0').width + 8, 14);
+    chctx.fillStyle = textColor(0.5);
+    chctx.fillText(ymaxTxt, x0 - 3, y0);
     chctx.fillText('0', x0 - 3, y1);
     chctx.textAlign = 'center'; chctx.textBaseline = 'top';
     chctx.fillText('generation', (x0 + x1) / 2, y1 + 3);
@@ -780,6 +881,7 @@
     if (!W || !H) resize();
     var dt = Math.min(0.1, (t - lastT) / 1000 || 0);
     lastT = t;
+    measureBar();
     advance(t, dt);
     if (!paused) updateCamera(t, dt);
     drawWorld(t);
@@ -1208,7 +1310,10 @@
        so the ? button re-shows the hint for the CURRENT mode */
     var pnl = GadgetUI.initPanel({
       panel: id('cre-panel'), toggle: id('cre-collapse'),
-      collapsedClass: 'cre-panel--collapsed'
+      collapsedClass: 'cre-panel--collapsed',
+      /* an open panel on a short window reaches down into the build bar's
+         band, so the bar has to be re-fitted whenever it opens or closes */
+      onToggle: layoutBuildBar
     });
     var helpBtn = id('cre-help');
     if (helpBtn) helpBtn.addEventListener('click', function () {
@@ -1228,6 +1333,26 @@
     clearTimeout(rt);
     rt = setTimeout(resize, 150);
   });
+  /* chat-widget.js appends its fixed bottom bar a second or two after load, so
+     the first layout measures nothing; re-fit the build bar when it turns up */
+  (function watchChat() {
+    if (id('chat-widget')) { layoutBuildBar(); return; }
+    var tries = 0, iv = setInterval(function () {
+      if (id('chat-widget') || ++tries > 12) {
+        clearInterval(iv);
+        layoutBuildBar();
+      }
+    }, 400);
+    try {
+      var mo = new MutationObserver(function () {
+        if (!id('chat-widget')) return;
+        mo.disconnect();
+        clearInterval(iv);
+        layoutBuildBar();
+      });
+      mo.observe(document.body, { childList: true });
+    } catch (e) {}
+  })();
   document.addEventListener('visibilitychange', function () {
     if (document.hidden) {
       if (raf) { cancelAnimationFrame(raf); raf = null; }

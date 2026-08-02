@@ -204,7 +204,7 @@
     if (roNote) {
       var pctLost = gain > 0 ? Math.round((lost / gain) * 100) : 0;
       roNote.textContent = 'Holding all 30 industries, a typical $10,000 grew to about ' + usd(div.p50)
-        + ' over 10 years. A ' + state.fee.toFixed(1) + '% annual fee leaves you ' + usd(net) + ' — roughly '
+        + ' over 10 years. A ' + state.fee.toFixed(1) + '% annual fee leaves you ' + usd(net) + ', roughly '
         + usd(lost) + ', or ' + pctLost + '% of your gains, skimmed off by fees.';
     }
   }

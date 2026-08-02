@@ -458,7 +458,7 @@
     view.subtitle = 'done';
     drawChart();
     log('Recovered "' + rec + '" in ' + secs + 's' +
-        (ok ? ' — it matches the secret.' : ' — it does NOT match (unexpected).'));
+        (ok ? ', it matches the secret.' : ', it does NOT match (unexpected).'));
     stopAttack('Recovered ' + rec + ' from timing alone in ' + secs + 's. Open "Reveal the secret" to check.');
   }
 
@@ -520,7 +520,7 @@
     if (res.significant) {
       atk.recovered += HEX[res.bestIdx];
       renderRecovered(atk.recovered);
-      log('Position ' + (atk.pos + 1) + ': locked "' + HEX[res.bestIdx] + '" — it was ' + (res.rel * 100).toFixed(0) + '% slower to reject (z = ' + res.z.toFixed(1) + ').');
+      log('Position ' + (atk.pos + 1) + ': locked "' + HEX[res.bestIdx] + '", it was ' + (res.rel * 100).toFixed(0) + '% slower to reject (z = ' + res.z.toFixed(1) + ').');
       atk.pos++;
       if (atk.pos >= TOKEN_LEN) { finishSuccess(); return; }
       startRound(1);

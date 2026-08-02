@@ -144,9 +144,17 @@
     if (!cropping) {
       var cx = viewX + w / 2, cy = viewY + h / 2;
       centerPos = { x: cx, y: cy };
-      var rr = Math.min(w, h) / 2 + 18;
+      /* Distance out to the handle. This used Math.min(w, h), the SHORT side,
+         which on a portrait photo dropped the handle inside the picture. `w`/`h`
+         are the ROTATED bounding box, so measure from the un-rotated drawn
+         height instead: that is the centre-to-top-edge distance of the image
+         itself at any angle, so the handle clears the top edge by 18px for every
+         aspect ratio and every rotation. */
+      var rr = (work.height * viewScale) / 2 + 18;
       var rad = (-90 + fineAngle) * Math.PI / 180;
       var hx = cx + rr * Math.cos(rad), hy = cy + rr * Math.sin(rad);
+      /* keep it on the canvas (a wide image swung near 90° would push it off) */
+      hx = Math.max(8, Math.min(maxW - 8, hx)); hy = Math.max(8, Math.min(maxH - 8, hy));
       handlePos = { x: hx, y: hy };
       dctx.strokeStyle = 'rgba(130,166,204,0.85)'; dctx.lineWidth = 1.5;
       dctx.beginPath(); dctx.moveTo(cx, cy); dctx.lineTo(hx, hy); dctx.stroke();
@@ -155,7 +163,9 @@
       dctx.beginPath(); dctx.arc(hx, hy, 7, 0, 6.2832); dctx.fill(); dctx.stroke();
       if (Math.abs(fineAngle) > 0.5) {
         dctx.fillStyle = 'rgba(127,127,127,0.95)'; dctx.font = '12px "Source Sans 3", system-ui, sans-serif';
-        dctx.textAlign = 'left'; dctx.textBaseline = 'middle'; dctx.fillText(Math.round(fineAngle) + '°', hx + 11, hy);
+        var flip = hx > maxW - 46;   /* keep the readout on the canvas */
+        dctx.textAlign = flip ? 'right' : 'left'; dctx.textBaseline = 'middle';
+        dctx.fillText(Math.round(fineAngle) + '°', hx + (flip ? -11 : 11), hy);
       }
     } else { handlePos = null; }
   }

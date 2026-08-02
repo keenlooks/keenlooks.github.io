@@ -28,6 +28,7 @@
   var btnPause = id('epi-pause'), btnRestart = id('epi-restart');
   var elPanel = id('epi-panel'), elCollapse = id('epi-collapse');
   var status = id('epi-status');
+  if (window.GadgetUI) GadgetUI.liveStatus(status);
 
   var MAX_CELLS = 60000, CELL_FLOOR = 6;
   var STEP_MS = 95;                 // one "day" per step
@@ -55,6 +56,31 @@
   function cVax() { return effectiveTheme() === 'light' ? 'rgba(52,86,138,0.22)' : 'rgba(130,166,204,0.20)'; }
   function cSus() { return 'rgba(127,127,127,0.10)'; }
   function textColor(a) { return effectiveTheme() === 'light' ? 'rgba(38,38,38,' + a + ')' : 'rgba(214,214,214,' + a + ')'; }
+
+  /* The floating chrome that sits above the canvas: the bottom-left corner
+     buttons (#theme-toggle / #life-link, raised to bottom: 4rem on phones) and
+     the control panel. Both are measured rather than assumed, and both are
+     created on DOMContentLoaded, which can land after the first animation
+     frame, so the measurement is refreshed from the loop instead of taken once
+     at init. Until it lands, fall back to the height the stylesheet gives the
+     buttons (2.6rem tall at bottom 1.25rem, raised to bottom 4rem at <= 768px,
+     in _sass/_color-scheme-light.scss) so the first frames are already right. */
+  function fallbackBand() {
+    var rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+    return (window.innerWidth <= 768 ? 6.6 : 3.85) * rem;
+  }
+  var cornerBand = fallbackBand(), panelBox = null, lastMeasure = -1e9;
+  function measureChrome() {
+    var b = 0, ids = ['theme-toggle', 'life-link'], k, el, r;
+    for (k = 0; k < ids.length; k++) {
+      el = document.getElementById(ids[k]);
+      if (!el) continue;
+      r = el.getBoundingClientRect();
+      if (r.height) b = Math.max(b, window.innerHeight - r.top);
+    }
+    cornerBand = b || fallbackBand();
+    panelBox = elPanel ? elPanel.getBoundingClientRect() : null;
+  }
 
   function resize() {
     dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -135,41 +161,52 @@
       }
     }
 
-    /* the epidemic curve: infected per day, along the bottom */
+    /* The epidemic curve: infected per day, along the bottom. Its baseline sits
+       above the fixed corner buttons and its right edge stops short of the
+       control panel, so the readable parts are never covered. */
     if (history.length > 1) {
-      var ch = Math.min(110, H * 0.16), cb = H - 14;
+      var ch = Math.min(110, H * 0.16);
+      var cb = Math.max(H * 0.55, H - (cornerBand + 12));
+      var x0 = 15, x1 = W - 15;
+      /* step aside for the panel only where it is a right-hand column; on a
+         phone it spans the screen, and squeezing the curve into what is left
+         would be worse than letting it run behind (it starts collapsed there) */
+      if (panelBox && panelBox.left > W * 0.55 && panelBox.left < x1 && panelBox.bottom > cb - ch - 18) {
+        x1 = panelBox.left - 14;
+      }
       var peak = 1;
       for (i = 0; i < history.length; i++) if (history[i] > peak) peak = history[i];
-      var dxs = Math.min(4, (W - 30) / history.length);
+      var dxs = Math.min(4, (x1 - x0) / history.length);
       ctx.beginPath();
-      ctx.moveTo(15, cb);
-      for (i = 0; i < history.length; i++) ctx.lineTo(15 + i * dxs, cb - (history[i] / peak) * ch);
-      ctx.lineTo(15 + (history.length - 1) * dxs, cb);
+      ctx.moveTo(x0, cb);
+      for (i = 0; i < history.length; i++) ctx.lineTo(x0 + i * dxs, cb - (history[i] / peak) * ch);
+      ctx.lineTo(x0 + (history.length - 1) * dxs, cb);
       ctx.closePath();
       ctx.fillStyle = 'rgba(196,87,74,0.30)'; ctx.fill();
       ctx.beginPath();
       for (i = 0; i < history.length; i++) {
-        var px = 15 + i * dxs, py = cb - (history[i] / peak) * ch;
+        var px = x0 + i * dxs, py = cb - (history[i] / peak) * ch;
         if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
       }
       ctx.strokeStyle = cInfected(); ctx.lineWidth = 1.5; ctx.stroke();
       ctx.font = '12px "Source Sans 3", system-ui, sans-serif';
       ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
       ctx.fillStyle = textColor(0.55);
-      ctx.fillText('infected over time →', 15, cb - ch - 4);
+      ctx.fillText('infected over time →', x0, cb - ch - 4);
     }
 
     if (status) {
       var n = cols * rows;
       var everPct = (((counts.r + counts.i) / Math.max(1, n - counts.v)) * 100).toFixed(0);
       status.textContent = over
-        ? 'Outbreak over — ' + everPct + '% of the unvaccinated ever infected. Click to reignite.'
+        ? 'Outbreak over: ' + everPct + '% of the unvaccinated ever infected. Click to reignite.'
         : counts.i + ' infected · ' + counts.r + ' recovered · ' + counts.s + ' susceptible';
     }
   }
 
   function loop(t) {
     raf = requestAnimationFrame(loop);
+    if (t - lastMeasure > 400) { lastMeasure = t; measureChrome(); }
     if (!paused && !over && t - lastStep >= STEP_MS) {
       lastStep = t;
       stepSim();
@@ -321,6 +358,7 @@
     clearTimeout(rt);
     rt = setTimeout(function () {
       resize();
+      measureChrome();      /* the corner buttons move at the 768px breakpoint */
       /* only rebuild (losing the outbreak) if the grid dimensions actually changed —
          mobile fires resize on URL-bar show/hide and on-screen keyboard */
       var c = CELL_FLOOR;

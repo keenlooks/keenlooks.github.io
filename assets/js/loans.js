@@ -218,15 +218,22 @@
       ctx.fillText('Paid off: ' + dur(scn.payoffMonths), px + (px > W - 120 ? -8 : 8), py - 8);
     }
 
-    // legend
+    // Legend. It used to sit at the top LEFT, which is exactly where both balance
+    // lines start, so the swatches and text were drawn on top of the data. Both
+    // lines fall left to right, so the top RIGHT of the plot is the empty corner:
+    // right-align the block against the plot's right edge.
     ctx.font = '12px "Source Sans 3", system-ui, sans-serif'; ctx.textBaseline = 'middle';
-    var gx2 = M.l + 10, gy2 = M.t + 8;
+    var lg = ['Standard payments', 'With extra payments'];
+    var lgW = Math.max(ctx.measureText(lg[0]).width, ctx.measureText(lg[1]).width);
+    // gy2 sits far enough below M.t that the live "Year 9.0" drag tooltip (drawn
+    // at y=26 while a payment is dragged near the right edge) cannot touch it.
+    var gx2 = Math.max(M.l + 10, (W - M.r) - 6 - lgW - 28), gy2 = M.t + 18;
     ctx.strokeStyle = c.baseline; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(gx2, gy2); ctx.lineTo(gx2 + 22, gy2); ctx.stroke();
-    ctx.fillStyle = c.muted; ctx.textAlign = 'left'; ctx.fillText('Standard payments', gx2 + 28, gy2);
+    ctx.fillStyle = c.muted; ctx.textAlign = 'left'; ctx.fillText(lg[0], gx2 + 28, gy2);
     ctx.strokeStyle = c.accent; ctx.lineWidth = 2.6;
     ctx.beginPath(); ctx.moveTo(gx2, gy2 + 18); ctx.lineTo(gx2 + 22, gy2 + 18); ctx.stroke();
-    ctx.fillStyle = c.text; ctx.fillText('With extra payments', gx2 + 28, gy2 + 18);
+    ctx.fillStyle = c.text; ctx.fillText(lg[1], gx2 + 28, gy2 + 18);
   }
 
   // ---- principal/interest comparison bars (HTML) -------------------------
@@ -268,7 +275,7 @@
         roTiming.textContent = 'Waiting until year ' + s.startYear + ' to start the recurring extra payments costs about '
           + usd(deltaInt) + ' more interest and finishes ' + dur(Math.max(0, deltaMonths)) + ' later than starting now.';
       } else {
-        roTiming.textContent = 'Earlier payments save more: the same dollars erase more interest the sooner they land — try placing a one-time payment earlier on the timeline.';
+        roTiming.textContent = 'Earlier payments save more: the same dollars erase more interest the sooner they land, so try placing a one-time payment earlier on the timeline.';
       }
     }
   }

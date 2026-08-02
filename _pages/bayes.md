@@ -115,6 +115,12 @@ Suppose a test catches 99% of the people who have a condition and wrongly flags 
 .bayes-sliders { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.9rem 1.4rem; }
 @media (max-width: 680px) { .bayes-sliders { grid-template-columns: 1fr; } }
 .bayes-slider { display: flex; flex-direction: column; gap: 0.28rem; font-size: 0.95rem; }
+/* In the security framing the first label reads "Intrusion rate: N per 10,000
+   events" and wraps to two lines while the other two stay on one, which shoved
+   its track out of line with the others. Reserve two lines on every label so the
+   three tracks line up in both framings. Not needed once the grid is one column. */
+.bayes-slider > span:first-child { line-height: 1.35; min-height: 2.7em; }
+@media (max-width: 680px) { .bayes-slider > span:first-child { min-height: 0; } }
 .bayes-slider strong { font-variant-numeric: tabular-nums; }
 .bayes-slider input[type="range"] { width: 100%; accent-color: #82a6cc; }
 .bayes-slider__hint { font-size: 0.8rem; opacity: 0.65; line-height: 1.35; }
@@ -140,5 +146,6 @@ html[data-theme="light"] .bayes-slider input[type="range"] { accent-color: #3456
 }
 </style>
 
+<script defer src="{{ '/assets/js/gadget-ui.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/bayes.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/editable-values.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>

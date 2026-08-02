@@ -30,6 +30,7 @@
   var btnClear = id('mag-clear'), btnPreset = id('mag-preset');
   var elPanel = id('mag-panel'), elCollapse = id('mag-collapse');
   var status = id('mag-status');
+  if (window.GadgetUI) GadgetUI.liveStatus(status);
 
   var magnets = [];               // {x,y,angle,strength,vx,vy,va}
   var compass = { x: 0, y: 0, ang: -1.5708, show: true, R: 22 };  // a draggable field probe

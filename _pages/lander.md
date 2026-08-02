@@ -4,7 +4,7 @@ title: "Rocket Lander"
 permalink: /lander/
 author_profile: false
 excerpt: "A reinforcement-learning agent lands a rocket. Change gravity, wind, or the pad and watch it cope."
-description: "An interactive reinforcement-learning demo by Keane Lucas: a small policy network, trained from scratch, flies a rocket down to a landing pad. Change gravity, wind, or the pad position, or fling the rocket, and watch the agent adapt — with a live view of the network deciding each instant. Inspired by the classic LunarLander environment."
+description: "An interactive reinforcement-learning demo by Keane Lucas: a small policy network, trained from scratch, flies a rocket down to a landing pad. Change gravity, wind, or the pad, or fling the rocket, and watch the agent adapt in real time."
 ---
 
 <div class="land-app life-app">
@@ -75,7 +75,9 @@ html[data-theme="light"] .land-topfade { background: linear-gradient(to bottom, 
 
 .land-panel {
   position: fixed; top: 4.6rem; right: 1rem; z-index: 30;
-  width: 290px; max-width: calc(100vw - 2rem); max-height: calc(100vh - 6rem); max-height: calc(100dvh - 6rem);
+  width: 290px; max-width: calc(100vw - 2rem);
+  /* leave room at the bottom for the chat bar and the fixed corner buttons */
+  max-height: calc(100vh - 10rem); max-height: calc(100dvh - 10rem);
   overflow: auto; padding: 0.85rem 1rem 1rem;
   border: 1px solid rgba(255,255,255,0.12); border-radius: 10px;
   background: rgba(18,18,18,0.94); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
@@ -101,6 +103,11 @@ html[data-theme="light"] .land-panel { background: rgba(255,255,255,0.97); borde
 .land-btn:hover { background: rgba(127,127,127,0.26); }
 .land-hint { font-size: 0.82em; opacity: 0.72; margin: 0; line-height: 1.5; }
 .land-credit { font-size: 0.78em; opacity: 0.65; margin: 0; line-height: 1.5; }
+
+/* phones: the corner buttons sit higher (bottom: 4rem), so the panel stops higher too */
+@media (max-width: 768px) {
+  .land-panel { max-height: calc(100vh - 12.5rem); max-height: calc(100dvh - 12.5rem); }
+}
 
 html[data-theme="light"] .land-slider input[type="range"], html[data-theme="light"] .land-check input { accent-color: #34568a; }
 @media (prefers-color-scheme: light) { html:not([data-theme="dark"]) .land-slider input[type="range"], html:not([data-theme="dark"]) .land-check input { accent-color: #34568a; } }

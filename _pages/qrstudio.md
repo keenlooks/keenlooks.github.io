@@ -277,6 +277,18 @@ html[data-theme="light"] .qs-btn--accent { background: #34568a; border-color: #3
 .qs-note p { font-size: 0.92em; line-height: 1.6; opacity: 0.9; margin: 0.6rem 0 0; }
 .qs-privacy { font-size: 0.82em; opacity: 0.7; margin: 1.1rem 0 0; }
 .qs-credit { font-size: 0.8em; opacity: 0.6; line-height: 1.5; margin: 0.4rem 0 0; }
+
+/* Room at the end of the page so the last controls (the quiet-zone field on a
+   phone, the download buttons) can be scrolled clear of the fixed chat bar,
+   which is full width at 768px and under. */
+.qs-wrap { padding-bottom: 2rem; }
+@media (max-width: 768px) { .qs-wrap { padding-bottom: 4rem; } }
+
+/* The Wi-Fi "Hidden network" checkbox lands exactly under the fixed bottom-left
+   #theme-toggle on a phone, so tapping it flipped the site theme instead. Same
+   precedent as the PDF Toolbench page: hide the toggle at phone widths, on this
+   page only. Easy to veto by deleting this block. */
+@media (max-width: 768px) { #theme-toggle { display: none; } }
 </style>
 
 <script defer src="{{ '/assets/js/qrlib/qrcode.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>

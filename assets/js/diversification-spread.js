@@ -186,7 +186,7 @@
     // corner labels
     ctx.textAlign = 'left'; ctx.textBaseline = 'top';
     ctx.fillStyle = c.muted; ctx.font = '11px "Source Sans 3", system-ui, sans-serif';
-    ctx.fillText('value of $10,000 — shaded band = where this blend could land', M.l + 4, M.t + 2);
+    ctx.fillText('value of $10,000: shaded band = where this blend could land', M.l + 4, M.t + 2);
     ctx.fillStyle = c.accent; ctx.font = '600 12px "Source Sans 3", system-ui, sans-serif';
     ctx.fillText('blend of ' + state.N + (state.N === 1 ? ' industry' : ' industries'), M.l + 4, M.t + 18);
   }
@@ -197,8 +197,8 @@
     if (!elNote || !state.fan) return;
     var lo = state.fan.p5[STEPS], hi = state.fan.p95[STEPS], word = state.N === 1 ? 'industry' : 'industries';
     elNote.innerHTML = 'Holding <strong>' + state.N + '</strong> ' + word
-      + ', $10,000 over these 30 years lands somewhere in the shaded band &mdash; about <strong>' + usd(lo) + '</strong>–<strong>' + usd(hi)
-      + '</strong> (middle 90%), depending on which ones you pick. Slide up and the band squeezes toward a single line: the variance falls while the typical outcome barely moves &mdash; the idea the chart below sums up.';
+      + ', $10,000 over these 30 years lands somewhere in the shaded band, about <strong>' + usd(lo) + '</strong>–<strong>' + usd(hi)
+      + '</strong> (middle 90%), depending on which ones you pick. Slide up and the band squeezes toward a single line: the variance falls while the typical outcome barely moves, which is the idea the chart below sums up.';
   }
 
   // ---- cycling -----------------------------------------------------------

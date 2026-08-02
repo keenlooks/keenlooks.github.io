@@ -74,7 +74,7 @@ description: "An interactive evolution sandbox by Keane Lucas: a population of s
         <button id="cre-edit" class="cre-btn" type="button" hidden>Edit body</button>
       </div>
 
-      <p class="cre-status-line"><span id="cre-status" role="status" aria-live="polite"></span></p>
+      <p class="cre-status-line"><span id="cre-status"></span></p>
     </div>
   </div>
 </div>
@@ -163,6 +163,15 @@ html[data-theme="light"] .cre-btn--go { border-color: #34568a; }
 }
 .cre-buildmsg { font-size: 0.88em; opacity: 0.82; font-variant-numeric: tabular-nums; }
 .cre-buildlegend { margin: 0; font-size: 0.78em; opacity: 0.6; }
+/* A short window (a landscape phone, a half-height desktop window) leaves the
+   bar a narrow lane between the corner buttons and the chat bar, where the
+   color key wraps to two more rows. Those rows push the ground line, and with
+   it the whole creature, into the top third of the screen. Drop the key there:
+   the buttons and the live readout stay, and the first-run hint still explains
+   the gestures. (The fitness chart already bows out at a similar height.) */
+@media (max-height: 560px) {
+  .cre-buildlegend { display: none; }
+}
 /* At <=768px the corner buttons rise to bottom 4rem and own the bottom-left
    ~130 x 112 px band, so the bar hugs the right instead and may wrap. */
 @media (max-width: 768px) {
@@ -172,9 +181,12 @@ html[data-theme="light"] .cre-btn--go { border-color: #34568a; }
   }
 }
 
+/* The panel stops well short of the viewport bottom: the chat widget owns a
+   ~400x48 bar in the bottom-right on desktop, and the corner buttons rise to
+   bottom 4rem on a phone. (100vh first as the fallback for 100dvh.) */
 .cre-panel {
   position: fixed; top: 4.6rem; right: 1rem; z-index: 30;
-  width: 280px; max-width: calc(100vw - 2rem); max-height: calc(100vh - 6rem); max-height: calc(100dvh - 6rem);
+  width: 280px; max-width: calc(100vw - 2rem); max-height: calc(100vh - 10rem); max-height: calc(100dvh - 10rem);
   overflow: auto; padding: 0.85rem 1rem 1rem;
   border: 1px solid rgba(255,255,255,0.12); border-radius: 10px;
   background: rgba(18,18,18,0.94);
@@ -243,11 +255,29 @@ html[data-theme="light"] .cre-slider input[type="range"] { accent-color: #34568a
   html:not([data-theme="dark"]) .cre-slider input[type="range"] { accent-color: #34568a; }
 }
 
-/* Small screens: the blurb is ten lines on a phone, which pushed every control
-   below the fold. The panel body is a flex column, so send the explanation to
-   the end and lead with the things you touch. */
+/* The blurb runs to ten lines, which pushed every control below the fold at
+   every size, not just on a phone. The panel body is a flex column, so send
+   the explanation to the end everywhere and lead with the things you touch. */
+.cre-blurb { order: 1; }
 @media (max-width: 768px) {
-  .cre-blurb { order: 1; }
+  /* 12.5rem, not 12: the panel starts 4.6rem down, so the clearance left under
+     it is the difference, and the corner buttons here reach 4rem + their own
+     height up from the bottom. */
+  .cre-panel { max-height: calc(100vh - 12.5rem); max-height: calc(100dvh - 12.5rem); }
+}
+/* Short windows (a landscape phone, a half-height desktop window) leave the
+   panel about 320px of height, and the control stack alone is twice that. Lay
+   the controls out in two columns there; the explanation still comes last. */
+@media (max-height: 780px) and (min-width: 700px) {
+  /* 380px keeps the panel's left edge clear of the creature, which build mode
+     anchors at mid-screen */
+  .cre-panel { width: 380px; }
+  .cre-panel__body {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 0.5rem 0.7rem; align-content: start; margin-top: 0.5rem;
+  }
+  .cre-row, .cre-status-line, .cre-blurb { grid-column: 1 / -1; }
+  .cre-slider input[type="range"] { height: 20px; }
 }
 /* touch targets */
 @media (pointer: coarse) {

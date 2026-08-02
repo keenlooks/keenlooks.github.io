@@ -28,6 +28,7 @@
   var btnPause = id('fx-pause'), btnClear = id('fx-clear');
   var elPanel = id('fx-panel'), elCollapse = id('fx-collapse');
   var elReadout = id('fx-readout'), elHint = id('fx-hint');
+  if (window.GadgetUI) GadgetUI.liveStatus(elReadout);
 
   var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -145,6 +146,7 @@
       }
       phase = TRAIL_LOOPS;
     }
+    updateReadout();
     needsDraw = true;
     return true;
   }
@@ -180,6 +182,18 @@
     })()
   };
 
+  /* The controls panel covers the top-right, so presets are sized AND centered
+     in the width that is actually free. Below 600px the panel starts collapsed
+     and the whole canvas is usable. */
+  function panelReserve() {
+    if (!elPanel || W < 600) return 0;
+    if (elPanel.classList.contains('fx-panel--collapsed')) return 0;
+    var pw = elPanel.offsetWidth;
+    if (!pw) return 0;
+    return Math.min(W * 0.42, pw + 44);
+  }
+  function usableW() { return Math.max(160, W - panelReserve()); }
+
   function loadPreset(name) {
     var raw = SHAPES[name];
     if (!raw) return;
@@ -191,12 +205,13 @@
       if (raw[i][1] < minY) minY = raw[i][1];
       if (raw[i][1] > maxY) maxY = raw[i][1];
     }
+    var uw = usableW();
     var sw = Math.max(1e-6, maxX - minX), sh = Math.max(1e-6, maxY - minY);
-    var scale = Math.min(0.6 * W / sw, 0.6 * H / sh);
+    var scale = Math.min(0.6 * uw / sw, 0.6 * H / sh);
     var cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
     var pts = [];
     for (i = 0; i < raw.length; i++) {
-      pts.push({ x: W / 2 + (raw[i][0] - cx) * scale, y: H * 0.54 + (raw[i][1] - cy) * scale });
+      pts.push({ x: uw / 2 + (raw[i][0] - cx) * scale, y: H * 0.54 + (raw[i][1] - cy) * scale });
     }
     hideHint();
     setPath(pts, true);
@@ -338,6 +353,7 @@
     } else if (!coeffs) {
       showHint();
     }
+    updateReadout();
     needsDraw = true;
   }
   canvas.addEventListener('pointerup', endStroke);
@@ -346,7 +362,10 @@
   /* ---- controls ---- */
   function updateReadout() {
     if (elTermsV) elTermsV.textContent = String(terms);
-    if (elReadout) elReadout.textContent = terms + ' circles approximate your drawing';
+    if (!elReadout) return;
+    elReadout.textContent = coeffs
+      ? terms + ' circles approximate your drawing'
+      : 'draw a shape, or pick a preset, to build the circles';
   }
   if (elTerms) elTerms.addEventListener('input', function () {
     terms = Math.max(1, Math.round(+elTerms.value) || 1);
@@ -368,6 +387,7 @@
     ghostPts = null; coeffs = null; trail.length = 0;
     stroke = null; activePtr = null; backup = null; phase = 0;
     if (elPreset) elPreset.value = '';
+    updateReadout();                 /* nothing is drawn any more, so stop claiming it is */
     showHint(); needsDraw = true;
   });
   if (elPreset) elPreset.addEventListener('change', function () {

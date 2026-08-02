@@ -93,7 +93,9 @@ html[data-theme="light"] .fx-topfade {
 
 .fx-panel {
   position: fixed; top: 4.6rem; right: 1rem; z-index: 30;
-  width: 280px; max-width: calc(100vw - 2rem); max-height: calc(100vh - 6rem); max-height: calc(100dvh - 6rem);
+  width: 280px; max-width: calc(100vw - 2rem);
+  /* leave room at the bottom for the chat bar and the fixed corner buttons */
+  max-height: calc(100vh - 10rem); max-height: calc(100dvh - 10rem);
   overflow: auto; padding: 0.85rem 1rem 1rem;
   border: 1px solid rgba(255,255,255,0.12); border-radius: 10px;
   background: rgba(18,18,18,0.94);
@@ -144,7 +146,13 @@ html[data-theme="light"] .fx-slider input[type="range"] { accent-color: #34568a;
 @media (prefers-color-scheme: light) {
   html:not([data-theme="dark"]) .fx-slider input[type="range"] { accent-color: #34568a; }
 }
+
+/* phones: the corner buttons sit higher (bottom: 4rem), so the panel stops higher too */
+@media (max-width: 768px) {
+  .fx-panel { max-height: calc(100vh - 12.5rem); max-height: calc(100dvh - 12.5rem); }
+}
 </style>
 
+<script defer src="{{ '/assets/js/gadget-ui.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/fourier.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/editable-values.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>

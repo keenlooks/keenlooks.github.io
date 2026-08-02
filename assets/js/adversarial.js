@@ -505,31 +505,106 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
-  /* panel geometry — center the row in the space LEFT of the controls panel */
+  /* panel geometry — center the row in the space LEFT of the controls panel.
+     The panel is expanded from 600px up (GadgetUI collapses it below that), so
+     the reserve has to start there too, or the "= fooled" panel hides under it.
+     Below 600 the panel is a collapsed header and the row gets the full width.
+     The minimum panel size also gives way on a narrow stage, so three panels
+     plus their gaps always fit in the space that is actually free. */
   function layout() {
     var avail = W;
-    if (W > 860 && elPanel && !elPanel.classList.contains('adv-panel--collapsed')) {
-      avail = W - elPanel.offsetWidth - 56;
+    if (W >= 600 && elPanel && !elPanel.classList.contains('adv-panel--collapsed')) {
+      avail = Math.max(220, W - elPanel.offsetWidth - 44);
     }
-    var S = Math.min(H * 0.30, (avail - 130) / 3);
-    S = Math.max(78, S);
+    var floor = Math.max(44, Math.min(78, (avail - 90) / 3));
+    var S = Math.max(floor, Math.min(H * 0.30, (avail - 130) / 3));
     var gap = Math.max(28, S * 0.2);
     var total = S * 3 + gap * 2;
     var x0 = Math.max(12, (avail - total) / 2), y0 = Math.max(82, H * 0.32 - S / 2);
-    return { S: S, gap: gap, cx: x0 + total / 2, x: [x0, x0 + S + gap, x0 + (S + gap) * 2], y: y0 };
+    return { S: S, gap: gap, avail: avail, cx: x0 + total / 2, x: [x0, x0 + S + gap, x0 + (S + gap) * 2], y: y0 };
   }
 
-  function drawPanel(data, mode, x, y, S, caption, captionColor) {
+  /* Legend wordings, longest first: the widest one that fits the free space
+     wins, and if even the shortest clips we break it over two lines. The
+     adversarial bar is drawn red once the attack flips the label, so the
+     wording says grey AND red rather than grey alone. */
+  var LEGEND_FORMS = [
+    'confidence: original (blue) vs adversarial (grey, red once fooled). Click a bar to aim the attack at that digit.',
+    'original (blue) vs adversarial (grey, red once fooled). Click a bar to aim the attack.',
+    'original (blue) vs adversarial (grey, red once fooled). Click a bar to aim.',
+    'original (blue), adversarial (grey, red once fooled)'
+  ];
+  var LEGEND_WRAP = ['original (blue), adversarial', '(grey, red once fooled)'];
+  function fitLegend(maxW) {
+    for (var i = 0; i < LEGEND_FORMS.length; i++) {
+      if (ctx.measureText(LEGEND_FORMS[i]).width <= maxW) return [LEGEND_FORMS[i]];
+    }
+    return LEGEND_WRAP;
+  }
+  /* same idea for the diagram caption (the last form is short enough for a phone) */
+  var NET_FORMS = [
+    'inside the network: blue = connections (width = weight), gold = neuron activity',
+    'inside the network: blue = connections, gold = neuron activity',
+    'blue = connections, gold = neuron activity'
+  ];
+  function fitOne(forms, maxW) {
+    for (var i = 0; i < forms.length; i++) {
+      if (ctx.measureText(forms[i]).width <= maxW) return forms[i];
+    }
+    return forms[forms.length - 1];
+  }
+  /* how wide a centred caption may be before it clips on either side */
+  function captionMax(L) {
+    return Math.max(120, Math.min(2 * (L.cx - 12), 2 * (L.avail - 12 - L.cx)));
+  }
+  /* room for the caption under panel i: it must clear its neighbours' captions
+     and stay inside the free stage on both sides */
+  function panelCapMax(L, i) {
+    var c = L.x[i] + L.S / 2;
+    return Math.max(46, Math.min(L.S + L.gap - 8, 2 * (c - 4), 2 * (L.avail - 4 - c)));
+  }
+  /* Fixed page chrome sits over the canvas: the chat widget's bar lands
+     bottom-right a second after load, and the theme / back buttons sit
+     bottom-left (higher up on phones). Keep the diagram and the labels that
+     hang below it above whichever is highest. */
+  var CHROME_IDS = ['chat-widget', 'theme-toggle', 'life-link'];
+  function bottomLimit() {
+    var lim = H - 26;
+    /* looked up every frame on purpose: the chat bar is injected a second or
+       two after load, so a cached list would miss it */
+    for (var k = 0; k < CHROME_IDS.length; k++) {
+      var el = document.getElementById(CHROME_IDS[k]);
+      if (!el) continue;
+      var r = el.getBoundingClientRect();
+      /* the layer captions sit ~18px below netBottom, so back off a little more */
+      if (r.height && r.top - 28 < lim) lim = Math.max(H * 0.5, r.top - 28);
+    }
+    return lim;
+  }
+
+  /* caption is an array of wordings, longest first; the widest one that fits
+     maxW wins, and if even the shortest is too wide the font shrinks to a
+     floor. Without this the three captions ran into each other (and off the
+     left edge) once the controls panel took its column on a narrow stage. */
+  function drawPanel(data, mode, x, y, S, caption, captionColor, maxW) {
     blit(data, mode);
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(off, x, y, S, S);
     ctx.imageSmoothingEnabled = true;
     ctx.strokeStyle = 'rgba(127,127,127,0.45)'; ctx.lineWidth = 1;
     ctx.strokeRect(x - 0.5, y - 0.5, S + 1, S + 1);
-    ctx.font = Math.max(12, S * 0.1) + 'px "Source Sans 3", system-ui, sans-serif';
+    var forms = (typeof caption === 'string') ? [caption] : caption;
+    var fs = Math.max(12, S * 0.1), lim = maxW || 1e9, f;
+    function setF() { ctx.font = fs + 'px "Source Sans 3", system-ui, sans-serif'; }
+    setF();
+    var txt = forms[forms.length - 1];
+    for (f = 0; f < forms.length; f++) {
+      if (ctx.measureText(forms[f]).width <= lim) { txt = forms[f]; break; }
+    }
+    while (fs > 9 && ctx.measureText(txt).width > lim) { fs -= 1; setF(); }
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     ctx.fillStyle = captionColor || textColor(0.85);
-    ctx.fillText(caption, x + S / 2, y + S + 9);
+    ctx.fillText(txt, x + S / 2, y + S + 9);
   }
 
   // A live node-link diagram of the forward pass on the attacked image:
@@ -608,7 +683,7 @@
     ctx.fillText('output', xOut, bot + 4);
     ctx.textBaseline = 'bottom';
     ctx.fillStyle = textColor(0.6);
-    ctx.fillText('inside the network: blue = connections (width = weight), gold = neuron activity', L.cx, top - 8);
+    ctx.fillText(fitOne(NET_FORMS, captionMax(L)), L.cx, top - 8);
   }
 
   function draw() {
@@ -622,16 +697,19 @@
     var ci = argmax(cleanP), ai = argmax(advP);
     var fooled = ai !== ci;
 
-    drawPanel(img, 'img', L.x[0], y, S, 'model sees ' + ci + ' · ' + (cleanP[ci] * 100).toFixed(1) + '%');
-    var noiseCap = 'ε · sign(∇ₓ loss)';
+    var cleanPct = (cleanP[ci] * 100).toFixed(1) + '%', advPct = (advP[ai] * 100).toFixed(1) + '%';
+    drawPanel(img, 'img', L.x[0], y, S,
+      ['model sees ' + ci + ' · ' + cleanPct, 'sees ' + ci + ' · ' + cleanPct, ci + ' · ' + cleanPct],
+      null, panelCapMax(L, 0));
+    var noiseCap = ['ε · sign(∇ₓ loss)', 'ε · sign(∇)'];
     if (useMethod() === 'pgd' && eps > 0) {
-      noiseCap = pgdProgress ? ('PGD · ' + pgdProgress)
-        : ('PGD noise · ' + pgdSteps + (pgdSteps === 1 ? ' step' : ' steps'));
+      noiseCap = pgdProgress ? ['PGD · ' + pgdProgress]
+        : ['PGD noise · ' + pgdSteps + (pgdSteps === 1 ? ' step' : ' steps'), 'PGD · ' + pgdSteps];
     }
-    drawPanel(gsign, 'sign', L.x[1], y, S, noiseCap, textColor(0.6));
+    drawPanel(gsign, 'sign', L.x[1], y, S, noiseCap, textColor(0.6), panelCapMax(L, 1));
     drawPanel(adv, 'img', L.x[2], y, S,
-      'model sees ' + ai + ' · ' + (advP[ai] * 100).toFixed(1) + '%',
-      fooled ? badColor() : textColor(0.85));
+      ['model sees ' + ai + ' · ' + advPct, 'sees ' + ai + ' · ' + advPct, ai + ' · ' + advPct],
+      fooled ? badColor() : textColor(0.85), panelCapMax(L, 2));
 
     ctx.font = '300 ' + S * 0.32 + 'px "Source Sans 3", system-ui, sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -661,13 +739,16 @@
       ctx.fillText(d2, gx + gw / 2, by + 5);
       barHit.push({ d: d2, x: gx - bgap / 2, y: by - bh - 6, w: gw + bgap, h: bh + labelFs + 12 });
     }
+    /* legend, fitted to the room it actually has (measured at the label font) */
     ctx.fillStyle = textColor(0.5);
     ctx.textAlign = 'center';
-    var legend = 'confidence — original (blue) vs adversarial (grey). Click a bar to aim the attack at that digit.';
-    ctx.fillText(legend, L.cx, by + 5 + labelFs + 5);
+    var legendLines = fitLegend(captionMax(L)), legendY = by + 5 + labelFs + 5, lgStep = labelFs + 3;
+    for (var lg = 0; lg < legendLines.length; lg++) {
+      ctx.fillText(legendLines[lg], L.cx, legendY + lg * lgStep);
+    }
 
     /* live node-link view of the forward pass on the attacked image */
-    var netTop = by + labelFs + 50, netBottom = H - 26;
+    var netTop = by + labelFs + 50 + (legendLines.length - 1) * lgStep, netBottom = bottomLimit();
     if (netBottom - netTop > 70) drawNetwork(L, netTop, netBottom, advH, advP, ai, fooled);
 
     if (status) {

@@ -14,9 +14,23 @@
     @include prefix(0.5 of 12);
   }
 
+  /* Archive-layout pages (/cv/, /publications/, /talks/, /portfolio/, the
+     sitemap) put their content straight inside .archive, so they never get the
+     `.page__content a` rules. This restates them here: no underline at rest,
+     underline on hover.
+
+     Do NOT add `color: inherit` back here. This block used to set it, and at
+     (0,1,1) it beat the base `a { color: $link-color }` (0,0,1), so every
+     content link on those pages rendered as plain body grey in DARK mode. The
+     light theme never showed the bug because `html[data-theme="light"] a`
+     scores (0,1,2) and won. Leaving color alone here lets both themes take
+     their own accent, so dark now matches what light always did. */
   a {
-    color: inherit;
     text-decoration: none;
+
+    &:hover {
+      text-decoration: underline;
+    }
   }
 }
 

@@ -285,7 +285,7 @@
     w.className = 'df-colwrap';
     var head = document.createElement('div');
     head.className = 'df-colhead';
-    head.textContent = fname ? label + ' — ' + fname : label;
+    head.textContent = fname ? label + ': ' + fname : label;
     w.appendChild(head);
     w.appendChild(colEl);
     return w;

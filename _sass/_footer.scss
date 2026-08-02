@@ -27,10 +27,13 @@
       max-width: $x-large;
     }
 
-    /* The chat widget becomes a full-width fixed bar at the bottom on
-       mobile; leave room so it doesn't cover the last footer line. */
+    /* On mobile the chat widget becomes a full-width fixed bar (~48px) and the
+       #theme-toggle / #life-link buttons are lifted to bottom: 4rem, so the
+       fixed chrome reaches ~106px up from the viewport bottom. 5em (80px) left
+       the copyright line sitting under the theme toggle at full scroll; 7.5em
+       clears the buttons with room to spare. */
     @media (max-width: 768px) {
-      padding-bottom: 5em;
+      padding-bottom: 7.5em;
     }
   }
 
@@ -126,6 +129,26 @@
   height: 17px;
   color: inherit;
   opacity: 0.3;
+}
+
+/* On wide screens the three columns only add up to ~765px of a ~1244px
+   container, so they packed against the left edge and left a large empty
+   gutter on the right. Above ~900px, give them proportional tracks instead so
+   the footer spans the same width as the masthead and the page container.
+   Narrower than that the columns already fill the row, so leave them be.
+   (This block sits after the .site-footer__colophon rules on purpose: a media
+   query adds no specificity, so it has to come later in the cascade to win.) */
+@media (min-width: 900px) {
+  .site-footer__col {
+    flex: 1 1 0;
+  }
+
+  .site-footer__colophon {
+    flex: 1.9 1 0;
+    /* looser than the 34em reading cap above, but still bounded so the line
+       length stays sane on very wide monitors */
+    max-width: 40em;
+  }
 }
 
 @media (max-width: 600px) {

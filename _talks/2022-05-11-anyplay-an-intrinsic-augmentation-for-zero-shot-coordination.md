@@ -22,5 +22,5 @@ Please check out the [paper](/files/anyplay.pdf), [code](https://github.com/mit-
 
 <video controls preload="metadata" width="560" style="max-width: 100%; height: auto;">
   <source src="/files/anyplay_video.m4v" type="video/mp4">
-  Your browser can't play this embedded video — <a href="/files/anyplay_video.m4v">download it here</a> instead.
+  Your browser can't play this embedded video, so <a href="/files/anyplay_video.m4v">download it here</a> instead.
 </video>

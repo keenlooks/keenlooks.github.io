@@ -140,32 +140,57 @@
   }
 
   /* ---- draw on the grid (mouse + touch via pointer events) ---- */
-  var painting = false, paintVal = 1;
-  function cellAt(clientX, clientY) {
+  var painting = false, paintVal = 1, lastX = -1, lastY = -1;
+
+  /* Cell under the pointer, clamped just outside the world so a stroke that
+     leaves the grid still has a finite endpoint to interpolate towards. */
+  function cellCoords(clientX, clientY) {
     var rect = canvas.getBoundingClientRect();
     var x = Math.floor((clientX - rect.left) / CELL);
     var y = Math.floor((clientY - rect.top) / CELL);
-    if (x < 0 || y < 0 || x >= worldCols || y >= worldRows) return -1;
-    return y * worldCols + x;
+    return {
+      x: Math.max(-1, Math.min(worldCols, x)),
+      y: Math.max(-1, Math.min(worldRows, y))
+    };
+  }
+  function setCell(x, y) {
+    if (x < 0 || y < 0 || x >= worldCols || y >= worldRows) return;
+    grid[y * worldCols + x] = paintVal;
+  }
+  /* Bresenham from the last painted cell to this one: pointermove only samples
+     every few frames, so a fast drag would otherwise leave a dotted trail. */
+  function paintLine(x0, y0, x1, y1) {
+    var dx = Math.abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
+    var dy = -Math.abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
+    var err = dx + dy, e2;
+    for (;;) {
+      setCell(x0, y0);
+      if (x0 === x1 && y0 === y1) break;
+      e2 = 2 * err;
+      if (e2 >= dy) { err += dy; x0 += sx; }
+      if (e2 <= dx) { err += dx; y0 += sy; }
+    }
   }
   canvas.addEventListener('pointerdown', function (e) {
-    var idx = cellAt(e.clientX, e.clientY);
-    if (idx < 0) return;
+    var c = cellCoords(e.clientX, e.clientY);
+    if (c.x < 0 || c.y < 0 || c.x >= worldCols || c.y >= worldRows) return;
     painting = true;
-    paintVal = grid[idx] ? 0 : 1;
-    grid[idx] = paintVal;
+    paintVal = grid[c.y * worldCols + c.x] ? 0 : 1;  /* erase where you started, else draw */
+    lastX = c.x; lastY = c.y;
+    setCell(c.x, c.y);
     draw();
     try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
     e.preventDefault();
   });
   canvas.addEventListener('pointermove', function (e) {
     if (!painting) return;
-    var idx = cellAt(e.clientX, e.clientY);
-    if (idx < 0) return;
-    grid[idx] = paintVal;
+    var c = cellCoords(e.clientX, e.clientY);
+    if (lastX < -1) { lastX = c.x; lastY = c.y; }
+    paintLine(lastX, lastY, c.x, c.y);
+    lastX = c.x; lastY = c.y;
     draw();
   });
-  function endPaint() { painting = false; }
+  function endPaint() { painting = false; lastX = -2; lastY = -2; }
   canvas.addEventListener('pointerup', endPaint);
   canvas.addEventListener('pointercancel', endPaint);
 
@@ -330,7 +355,7 @@
         var url = location.origin + location.pathname + hash;
         try { history.replaceState(null, '', hash); } catch (e) {}
         var done = function () { shareBtn.textContent = 'Link copied!'; };
-        var fail = function () { shareBtn.textContent = 'URL updated — copy it'; };
+        var fail = function () { shareBtn.textContent = 'URL updated, copy it'; };
         if (navigator.clipboard && navigator.clipboard.writeText) {
           navigator.clipboard.writeText(url).then(done, fail);
         } else { fail(); }

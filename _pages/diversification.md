@@ -4,14 +4,14 @@ title: "Diversification, low fees, and time equals free money"
 permalink: /diversification/
 author_profile: false
 excerpt: "An interactive look at how holding many investments narrows the range of outcomes, cutting the worst cases while keeping most of the upside, and how fees skim off the top."
-description: "Interactive diversification explainer by Keane Lucas using real 1995–2024 industry returns (Ken French Data Library): as you hold more industries, the spread of 10-year outcomes funnels inward — the worst cases disappear while the median holds — and a red line shows how much annual fees skim off."
+description: "Interactive diversification explainer by Keane Lucas using real 1995–2024 industry returns (Ken French Data Library): as you hold more industries, the spread of 10-year outcomes funnels inward, and a red line shows how much annual fees skim off."
 ---
 
 <p class="div-intro">
-Put all your money in one industry and 30 years later you might have <strong>50&times;</strong> &mdash; or
+Put all your money in one industry and 30 years later you might have <strong>50&times;</strong>, or
 barely your money back. Spread it across <em>many</em> industries and the wild swings temper significantly. The chart below plays this out on real returns: it grows <strong>$10,000</strong> from
 1995&ndash;2024. The faint grey band is the full range <em>any single industry</em> landed in. Drag the
-slider to <strong>invest in more industries</strong>, and watch the bold line &mdash; your portfolio. The plot
+slider to <strong>invest in more industries</strong>, and watch the bold line: your portfolio. The plot
 keeps <strong>reshuffling which industries you hold</strong> every half-second, so you can feel
 how much the outcome rides on luck when you hold a few, and how little when you hold many.
 </p>
@@ -29,7 +29,7 @@ how much the outcome rides on luck when you hold a few, and how little when you 
 </div>
 
 <p class="div-intro">
-That shrinking cloud in the plot above is the the thing to look at, but can be hard to track with all the shuffling. The chart below
+That shrinking cloud in the plot above is the thing to look at, but can be hard to track with all the shuffling. The chart below
 holds it still and charts it over different numbers of industries held. It shows the range of <strong>10-year</strong>
 outcomes depending on how many industries are held (each size simulated over hundreds of random 10-year windows and industry picks). Notice how fast the bad outcomes become rare as you diversify over just a few industries, while the median (the middle line) barely budges. The red dashed line shows how significantly low-seeming (e.g., 1%) fees reduce the median outcome, which compounds over time and is the main reason why insisting on holding low-fee (e.g., 0.1%) index funds is important.
 </p>
@@ -63,8 +63,8 @@ outcomes depending on how many industries are held (each size simulated over hun
 </div>
 
 <p class="div-foot">
- <strong>Diversification</strong>: the spread shrinks fast at first &mdash;
-  even a handful of industries removes most of the gut-wrenching downside &mdash; while the median
+ <strong>Diversification</strong>: the spread shrinks fast at first
+  (even a handful of industries removes most of the gut-wrenching downside) while the median
   barely moves, so you give up little expected return for a lot less risk. <strong>Fees</strong>: the
   red line sits below the median no matter how well you diversify, and the gap compounds over time.
   That gap is the core reason low-fee index funds are hard to beat after costs.
@@ -107,6 +107,8 @@ outcomes depending on how many industries are held (each size simulated over hun
 .div-note { font-size: 0.98rem; line-height: 1.55; margin: 0 0 1.25rem; min-height: 1.4em; }
 
 .div-controls { display: flex; flex-direction: column; gap: 0.9rem; }
+/* button row is the last thing in the panel; keeps the following paragraph off it */
+.div-controls .div-buttons { margin-bottom: 1.5rem; }
 .div-slider { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.95rem; max-width: 420px; }
 .div-slider strong { font-variant-numeric: tabular-nums; }
 .div-slider input[type="range"] { width: 100%; accent-color: #82a6cc; }

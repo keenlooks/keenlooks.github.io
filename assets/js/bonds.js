@@ -155,6 +155,14 @@
   }
 
   // ---- coupon-bond view (one value line, freeform payouts) --------------
+  // longest first; drawCoupon picks the longest one that fits the plot width
+  var HINTS = [
+    'click a year to add a payout · click one to edit · drag to move it',
+    'click to add a payout · click one to edit · drag to move',
+    'click to add a payout, drag to move it',
+    'click to add a payout',
+    'click to add'
+  ];
   function drawCoupon(c) {
     var ps = s.payouts.slice().sort(function (a, b) { return a.t - b.t; });
     var pts = [], prev = 0, maxV = 0, i, k;
@@ -185,14 +193,57 @@
       ctx.strokeStyle = c.accent; ctx.lineWidth = 2.5; ctx.lineJoin = 'round'; ctx.stroke();
     }
 
-    // marker + amount label per payout (s.payouts order, for stable click indices)
+    // A marker for every payout (s.payouts order keeps click indices stable).
     for (i = 0; i < s.payouts.length; i++) {
       var p = s.payouts[i], vb = bondValueAt(p.t - 1e-4, displayRate);
       ctx.beginPath(); ctx.arc(xPx(p.t), yPx(vb), 4, 0, Math.PI * 2); ctx.fillStyle = c.accent; ctx.fill();
-      ctx.fillStyle = c.text; ctx.font = '11px "Source Sans 3", system-ui, sans-serif';
-      ctx.textAlign = (p.t >= s.years - 0.01) ? 'right' : 'center'; ctx.textBaseline = 'bottom';
-      ctx.fillText('↓ ' + fmtUSD(p.amt), xPx(p.t) + (p.t >= s.years - 0.01 ? 6 : 0), yPx(vb) - 8);
     }
+    // Amount labels, de-cluttered by measureText. On a phone a standard 10-year
+    // bond put eleven "↓ $50" labels across ~250px of plot and they ran into one
+    // illegible smear, with the last coupon sitting on the "$1,050" maturity
+    // label. Rules: the maturity label always draws, a coupon label draws only if
+    // it clears both the previous drawn label and the maturity one, and whatever
+    // is dropped is reported once as a summary. Every payout stays click-to-edit.
+    ctx.font = '11px "Source Sans 3", system-ui, sans-serif';
+    var lab = [];
+    for (i = 0; i < s.payouts.length; i++) {
+      var pl = s.payouts[i];
+      var txt = '↓ ' + fmtUSD(pl.amt), tw = ctx.measureText(txt).width;
+      var atEnd = pl.t >= s.years - 0.01;                       // maturity label hangs left of the axis
+      var lx = atEnd ? (xPx(pl.t) + 6 - tw) : (xPx(pl.t) - tw / 2);
+      lab.push({ t: pl.t, amt: pl.amt, txt: txt, x: lx, r: lx + tw,
+                 y: yPx(bondValueAt(pl.t - 1e-4, displayRate)) - 8 });
+    }
+    var mat = null;                                             // latest payout = maturity
+    for (k = 0; k < lab.length; k++) if (!mat || lab[k].t >= mat.t) mat = lab[k];
+    // Biggest payouts claim the space first, so a payout the visitor just added
+    // never loses its label to a routine coupon; equal amounts fall back to time
+    // order, which spreads the coupon labels evenly across a standard bond.
+    lab.sort(function (a, b) { return (b.amt - a.amt) || (a.t - b.t); });
+    var GAP = 5, placed = mat ? [mat] : [], hid = 0, hidAmt = null, hidSame = true, q, ok;
+    ctx.fillStyle = c.text; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+    for (k = 0; k < lab.length; k++) {
+      var L = lab[k];
+      if (L !== mat) {
+        ok = L.x >= M.l - 6;                                    // stay inside the plot
+        for (q = 0; ok && q < placed.length; q++) ok = (L.r + GAP <= placed[q].x) || (L.x >= placed[q].r + GAP);
+        if (!ok) {
+          hid++;
+          if (hidAmt == null) hidAmt = L.amt;
+          else if (Math.abs(hidAmt - L.amt) > 0.5) hidSame = false;
+          continue;
+        }
+        placed.push(L);
+      }
+      ctx.fillText(L.txt, L.x, L.y);
+    }
+    // one summary line for the dropped labels; drawn with the hint at the bottom
+    // left, the only corner of the plot with room for it (the top left is the
+    // price label and the first coupon labels sit right under it).
+    var summary = hid > 0
+      ? (hid + (hid === 1 ? ' more payout' : ' more payouts')
+           + (hidSame && hidAmt != null ? ' of ' + fmtUSD(hidAmt) : ''))
+      : '';
     // drag tooltip
     if (drag && drag.moved && s.payouts[drag.idx]) {
       var dp = s.payouts[drag.idx];
@@ -204,20 +255,25 @@
     ctx.fillStyle = c.text; ctx.font = '700 15px "Source Sans 3", system-ui, sans-serif';
     ctx.textAlign = 'left'; ctx.textBaseline = 'top';
     ctx.fillText('Price today: ' + (s.curve === 'linear' ? '~' : '') + fmtUSD(price), M.l + 8, M.t + 4);
+    // Hint, shortened progressively so it never runs past the plot's right edge
+    // (the full sentence overran it at phone widths).
     ctx.fillStyle = c.muted; ctx.font = '11px "Source Sans 3", system-ui, sans-serif';
     ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
-    ctx.fillText("click a year to add a payout · click one to edit · drag to move it", M.l + 8, H - M.b - 8);
+    var avail = (W - M.r) - (M.l + 8) - 4, hint = HINTS[HINTS.length - 1];
+    for (k = 0; k < HINTS.length; k++) { if (ctx.measureText(HINTS[k]).width <= avail) { hint = HINTS[k]; break; } }
+    ctx.fillText(hint, M.l + 8, H - M.b - 8);
+    if (summary) ctx.fillText(summary, M.l + 8, H - M.b - 24);
   }
 
   // ---- caption -----------------------------------------------------------
-  function curveNote() { return s.curve === 'exp' ? 'Compound interest — the real discount curve.' : 'Simplified: simple interest, so the price is approximate.'; }
+  function curveNote() { return s.curve === 'exp' ? 'Compound interest, the real discount curve.' : 'Simplified: simple interest, so the price is approximate.'; }
   function updateCaption() {
     if (!caption) return;
     var r = displayRate, approx = s.curve === 'linear', tilde = approx ? '~' : '';
     if (s.view === 'single') {
       caption.innerHTML = "You'll receive <strong>" + fmtUSD(SINGLE_FV) + "</strong> in <strong>" + s.years
         + "</strong> years. At an interest rate of <strong>" + (r * 100).toFixed(1) + "%</strong>, that future payout is worth <strong>"
-        + tilde + fmtUSD(singlePrice(r)) + "</strong> today &mdash; the bond's price. <span class=\"bond-note\">(" + curveNote() + ")</span>";
+        + tilde + fmtUSD(singlePrice(r)) + "</strong> today, the bond's price. <span class=\"bond-note\">(" + curveNote() + ")</span>";
     } else {
       var coupon = s.face * s.coupon, price = couponPrice(r);
       var lead = "A coupon bond paying a <strong>" + (s.coupon * 100).toFixed(1) + "%</strong> coupon (<strong>"
@@ -225,12 +281,12 @@
         + (r * 100).toFixed(1) + "%</strong>, ";
       if (approx) {
         caption.innerHTML = lead + "its price today is about <strong>~" + fmtUSD(price)
-          + "</strong>. <span class=\"bond-note\">(Simplified: simple interest &mdash; toggle &ldquo;more realistic&rdquo; for the exact price and whether it's at a discount or premium.)</span>";
+          + "</strong>. <span class=\"bond-note\">(Simplified: simple interest, toggle &ldquo;more realistic&rdquo; for the exact price and whether it's at a discount or premium.)</span>";
       } else {
         var tag = 'at par', diff = price - s.face;
         if (diff > s.face * 0.005) tag = 'at a premium (its coupon beats the market)';
         else if (diff < -s.face * 0.005) tag = 'at a discount (the market pays more elsewhere)';
-        caption.innerHTML = lead + "its price today is <strong>" + fmtUSD(price) + "</strong> &mdash; trading <strong>" + tag
+        caption.innerHTML = lead + "its price today is <strong>" + fmtUSD(price) + "</strong>, trading <strong>" + tag
           + "</strong>. <span class=\"bond-note\">(" + curveNote() + ")</span>";
       }
     }

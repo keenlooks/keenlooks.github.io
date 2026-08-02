@@ -3,13 +3,13 @@ layout: single
 title: "Where Your Loan Payments Actually Go"
 permalink: /loans/
 author_profile: false
-excerpt: "An interactive look at how loan payments split between interest and principal — and how paying extra (especially early) saves you money."
+excerpt: "An interactive look at how loan payments split between interest and principal, and how paying extra toward a loan (especially early) saves you real money over time."
 description: "Interactive loan amortization explainer by Keane Lucas: see how each payment splits between interest and principal, and how making extra payments (and starting them sooner) cuts total interest and pays a loan off faster."
 ---
 
 <p class="loan-intro">
 A loan is the mirror image of a <a href="{{ '/bonds/' | relative_url }}">bond</a>: instead of being <em>owed</em> a future payout, you <em>owe</em> one.
-You borrow a lump sum today and pay it back in fixed monthly chunks. If you pay more than the required payment, you can pay off the loan faster and save on interest. The below interactive can help see how that works, how much less interest you pay by making extra payments (earlier or later), and how the loan balance changes over time.
+You borrow a lump sum today and pay it back in fixed monthly chunks. If you pay more than the required payment, you can pay off the loan faster and save on interest. The interactive below can help you see how that works, how much less interest you pay by making extra payments (earlier or later), and how the loan balance changes over time.
 </p>
 
 <div class="loan-explainer tex2jax_ignore">
@@ -43,7 +43,7 @@ You borrow a lump sum today and pay it back in fixed monthly chunks. If you pay 
   <p class="loan-readout">
     Monthly payment: <strong id="loan-payment">$333/mo</strong>.
     Interest saved by paying extra: <strong id="loan-saved-interest" class="loan-good">$0</strong>
-    <span id="loan-saved-time">&mdash;</span>.
+    <span id="loan-saved-time">&ndash;</span>.
   </p>
   <p class="loan-timing" id="loan-timing"></p>
 
@@ -119,7 +119,9 @@ You borrow a lump sum today and pay it back in fixed monthly chunks. If you pay 
 .loan-slider { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.95rem; }
 .loan-slider strong { font-variant-numeric: tabular-nums; }
 .loan-slider input[type="range"] { width: 100%; accent-color: #82a6cc; }
-.loan-scenarios { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+/* the scenario row is the last thing in the panel; without this the following
+   paragraph sits flush against the buttons (every other block has ~1.5rem). */
+.loan-scenarios { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 1.5rem; }
 .loan-scenarios__label { font-size: 0.95rem; opacity: 0.85; }
 .loan-btn {
   font: inherit; color: inherit; cursor: pointer; line-height: 1;

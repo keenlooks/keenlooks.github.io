@@ -240,6 +240,7 @@
     var tabsBar = $('comp-tabs');
     var srcTa = $('comp-src'), srcView = $('comp-srcview'), edWrap = $('comp-edwrap');
     var errBox = $('comp-errors');
+    if (GU && GU.liveStatus) GU.liveStatus(errBox);
     var assembleBtn = $('comp-assemble'), exampleSel = $('comp-examples'), refBtn = $('comp-ref-btn');
     var dpWrap = $('comp-dpwrap'), dpCanvas = $('comp-datapath'), phaseEl = $('comp-phase');
     var narMain = $('comp-narrate-main'), narSr = $('comp-narrate-sr'), byteChipBtn = $('comp-bytechip');
@@ -247,6 +248,7 @@
     var resetBtn = $('comp-reset'), microBtn = $('comp-micro'), stepBtn = $('comp-step'), runBtn = $('comp-run');
     var speedSl = $('comp-speed'), speedVal = $('comp-speedval');
     var countEl = $('comp-count'), statusEl = $('comp-status');
+    if (GU && GU.liveStatus) GU.liveStatus(statusEl);
     var shareBtn = $('comp-share'), saveBtn = $('comp-save');
     var memWrap = $('comp-mem'), memCanvas = $('comp-memcanvas');
     var regionSel = $('comp-region'), memPage = $('comp-mempage'), memPageVal = $('comp-mempageval');
@@ -360,7 +362,45 @@
         if (b) setTab(b.getAttribute('data-tab'));
       });
     }
-    window.addEventListener('resize', function () { applyCols(); });
+    /* The first-run hint is bottom-anchored on a short landscape window (see
+       computer.md), where the bottom belongs to the chat widget on the right
+       and the corner buttons on the left. chat-widget.js appends its bar a
+       second or two AFTER page scripts run, so the first measurement sees
+       nothing: publish the floor as a CSS variable and refresh it when the
+       widget turns up. */
+    function fitHintBottom() {
+      var ids = ['chat-widget', 'theme-toggle', 'life-link'], floor = 0, i, el, r;
+      for (i = 0; i < ids.length; i++) {
+        el = document.getElementById(ids[i]);
+        if (!el) continue;
+        r = el.getBoundingClientRect();
+        if (r.width < 2 || r.height < 2) continue;
+        if (window.innerHeight - r.top > floor) floor = window.innerHeight - r.top;
+      }
+      document.documentElement.style.setProperty('--comp-hint-bottom',
+        Math.round(floor + 14) + 'px');
+    }
+    (function watchChat() {
+      fitHintBottom();
+      if (document.getElementById('chat-widget')) return;
+      var tries = 0, iv = setInterval(function () {
+        if (document.getElementById('chat-widget') || ++tries > 12) {
+          clearInterval(iv);
+          fitHintBottom();
+        }
+      }, 400);
+      try {
+        var mo = new MutationObserver(function () {
+          if (!document.getElementById('chat-widget')) return;
+          mo.disconnect();
+          clearInterval(iv);
+          fitHintBottom();
+        });
+        mo.observe(document.body, { childList: true });
+      } catch (e) {}
+    })();
+
+    window.addEventListener('resize', function () { applyCols(); fitHintBottom(); });
 
     /* ---------- canvases: sizing ---------- */
     var DPR = Math.min(window.devicePixelRatio || 1, 2);
@@ -380,12 +420,14 @@
     }
     function sizeCanvases() {
       var oneCol = app.getAttribute('data-cols') === '1';
-      /* datapath: fill its wrapper. On the single-column (phone) layout,
-         fitting the board into a ~344px pane would shrink the monospace chip
-         values below legibility, so the canvas keeps a legible minimum width
-         and the wrapper pans horizontally instead (CSS: overflow-x auto). */
+      /* datapath: fill its wrapper. The board used to claim a 560px minimum on
+         the single-column (phone) layout and pan inside a ~344px pane, which
+         cut BOTH edges: the chip titles and the whole row-label column landed
+         off-screen. It scales down to the pane instead, with a hard floor at
+         280px (below that layoutBoard's chip stack overlaps the bus channels,
+         because rowH bottoms out at 13px) where the wrapper still pans. */
       if (dpWrap && dpWrap.clientWidth > 0) {
-        var w = Math.max(dpWrap.clientWidth, oneCol ? 560 : 0);
+        var w = Math.max(dpWrap.clientWidth, oneCol ? 280 : 0);
         var h = Math.max(200, dpWrap.clientHeight);
         sizeOne(dpCanvas, w, h);
         ensureBoard(w, h);
@@ -1444,8 +1486,13 @@
       }
       g.globalAlpha = 1;
 
-      /* row insets + silkscreen row labels */
+      /* row insets + silkscreen row labels. On a phone-width board the Z/N/C
+         lamps reach the left edge of their row, so the FLAGS name is dropped
+         there rather than printed under them: the lamps carry their own
+         letters, so nothing is lost. */
       var LBL = { RAMBYTE: '', VIDB: '' };
+      var lampR = Math.min(6, L.rowH * 0.34);
+      if (L.rows.FLAGS && L.rows.FLAGS.w < 3 * (lampR * 2 + 7) + 42) LBL.FLAGS = '';
       for (name in L.rows) {
         var rw = L.rows[name];
         g.fillStyle = 'rgba(127,127,127,0.07)';

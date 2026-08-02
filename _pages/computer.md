@@ -27,7 +27,7 @@ description: "The Visible Computer by Keane Lucas: the KL-8 is an original 8-bit
         <textarea id="comp-src" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" wrap="off" aria-label="KL-8 assembly source"></textarea>
         <pre id="comp-srcview" class="comp-srcview" hidden tabindex="0" aria-label="Assembly source, read-only while the machine is loaded. Click it to edit and stop the run."></pre>
       </div>
-      <div id="comp-errors" class="comp-errors" role="status" aria-live="polite" hidden></div>
+      <div id="comp-errors" class="comp-errors" hidden></div>
       <p class="comp-blurb">Watch a small computer run: every byte that moves between the chips is drawn on the board, in plain words. When you are curious, open the code and change it. Press the <strong>?</strong> button for the instruction set and memory map.</p>
     </section>
 
@@ -67,7 +67,7 @@ description: "The Visible Computer by Keane Lucas: the KL-8 is an original 8-bit
         <label class="comp-slider"><span>Clock: <strong id="comp-speedval">2 kHz</strong></span>
           <input id="comp-speed" type="range" min="0" max="100" step="1" value="60" aria-label="Clock speed, 2 hertz to 200 kilohertz"></label>
         <p id="comp-count" class="comp-count">0 instructions</p>
-        <p id="comp-status" class="comp-status" role="status" aria-live="polite"></p>
+        <p id="comp-status" class="comp-status"></p>
         <div class="comp-row">
           <button id="comp-share" class="comp-btn" type="button">Share link</button>
           <button id="comp-save" class="comp-btn" type="button">Save image</button>
@@ -328,10 +328,13 @@ html[data-theme="light"] .comp-memedit { color: #1e2732; background: #ffffff; bo
 @media (max-width: 768px) { .comp-pane--code .comp-blurb:last-child { padding-bottom: 0; } }
 
 /* ---- instruction reference slide-over ---- */
+/* the bottom padding clears the chat widget, which parks a ~48px bar in the
+   bottom-right at z-index 1050 (over this panel); on a phone the widget is
+   hidden but the corner buttons rise to bottom 4rem inside this panel's width */
 .comp-ref {
   position: fixed; top: 0; right: 0; bottom: 0; z-index: 40;
   width: min(460px, 94vw); overflow-y: auto;
-  padding: 4.6rem 1.2rem 2.5rem;
+  padding: 4.6rem 1.2rem 5rem;
   background: rgba(18,20,24,0.985); border-left: 1px solid rgba(127,127,127,0.35);
   transform: translateX(103%); transition: transform 0.25s ease;
   font-size: 0.9rem;
@@ -358,6 +361,7 @@ html[data-theme="light"] .comp-ref { background: rgba(252,253,255,0.99); border-
 }
 .comp-ref-table code { font-size: 1em; white-space: nowrap; }
 .comp-ref-credit { margin-top: 1.4em; font-size: 0.85em; opacity: 0.75; }
+@media (max-width: 768px) { .comp-ref { padding-bottom: 7.5rem; } }
 
 /* ---- small screens: keep clear of the floating corner buttons ----
    #theme-toggle and #life-link float over the bottom-left (bottom: 4rem here,
@@ -368,10 +372,17 @@ html[data-theme="light"] .comp-ref { background: rgba(252,253,255,0.99); border-
   #comp-app[data-cols="1"] .comp-pane,
   #comp-app[data-cols="2"] .comp-pane--code { margin-bottom: 6.6rem; }
 }
-/* the datapath is 620x352 of design space; fitting that into a phone-width
-   pane shrinks its labels to ~6px, so on the single-column layout it keeps a
-   legible minimum width and its wrapper pans instead */
+/* the board scales down to the pane on the single-column layout, with a 280px
+   floor in computer.js; the wrapper only ever pans on a narrower phone than
+   that (see sizeCanvases) */
 #comp-app[data-cols="1"] .comp-dpwrap { overflow-x: auto; overflow-y: hidden; }
+/* the code listing fills its pane, so on a short window its last lines ran
+   under the fixed corner buttons (~47px tall at bottom 1rem, reaching to
+   x~130). Padding the pane ends the editor above that band. Below 769px the
+   pane already carries a 6.6rem bottom margin for the same reason. */
+@media (max-height: 540px) and (min-width: 769px) {
+  .comp-pane--code { padding-bottom: 4.2rem; }
+}
 @media (max-height: 540px) {
   .comp-edwrap { min-height: 72px; }
   /* small landscape: keep the board legible and let the machine pane
@@ -384,20 +395,27 @@ html[data-theme="light"] .comp-ref { background: rgba(252,253,255,0.99); border-
   .comp-narrate__row { min-height: 0; }
   .comp-narrate__main { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .comp-pane--code .comp-blurb { display: none; }
-  /* 38vh lands on the toolbar in landscape; drop the hint to the bottom */
-  .gadget-hint { top: auto; bottom: 0.5rem; }
+  /* 38vh lands on the toolbar in landscape, so the hint drops toward the
+     bottom, but not onto the chat bar or the corner buttons. computer.js
+     measures both and writes --comp-hint-bottom; the fallback is the tallest
+     of them plus a margin. */
+  .gadget-hint { top: auto; bottom: var(--comp-hint-bottom, 5.5rem); }
 }
-/* the shared first-run hint normally floats over a canvas; on this page it
-   lands on the code editor, so give it a readable band */
+/* The shared first-run hint floats over a canvas on the other gadget pages;
+   here it lands on the code listing and the board, so it keeps the shared
+   plate shape and only gains a little opacity and a blur to stay readable.
+   left/right + margin auto rather than the shared left:50% translate: an
+   absolutely positioned box anchored only at the midpoint can never be wider
+   than half the window, which turned it into a narrow column on a phone. */
 .gadget-hint {
-  padding: 0.7rem 1.2rem; background: rgba(18,18,18,0.9);
+  left: 1rem; right: 1rem; transform: none; margin: 0 auto;
+  max-width: 30rem;
+  padding: 0.7rem 1.2rem; background: rgba(18,18,18,0.92);
   -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
-  border-top: 1px solid rgba(127,127,127,0.25);
-  border-bottom: 1px solid rgba(127,127,127,0.25);
 }
-html[data-theme="light"] .gadget-hint { background: rgba(255,255,255,0.93); }
+html[data-theme="light"] .gadget-hint { background: rgba(255,255,255,0.94); }
 @media (prefers-color-scheme: light) {
-  html:not([data-theme="dark"]) .gadget-hint { background: rgba(255,255,255,0.93); }
+  html:not([data-theme="dark"]) .gadget-hint { background: rgba(255,255,255,0.94); }
 }
 /* touch targets, and a 16px editor font so iOS does not zoom the page when the
    textarea takes focus */

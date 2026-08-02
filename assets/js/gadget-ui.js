@@ -27,11 +27,20 @@
                        first pointerdown anywhere and sets the flag. Returns
                        { show } so a "?" button can bring it back. Honors
                        prefers-reduced-motion (appears/disappears with no
-                       fade).
+                       fade). If the viewport-centred plate would land on the
+                       control panel (see placeHint) it is re-centred in the
+                       free strip beside it.
 
    isTyping(e)       — true when a key event targets an input / textarea /
                        select / contenteditable, so gadget keyboard
                        shortcuts stay out of the way of typing.
+
+   liveStatus(el)    — mirrors el's textContent into a visually-hidden
+                       role="status" div appended to document.body, so a
+                       status line that lives inside a collapsible panel
+                       still reaches screen readers when the panel is
+                       display:none. Returns the mirror node (or null if el
+                       is falsy).
    ========================================================================== */
 (function () {
   if (window.GadgetUI) return;
@@ -40,10 +49,15 @@
     '.gadget-help{font:inherit;line-height:1;cursor:pointer;color:inherit;background:none;border:0;' +
       'padding:0 0.35em;margin-left:auto;opacity:0.55;transition:opacity 0.15s ease;}' +
     '.gadget-help:hover,.gadget-help:focus{opacity:1;}' +
-    '.gadget-hint{position:fixed;left:0;right:0;top:38vh;z-index:25;text-align:center;pointer-events:none;' +
-      'font:400 1.05rem/1.45 "Source Sans 3",system-ui,sans-serif;color:rgba(127,127,127,0.95);' +
-      'padding:0 1.2rem;opacity:0;transition:opacity 0.5s ease;}' +
+    '.gadget-hint{position:fixed;left:50%;top:38vh;transform:translateX(-50%);z-index:25;text-align:center;' +
+      'pointer-events:none;max-width:min(34rem, calc(100vw - 2rem));' +
+      'font:400 1.05rem/1.45 "Source Sans 3",system-ui,sans-serif;' +
+      'padding:0.5rem 0.9rem;border-radius:8px;border:1px solid rgba(127,127,127,0.25);' +
+      'background:rgba(18,18,18,0.85);color:#d6d6d6;' +
+      'opacity:0;transition:opacity 0.5s ease;}' +
     '.gadget-hint--show{opacity:1;}' +
+    'html[data-theme="light"] .gadget-hint{background:rgba(255,255,255,0.92);color:#3a3a3a;}' +
+    '@media (prefers-color-scheme: light){html:not([data-theme="dark"]) .gadget-hint{background:rgba(255,255,255,0.92);color:#3a3a3a;}}' +
     '@media (prefers-reduced-motion: reduce){.gadget-hint{transition:none;}}';
   var st = document.createElement('style');
   st.textContent = css;
@@ -58,18 +72,23 @@
     var panel = byId(opts.panel), btn = byId(opts.toggle);
     if (!panel || !btn) return null;
     var cls = opts.collapsedClass;
+    panelEl = panel;                                     /* for placeHint */
     function setCollapsed(c) {
       panel.classList.toggle(cls, c);
       btn.textContent = c ? '+' : '–';
       btn.setAttribute('aria-expanded', c ? 'false' : 'true');
       btn.setAttribute('aria-label', c ? 'Show controls' : 'Hide controls');
       if (opts.onToggle) opts.onToggle(c);
+      placeHints();                    /* the panel's width just changed */
     }
     btn.addEventListener('click', function () {
       setCollapsed(!panel.classList.contains(cls));
     });
     /* small screens start collapsed; this also normalizes the glyph + aria at init */
     setCollapsed(window.innerWidth < 600);
+    /* every page calls firstRunHint before initPanel, so this is where a hint
+       that is already on screen first learns where the panel is */
+    placeHints();
     var help = byId(opts.help);
     if (help && opts.hint) help.addEventListener('click', function () { opts.hint.show(); });
     return {
@@ -112,6 +131,68 @@
     return { cancel: cancel };
   }
 
+  /* ---- hint placement ------------------------------------------------------
+     The hint is a plate centred on the viewport; the control panel is a
+     translucent box pinned to the top-right corner. Between roughly 600 and
+     1100px wide the two overlap, and because the plate is opaque it washes
+     out the panel showing through above it (panel z 30, hint z 25) and can
+     bury a control. When the two rects really do intersect, the hint is
+     re-centred in the free strip left of the panel instead. Only left/right/
+     transform/margins are touched: several pages set the hint's top
+     themselves (voyage 58vh, computer a bottom offset in landscape), and the
+     plate styling, pointer-events and dismiss behaviour are untouched. */
+  var HINT_GAP = 12;          /* breathing room at the screen edge and the panel */
+  var HINT_STRIP_CENTER = 240; /* wider than this, centre the plate in the strip */
+  var HINT_STRIP_MIN = 160;   /* narrower than this, nowhere better to go */
+  var panelEl = null;         /* most recently registered control panel */
+  var openHints = [];         /* hint nodes currently on screen */
+  var hintResizeOn = false;
+
+  function placeHint(node) {
+    if (!node || !node.parentNode) return;
+    /* measure from the page's own CSS, not from a previous placement */
+    var s = node.style;
+    s.left = ''; s.right = ''; s.transform = ''; s.marginLeft = ''; s.marginRight = '';
+    if (!panelEl) return;
+    var p = panelEl.getBoundingClientRect();
+    if (!p.width || !p.height) return;                   /* hidden panel */
+    var h = node.getBoundingClientRect();
+    if (!h.width) return;
+    if (h.right <= p.left || h.left >= p.right) return;  /* clear horizontally */
+    if (h.bottom <= p.top || h.top >= p.bottom) return;  /* clear vertically */
+    var strip = p.left - HINT_GAP * 2;
+    if (strip < HINT_STRIP_MIN) return;                  /* no strip worth using */
+    var vw = document.documentElement.clientWidth || window.innerWidth;
+    s.left = HINT_GAP + 'px';
+    s.right = (vw - (p.left - HINT_GAP)) + 'px';
+    s.transform = 'none';
+    /* auto/auto centres the plate inside the strip; a narrow strip keeps it
+       against the left edge so the text has as much room as it can get */
+    s.marginLeft = strip >= HINT_STRIP_CENTER ? 'auto' : '0';
+    s.marginRight = 'auto';
+  }
+
+  function placeHints() {
+    for (var i = 0; i < openHints.length; i++) placeHint(openHints[i]);
+  }
+
+  function trackHint(node) {
+    if (openHints.indexOf(node) < 0) openHints.push(node);
+    if (!hintResizeOn) {
+      window.addEventListener('resize', placeHints);
+      hintResizeOn = true;
+    }
+  }
+
+  function untrackHint(node) {
+    var i = openHints.indexOf(node);
+    if (i >= 0) openHints.splice(i, 1);
+    if (!openHints.length && hintResizeOn) {
+      window.removeEventListener('resize', placeHints);
+      hintResizeOn = false;
+    }
+  }
+
   function firstRunHint(key, text) {
     var K = 'hint-' + key, node = null, visible = false;
     function seen() { try { return !!localStorage.getItem(K); } catch (e) { return false; } }
@@ -131,12 +212,15 @@
         node.classList.add('gadget-hint--show');
       }
       visible = true;
+      trackHint(node);
+      placeHint(node);
     }
     function dismiss() {
       if (!visible || !node) return;
       visible = false;
       mark();
       var n = node;
+      untrackHint(n);
       if (reducedMotion()) {
         if (n.parentNode) n.parentNode.removeChild(n);
         node = null;
@@ -162,10 +246,31 @@
     return tag === 'input' || tag === 'textarea' || tag === 'select' || !!t.isContentEditable;
   }
 
+  function liveStatus(el) {
+    el = byId(el);
+    if (!el) return null;
+    var mirror = document.createElement('div');
+    mirror.style.position = 'absolute';
+    mirror.style.width = '1px';
+    mirror.style.height = '1px';
+    mirror.style.overflow = 'hidden';
+    mirror.style.clipPath = 'inset(50%)';
+    mirror.style.whiteSpace = 'nowrap';
+    mirror.setAttribute('role', 'status');
+    mirror.setAttribute('aria-live', 'polite');
+    document.body.appendChild(mirror);
+    function sync() { mirror.textContent = el.textContent; }
+    sync();
+    var mo = new MutationObserver(sync);
+    mo.observe(el, { childList: true, characterData: true, subtree: true });
+    return mirror;
+  }
+
   window.GadgetUI = {
     initPanel: initPanel,
     longPress: longPress,
     firstRunHint: firstRunHint,
-    isTyping: isTyping
+    isTyping: isTyping,
+    liveStatus: liveStatus
   };
 })();

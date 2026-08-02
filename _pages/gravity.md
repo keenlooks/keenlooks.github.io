@@ -3,7 +3,7 @@ layout: single
 title: "Gravity Sandbox"
 permalink: /gravity/
 author_profile: false
-excerpt: "A full-screen 2D n-body gravity playground — set a mass, click to drop it, drag to fling it into orbit."
+excerpt: "A full-screen 2D n-body gravity playground: pick a mass, click to drop a body, or drag it to fling it into orbit, and watch everything pull on everything else."
 description: "An interactive full-screen 2D gravity sandbox by Keane Lucas: pick a mass, click to drop a body, or drag to fling it into orbit. Newtonian gravity pulls everything together and colliding bodies merge. Trace orbits and visualize each body's gravity well."
 ---
 
@@ -20,7 +20,7 @@ description: "An interactive full-screen 2D gravity sandbox by Keane Lucas: pick
     </div>
     <div class="grav-panel__body" id="grav-panel-body">
       <p class="grav-blurb">
-        Pick a <strong>mass</strong>, then <strong>click</strong> empty space to drop a body &mdash;
+        Pick a <strong>mass</strong>, then <strong>click</strong> empty space to drop a body,
         or <strong>drag and release</strong> to fling it into orbit. <strong>Click an existing body</strong>
         to retarget its velocity (drag to aim, or click without dragging to stop it). Everything pulls on
         everything else; bodies that collide <strong>merge</strong>. Tip: drop one heavy "sun," then lower
@@ -96,7 +96,9 @@ html[data-theme="light"] .grav-topfade {
 
 .grav-panel {
   position: fixed; top: 4.6rem; right: 1rem; z-index: 30;
-  width: 270px; max-width: calc(100vw - 2rem); max-height: calc(100vh - 6rem); max-height: calc(100dvh - 6rem);
+  width: 270px; max-width: calc(100vw - 2rem);
+  /* bottom edge stays clear of the chat bar (desktop) and the corner buttons */
+  max-height: calc(100vh - 10rem); max-height: calc(100dvh - 10rem);
   overflow: auto; padding: 0.85rem 1rem 1rem;
   border: 1px solid rgba(255,255,255,0.12); border-radius: 10px;
   background: rgba(18,18,18,0.94);          /* near-solid so the scene behind stays readable */
@@ -106,6 +108,11 @@ html[data-theme="light"] .grav-topfade {
 html[data-theme="light"] .grav-panel { background: rgba(255,255,255,0.97); border-color: rgba(0,0,0,0.12); box-shadow: 0 6px 24px rgba(0,0,0,0.15); }
 @media (prefers-color-scheme: light) {
   html:not([data-theme="dark"]) .grav-panel { background: rgba(255,255,255,0.97); border-color: rgba(0,0,0,0.12); box-shadow: 0 6px 24px rgba(0,0,0,0.15); }
+}
+
+@media screen and (max-width: 768px) {
+  /* the corner buttons are raised to bottom: 4rem here, so give them more room */
+  .grav-panel { max-height: calc(100vh - 12.5rem); max-height: calc(100dvh - 12.5rem); }
 }
 
 .grav-panel__head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }

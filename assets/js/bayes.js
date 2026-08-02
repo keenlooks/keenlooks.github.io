@@ -49,6 +49,7 @@
   var btnMed = id('bayes-mode-med'), btnSec = id('bayes-mode-sec');
   var roQ1 = id('bayes-q1'), roQ2 = id('bayes-q2'), roPpv = id('bayes-ppv'),
       roCounts = id('bayes-counts');
+  if (window.GadgetUI) GadgetUI.liveStatus(roCounts);
   var probe = id('bayes-probe'), socNote = id('bayes-soc');
   var keyTp = id('bayes-key-tp'), keyFp = id('bayes-key-fp'),
       keyFn = id('bayes-key-fn'), keyTn = id('bayes-key-tn');

@@ -93,10 +93,22 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
   /* world→screen: the rocket's FEET sit at the ground line when s.y == GROUND_Y,
-     so a touchdown happens exactly where the ground is drawn (not floating above). */
+     so a touchdown happens exactly where the ground is drawn (not floating above).
+     The world's x unit spans the canvas MINUS the controls panel, so a pad at the
+     right end of its range stays visible instead of sliding under the panel. This
+     is projection only: the physics and the policy's observations are unchanged
+     (they never see pixels), and the inverse mapping below uses the same width so
+     dragging and flinging still land where the pointer is. */
   function groundPix() { return H * 0.84; }
   function topPix() { return H * 0.10; }
-  function sx(x) { return x * W; }
+  function panelReserve() {
+    if (!elPanel || W < 600 || elPanel.classList.contains('land-panel--collapsed')) return 0;
+    var pw = elPanel.offsetWidth;
+    if (!pw) return 0;
+    return Math.min(W * 0.42, pw + 24);
+  }
+  function worldW() { return Math.max(160, W - panelReserve()); }
+  function sx(x) { return x * worldW(); }
   function sy(y) { return groundPix() - (y - GROUND_Y) / (1 - GROUND_Y) * (groundPix() - topPix()); }
   function rocketScale() { return Math.max(12, Math.min(22, Math.min(W, H) * 0.025)); }  /* ~60% of the previous size */
 
@@ -249,13 +261,22 @@
 
     drawRocket(rx, ry, s.th, status === 'fly' && action === 2, status === 'fly' && action === 1, status === 'fly' && action === 3, status === 'crashed');
 
-    /* status banner — kept clear of the top nav / vignette */
+    /* status banner — kept clear of the top nav / vignette, and pushed below the
+       controls panel on narrow screens, where the panel reaches the middle */
     if (status !== 'fly') {
       ctx.font = '700 ' + Math.max(22, W / 32) + 'px "Source Sans 3", system-ui, sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillStyle = status === 'landed' ? good() : bad();
       var msg = status === 'landed' ? 'Landed' : (status === 'lost' ? 'Flew off' : 'Crashed');
-      ctx.fillText(msg, W / 2, H * 0.17);
+      var msgY = H * 0.17;
+      if (elPanel) {
+        var pr = elPanel.getBoundingClientRect();
+        var half = ctx.measureText(msg).width / 2 + 14;
+        if (pr.height && W / 2 + half > pr.left && msgY - 24 < pr.bottom) {
+          msgY = Math.min(H * 0.42, pr.bottom + 30);
+        }
+      }
+      ctx.fillText(msg, W / 2, msgY);
     }
   }
 
@@ -359,7 +380,7 @@
       drag = { kind: 'rocket', lx: p.x, ly: p.y, vx: 0, vy: 0 };
       status = 'fly'; statusT = 0; s.vx = 0; s.vy = 0; s.w = 0;
     } else if (p.y > groundPix() - 30) {                  // anywhere near/below the ground line moves the pad
-      padDrag = true; padX = Math.min(0.80, Math.max(0.20, p.x / W)); var pe = id('land-pad'); if (pe) pe.value = Math.round(padX * 100);
+      padDrag = true; padX = Math.min(0.80, Math.max(0.20, p.x / worldW())); var pe = id('land-pad'); if (pe) pe.value = Math.round(padX * 100);
     } else return;
     try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
     e.preventDefault();
@@ -368,14 +389,14 @@
     var p = rel(e);
     if (drag && drag.kind === 'rocket') {
       drag.vx = (p.x - drag.lx); drag.vy = (p.y - drag.ly); drag.lx = p.x; drag.ly = p.y;
-      s.x = Math.min(1, Math.max(0, p.x / W));
+      s.x = Math.min(1, Math.max(0, p.x / worldW()));
       s.y = Math.min(1.15, Math.max(GROUND_Y, wyFromScreen(p.y)));
       s.th = 0; s.w = 0;
-    } else if (padDrag) { padX = Math.min(0.80, Math.max(0.20, p.x / W)); var pe2 = id('land-pad'); if (pe2) pe2.value = Math.round(padX * 100); }
+    } else if (padDrag) { padX = Math.min(0.80, Math.max(0.20, p.x / worldW())); var pe2 = id('land-pad'); if (pe2) pe2.value = Math.round(padX * 100); }
   });
   function endDrag() {
     if (drag && drag.kind === 'rocket') {
-      s.vx = drag.vx / W * 1.2;                                  /* screen px/move → world vel */
+      s.vx = drag.vx / worldW() * 1.2;                           /* screen px/move → world vel (same scale as sx) */
       s.vy = -drag.vy / (groundPix() - topPix()) * 1.2;          /* screen-down is world-down (−y) */
       status = 'fly'; statusT = 0;
     }

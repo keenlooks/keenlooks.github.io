@@ -23,6 +23,7 @@
 
   var elText = id('hash-text'), elFlip = id('hash-flip'), elFind = id('hash-find');
   var elChanged = id('hash-changed'), elPrev = id('hash-prev');
+  if (window.GadgetUI) GadgetUI.liveStatus(elChanged);
   var elPanel = id('hash-panel'), elCollapse = id('hash-collapse');
 
   var BITS = 256, COLS = 16;
@@ -32,7 +33,8 @@
   var prevText = null;
   var changedCount = -1;
   var view = 'collide';                   // 'collide' | 'result' (Collisions is the default — it's the fun one)
-  var elBlurb = id('hash-blurb'), elHint = id('hash-hint');
+  var elBlurb = id('hash-blurb'), elHint = id('hash-hint'), elTitle = id('hash-title');
+  var TITLES = { result: 'Hash Avalanche', collide: 'Hash Collisions' };
   var BLURBS = {
     result: 'Change one letter of the message and about half of SHA-256’s 256 output bits flip. That is the avalanche effect: from two hashes you cannot tell how similar the inputs were. Click the grid (or the button) to change a character.',
     collide: 'A good hash makes it infeasible to find two inputs with the same output. CRC32, a real checksum used everywhere (ZIP, PNG, Ethernet), is only 32 bits and was never built to resist that, so a birthday search turns up two inputs with the same checksum in a fraction of a second.'
@@ -42,6 +44,7 @@
     collide: 'Each dot is one input’s 32-bit CRC. Press “Find a collision” to search.'
   };
   function setText() {
+    if (elTitle) elTitle.textContent = TITLES[view];   /* the panel names the view you're in */
     if (elBlurb) elBlurb.textContent = BLURBS[view];
     if (elHint) elHint.textContent = HINTS[view];
   }
@@ -79,8 +82,37 @@
     }
   }
   var lastTried = null;
+
+  /* The fixed corner buttons (#theme-toggle / #life-link) float over the canvas
+     in the bottom-left, and sit higher on phones. Measure them so the drawn text
+     can stay above them. They are created on DOMContentLoaded, which can land
+     AFTER the first animation frame, so the measurement is refreshed from the
+     draw loop rather than taken once, and until it lands we fall back to the
+     height the stylesheet gives them (2.6rem tall at bottom 1.25rem, raised to
+     bottom 4rem at <= 768px, in _sass/_color-scheme-light.scss). Getting that
+     first value right matters here: the scatter accumulates into an offscreen
+     buffer, so a point plotted under a stale band would stay there. */
+  function fallbackBand() {
+    var rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+    return (window.innerWidth <= 768 ? 6.6 : 3.85) * rem;
+  }
+  var cornerBand = fallbackBand(), lastMeasure = -1e9;
+  function measureChrome() {
+    var b = 0, ids = ['theme-toggle', 'life-link'], k, el, r;
+    for (k = 0; k < ids.length; k++) {
+      el = document.getElementById(ids[k]);
+      if (!el) continue;
+      r = el.getBoundingClientRect();
+      if (r.height) b = Math.max(b, window.innerHeight - r.top);
+    }
+    cornerBand = b || fallbackBand();
+  }
+
+  /* Baseline of the first result line: above the corner buttons, with the
+     scatter ending above it so the two never stack. */
+  function resultTop() { return H - Math.max(104, cornerBand + 58); }
   /* keep the scatter clear of the top nav, the top-right controls panel, and the bottom result text */
-  function plotBounds() { return { x0: 24, x1: (W > 700 ? W - 360 : W - 24), y0: 180, y1: H - 132 }; }
+  function plotBounds() { return { x0: 24, x1: (W > 700 ? W - 360 : W - 24), y0: 180, y1: resultTop() - 36 }; }
   function ptX(crc) { var b = plotBounds(); return b.x0 + (crc & 0xffff) / 0xffff * (b.x1 - b.x0); }
   function ptY(crc) { var b = plotBounds(); return b.y0 + ((crc >>> 16) & 0xffff) / 0xffff * (b.y1 - b.y0); }
   var SALT = 'abcdefghijklmnopqrstuvwxyz0123456789';
@@ -196,13 +228,24 @@
       ctx.fillText(hexDigest.slice(32), W / 2, gy + side + side * 0.05 + fs * 1.45);
       ctx.font = (fs * 0.78) + 'px "Source Sans 3", system-ui, sans-serif';
       ctx.fillStyle = textColor(0.45);
-      ctx.fillText('SHA-256 — 256 bits', W / 2, gy + side + side * 0.05 + fs * 3.1);
+      ctx.fillText('SHA-256, 256 bits', W / 2, gy + side + side * 0.05 + fs * 3.1);
     }
   }
 
   function drawCollide(now) {
-    /* the scatter of every CRC32 we've seen (low 16 bits → x, high 16 → y) */
-    if (acc) ctx.drawImage(acc, 0, 0, W, H);
+    /* The scatter of every CRC32 we've seen (low 16 bits → x, high 16 → y).
+       The buffer is only cleared when it is resized, so it can still hold points
+       plotted under earlier bounds; clip the blit to the current plot rectangle
+       so the scatter can never spill onto the result text below it. */
+    if (acc) {
+      var pb = plotBounds();
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(pb.x0 - 3, pb.y0 - 3, (pb.x1 - pb.x0) + 6, (pb.y1 - pb.y0) + 6);
+      ctx.clip();
+      ctx.drawImage(acc, 0, 0, W, H);
+      ctx.restore();
+    }
     ctx.font = '600 ' + Math.max(15, Math.min(22, W / 34)) + 'px "Source Sans 3", system-ui, sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.fillStyle = textColor(0.75);
     var head = found
@@ -238,7 +281,7 @@
       ctx.font = Math.max(13, Math.min(18, W / 42)) + 'px ui-monospace, SFMono-Regular, Consolas, monospace';
       ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
       ctx.fillStyle = textColor(0.85);
-      var yb = H - 104;                              /* lifted up so it isn't crammed at the very bottom */
+      var yb = resultTop();
       ctx.fillText('CRC32("' + found.a + '")  =  CRC32("' + found.b + '")', W / 2, yb);
       ctx.fillStyle = badColor();
       ctx.fillText('=  0x' + hex32(found.crc), W / 2, yb + 24);
@@ -248,12 +291,13 @@
     } else if (!searching && tries === 0) {
       ctx.font = Math.max(13, W / 64) + 'px "Source Sans 3", system-ui, sans-serif';
       ctx.fillStyle = textColor(0.55); ctx.textBaseline = 'top';
-      ctx.fillText('Press “Find a collision” — each dot is one input’s 32-bit CRC.', W / 2, 160);
+      ctx.fillText('Press “Find a collision”: each dot is one input’s 32-bit CRC.', W / 2, 160);
     }
   }
 
   function draw(now) {
     raf = requestAnimationFrame(draw);
+    if (now - lastMeasure > 400) { lastMeasure = now; measureChrome(); }
     if (!W || !H) { resize(); if (!W || !H) return; }
     if (view === 'collide') searchStep();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);

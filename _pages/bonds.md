@@ -4,7 +4,7 @@ title: "Why Bond Prices Fall When Rates Rise"
 permalink: /bonds/
 author_profile: false
 excerpt: "An interactive look at why a bond's price drops when interest rates go up."
-description: "Interactive explainer by Keane Lucas: a bond is a fixed future payout, so when the market is paying higher interest rates (e.g., the Fed raises rates on their \"risk-free\" securities, so all other bonds have to raise rates as well to remain competitive) that *higher interest rate* manifests as that future payout being worth less today, so current bond prices fall. Drag the rate and watch."
+description: "Interactive explainer by Keane Lucas: a bond is a fixed future payout, so when interest rates rise, that same future payout is worth less today, and the bond's price falls. Drag the rate and watch."
 ---
 
 <p class="bond-intro">
@@ -12,7 +12,7 @@ In the simplest form, buying a bond is really just buying the promise of a <stro
 for that future payout <em>today</em> can be calculated as that future payout, discounted back to the present by the current going interest
 rate.
 
-So... why do bond prices go down when the Fed raises rates? Basically, when the Fed raises its policy rate, yields on a risk-free asset like U.S. Treasuries rise too, and every other borrower has to offer more to stay competitive (usually more than Treasuries, since they can't print their own money like the U.S. government can, so are by definition not as "risk-free"). 
+So... why do bond prices go down when the Fed raises rates? Basically, when the Fed raises its policy rate, yields on a risk-free asset like U.S. Treasuries rise too, and every other borrower has to offer more to stay competitive (usually more than Treasuries, since they can't print their own money like the U.S. government can, so they are by definition not as "risk-free"). 
 
 If you have a bond (which is again really just a future payout of a specific amount of money), and you want to sell it, then the fair market price of your bond now depends on the (now higher) current going interest rate. This essentially just increases the slope on the curve below, which (as you can see when the slope increases while the future payout stays fixed) means the price you can sell your bond for today has to go down to match the new, higher interest rate.
 
@@ -75,7 +75,7 @@ future-dollars are worth fewer now-dollars. Drag the rate to see the effect on t
 
 <p class="bond-foot">
   Why "the payout is fixed but worth less"? Because the curve from <em>today's price</em> up to the
-  <em>fixed future payout</em> is the interest rate compounding. A higher rate is a steeper curve &mdash;
+  <em>fixed future payout</em> is the interest rate compounding. A higher rate is a steeper curve,
   but it still has to land on the same fixed payout, so it must start lower. That lower starting point
   <em>is</em> the new, cheaper price. The same logic runs in reverse when the Fed cuts rates.
 </p>
@@ -125,7 +125,9 @@ html[data-theme="light"] .bond-modes input { accent-color: #34568a; }
 
 .bond-check { display: flex; align-items: center; gap: 0.5rem; font-size: 0.95rem; cursor: pointer; }
 
-.bond-scenarios { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+/* the scenario row is the last thing in the panel; without this the following
+   paragraph sits flush against the buttons (every other block has ~1.5rem). */
+.bond-scenarios { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 1.5rem; }
 .bond-scenarios__label { font-size: 0.95rem; opacity: 0.85; }
 .bond-btn {
   font: inherit; color: inherit; cursor: pointer; line-height: 1;

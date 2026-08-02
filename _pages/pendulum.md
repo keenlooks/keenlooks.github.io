@@ -4,7 +4,7 @@ title: "Double Pendulum"
 permalink: /pendulum/
 author_profile: false
 excerpt: "Chaos you can grab: two pendulums start 0.001 radians apart and end up nowhere near each other."
-description: "An interactive full-screen double pendulum by Keane Lucas: drag the bobs to set a pose and let go. A grey twin starts one thousandth of a radian away — watch how long the two stay together before chaos pulls their paths completely apart."
+description: "An interactive full-screen double pendulum by Keane Lucas: drag the bobs to set a pose and let go. A grey twin starts one thousandth of a radian away, so you can watch how long the two stay together before chaos pulls their paths apart."
 ---
 
 <div class="pend-app life-app">
@@ -81,7 +81,9 @@ html[data-theme="light"] .pend-topfade {
 
 .pend-panel {
   position: fixed; top: 4.6rem; right: 1rem; z-index: 30;
-  width: 280px; max-width: calc(100vw - 2rem); max-height: calc(100vh - 6rem); max-height: calc(100dvh - 6rem);
+  width: 280px; max-width: calc(100vw - 2rem);
+  /* bottom edge stays clear of the chat bar (desktop) and the corner buttons */
+  max-height: calc(100vh - 10rem); max-height: calc(100dvh - 10rem);
   overflow: auto; padding: 0.85rem 1rem 1rem;
   border: 1px solid rgba(255,255,255,0.12); border-radius: 10px;
   background: rgba(18,18,18,0.94);
@@ -91,6 +93,11 @@ html[data-theme="light"] .pend-topfade {
 html[data-theme="light"] .pend-panel { background: rgba(255,255,255,0.97); border-color: rgba(0,0,0,0.12); box-shadow: 0 6px 24px rgba(0,0,0,0.15); }
 @media (prefers-color-scheme: light) {
   html:not([data-theme="dark"]) .pend-panel { background: rgba(255,255,255,0.97); border-color: rgba(0,0,0,0.12); box-shadow: 0 6px 24px rgba(0,0,0,0.15); }
+}
+
+@media screen and (max-width: 768px) {
+  /* the corner buttons are raised to bottom: 4rem here, so give them more room */
+  .pend-panel { max-height: calc(100vh - 12.5rem); max-height: calc(100dvh - 12.5rem); }
 }
 
 .pend-panel__head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }

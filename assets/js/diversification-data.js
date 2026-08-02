@@ -2,7 +2,7 @@
    Source: https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html (free to use & redistribute).
    Each row is an industry (see `labels`); each column is a calendar year in `years`. */
 window.DIVERSIFICATION_DATA = {
-  source: "Ken French Data Library — 30 Industry Portfolios (value-weighted), 1995–2024",
+  source: "Ken French Data Library, 30 Industry Portfolios (value-weighted), 1995–2024",
   years: [1995, 1996, 1997, 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024],
   codes: ["Food", "Beer", "Smoke", "Games", "Books", "Hshld", "Clths", "Hlth", "Chems", "Txtls", "Cnstr", "Steel", "FabPr", "ElcEq", "Autos", "Carry", "Mines", "Coal", "Oil", "Util", "Telcm", "Servs", "BusEq", "Paper", "Trans", "Whlsl", "Rtail", "Meals", "Fin", "Other"],
   labels: ["Food", "Beer & Liquor", "Tobacco", "Recreation", "Publishing", "Consumer Goods", "Apparel", "Healthcare", "Chemicals", "Textiles", "Construction", "Steel", "Fabricated Products", "Electrical Equip.", "Autos", "Aircraft & Ships", "Mining", "Coal", "Oil & Gas", "Utilities", "Telecom", "Business Services", "Tech / Equipment", "Paper", "Transport", "Wholesale", "Retail", "Restaurants & Hotels", "Finance", "Other"],

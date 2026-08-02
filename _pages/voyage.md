@@ -129,7 +129,7 @@ description: "An interactive full-screen trip planner by Keane Lucas: real JPL p
         </p>
       </details>
 
-      <p class="voy-status-line"><span id="voy-status" role="status"></span></p>
+      <p class="voy-status-line"><span id="voy-status"></span></p>
       <p class="voy-credit">
         Star data from the AT-HYG catalog v4.0 (astronexus.com, CC BY-SA 4.0), modified.
         Far-side beacons from Skowron and colleagues 2024 and Reid and colleagues 2019;
@@ -231,7 +231,10 @@ body.voy-darksky .greedy-nav .visible-links a:focus-visible { outline-color: #82
 
 .voy-panel {
   position: fixed; top: 4.6rem; right: 1rem; z-index: 30;
-  width: 300px; max-width: calc(100vw - 2rem); max-height: calc(100vh - 6rem); max-height: calc(100dvh - 6rem);
+  /* The bottom edge has to clear the chat bar (a fixed ~48 px bottom-right bar
+     on desktop, full width on phones) and, on phones, the raised corner
+     buttons. At the old 6rem cap the last line of the panel sat behind them. */
+  width: 300px; max-width: calc(100vw - 2rem); max-height: calc(100vh - 10rem); max-height: calc(100dvh - 10rem);
   overflow: auto; padding: 0.85rem 1rem 1rem;
   border: 1px solid rgba(255,255,255,0.12); border-radius: 10px;
   background: rgba(18,18,18,0.94);
@@ -330,6 +333,13 @@ html[data-theme="light"] .voy-return { background: rgba(0,0,0,0.04); }
 }
 body.voy-sheet-open .voy-return { display: none !important; }
 
+/* The first-run hint sits at 38vh by default, which on this page is exactly
+   where the intro paints its "Where do you want to go?" headline (canvas,
+   H * 0.42). Below it the two can never meet, at any of the viewports this
+   page is checked at, and the band is still clear of the card sheet, the chat
+   bar and the corner buttons. */
+.gadget-hint { top: 58vh; }
+
 .voy-target-line { margin: 0; font-size: 0.88em; opacity: 0.85; }
 .voy-legend { margin: 0; font-size: 0.8em; opacity: 0.55; }
 
@@ -424,11 +434,22 @@ html[data-theme="light"] .voy-arrive { border-color: rgba(160,124,44,0.5); backg
 .voy-trip[hidden] { display: none !important; }
 .voy-trip__title { margin: 0; font-weight: 700; font-size: 0.95em; }
 .voy-trip__table { border-collapse: collapse; width: 100%; font-size: 0.82em; margin: 0; }
+/* The theme's _tables.scss fills every thead with $lighter-gray and rules
+   every cell in $light-gray. Inside this card that is a near-white band with
+   faint grey headings on it, plus bright grid lines cutting through a dark
+   surface. The card already supplies the background, so the table keeps only
+   the soft horizontal rules it draws for itself. The values are neutral
+   translucent greys, which read the same on both themes. */
+.voy-trip__table, .voy-trip__table thead { border: 0; background: transparent; }
 .voy-trip__table th {
-  text-align: left; font-weight: 600; opacity: 0.6; padding: 0.15em 0.5em 0.15em 0;
+  text-align: left; font-weight: 600; opacity: 0.75; padding: 0.15em 0.5em 0.15em 0;
+  color: inherit; background: transparent; border-right: 0;
   border-bottom: 1px solid rgba(127,127,127,0.35);
 }
-.voy-trip__table td { padding: 0.28em 0.5em 0.28em 0; vertical-align: top; border-bottom: 1px solid rgba(127,127,127,0.15); }
+.voy-trip__table td {
+  padding: 0.28em 0.5em 0.28em 0; vertical-align: top; border-right: 0;
+  border-bottom: 1px solid rgba(127,127,127,0.15);
+}
 .voy-trip__note { opacity: 0.6; font-size: 0.92em; }
 .voy-trip__row--hl td { background: rgba(130,166,204,0.14); font-weight: 600; }
 html[data-theme="light"] .voy-trip__row--hl td { background: rgba(52,86,138,0.1); }
@@ -565,6 +586,9 @@ html[data-theme="light"] #voy-fp-info:focus-visible { background: rgba(52,86,138
     max-height: 44vh; border-radius: 12px 12px 0 0;
     padding-bottom: 7.5rem;
   }
+  /* the corner buttons are raised to bottom: 4rem here and the chat bar runs
+     the full width, so the panel stops higher than it does on desktop */
+  .voy-panel { max-height: calc(100vh - 12.5rem); max-height: calc(100dvh - 12.5rem); }
   .voy-blurb { order: 5; }
   .voy-credit { order: 6; }
   .voy-verify { order: 7; }

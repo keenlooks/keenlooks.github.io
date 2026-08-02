@@ -1737,6 +1737,7 @@
   var elPanel = id('voy-panel'), elCollapse = id('voy-collapse'), elHelp = id('voy-help');
   var elSearch = id('voy-search'), elList = id('voy-search-list');
   var elTarget = id('voy-target'), statusEl = id('voy-status'), verifyEl = id('voy-verify');
+  if (window.GadgetUI) GadgetUI.liveStatus(statusEl);
   var btnShare = id('voy-share'), btnSave = id('voy-save');
   var btnLaunch = id('voy-launch'), btnNext = id('voy-next'), btnBack = id('voy-back');
   var elPcRow = id('voy-pc-row');
@@ -3416,6 +3417,12 @@
     else if (s.kind === 'f') buildFarCard(s.idx, opts);
     else buildStarCard(s.idx, opts);
     cardEl.setAttribute('aria-label', 'About ' + bodyLabel(s));
+    /* Start at the top of the new card. Clearing and refilling the node in one
+       task never gives the browser a layout to clamp the old scrollTop
+       against, so a card scrolled down to the Launch button stayed scrolled
+       down when the trip ended -- with the "Arrived" banner and the Replay /
+       Back buttons, which are the first block in the body, out of sight. */
+    try { cardEl.scrollTop = 0; } catch (eS) { /* not scrollable */ }
   }
 
   function buildPlanetCard(pi) {
@@ -5026,21 +5033,80 @@
     return (yy > y && yy <= H * 0.34) ? yy : y;
   }
 
+  /* ---- the free strip beside the control panel ----
+     hudBandY covers the case where the panel reaches the middle of the screen
+     and the block can drop below it. A short landscape phone is the other
+     case: at 740x360 the collapsed panel is a 300 px bar sitting entirely
+     right of centre, so the block is never pushed down and the centred lines
+     ran straight under it ("Earth calendar 2026" was cut mid-word). The lines
+     are already measured and shrunk by hudLine, so all they need is the
+     honest centre and width of the strip the panel leaves behind. Returns the
+     full-width default whenever the panel is elsewhere, which keeps every
+     other viewport byte-identical.
+
+     wantW is the width of the block's widest line. The block moves by the
+     LEAST amount that clears the pane, and only when it does not already
+     fit: parking it in the middle of the free strip instead swung the
+     desktop cruise HUD 160 px off centre with the panel open, where the
+     lines had never come near it. Without wantW the strip's own centre is
+     used, which is the tightest case and what a caller that cannot measure
+     its block should get. */
+  function hudStrip(y0, y1, wantW) {
+    var box = { cx: W / 2, maxW: W - 16 };
+    var x0 = 8, x1 = W - 8, i, e, r;
+    /* the two panes that can sit beside the block: the control panel on the
+       right, and (on a wide screen, where it is not a bottom sheet) the open
+       card on the left. An arrival opens the card straight into the parked
+       ship's HUD line, which is how the left half of this came up. */
+    var occ = [elPanel, cardOpen() ? cardEl : null];
+    for (i = 0; i < occ.length; i++) {
+      e = occ[i];
+      if (!e || e.hidden || !e.getBoundingClientRect) continue;
+      r = e.getBoundingClientRect();
+      if (!r || !(r.height > 0) || !(r.width > 0)) continue;
+      if (r.bottom <= y0 || r.top >= y1) continue;          /* different band */
+      if (r.left <= W / 2 && r.right >= W / 2) return box;  /* hudBandY's case */
+      if (r.left > W / 2) x1 = Math.min(x1, r.left - 10);
+      else x0 = Math.max(x0, r.right + 10);
+    }
+    var w = x1 - x0;
+    if (!(w >= 170)) return box;      /* too little left to be worth moving to */
+    var want = (typeof wantW === 'number' && isFinite(wantW) && wantW > 0)
+      ? Math.min(wantW, w) : w;
+    return { cx: clampN(W / 2, x0 + want / 2, x1 - want / 2), maxW: w };
+  }
+  /* the widest line a block will draw, at its own weight and base size: what
+     hudStrip needs to know before hudLine has picked a candidate */
+  function blockW(cands, weight, px) {
+    if (!cands || !cands.length) return 0;
+    return textW(weight + px + 'px ' + FONT, cands[0]);
+  }
+
   /* the parked ship, drawn through the same local rig projector the cruise
      uses, plus one HUD line saying where and when */
   function drawShipIdle(now) {
     var hudY = hudBandY();
-    var maxW = W - 16;
     var where = shipLabel();
     var yr = yearText(calYearFromJD(shipAt.jd));
     var lead = (shipAt.kind === 'f') ? 'Parked at ' : 'In orbit around ';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    hudLine([lead + where + ', ' + yr, where + ', ' + yr, where],
-            '600 ', 15, 10, maxW, hudY, textColor(0.92));
+    var idleCands = [lead + where + ', ' + yr, where + ', ' + yr, where];
+    var hb3 = hudStrip(hudY - 13, hudY + 32, blockW(idleCands, '600 ', 15));
+    /* Parked is the ONE state where a photosphere is guaranteed to be behind
+       these lines: the ship is in orbit around the thing that is lit. The
+       cruise band already took the plate on that rule and this band never
+       did, so "In orbit around Sirius, 2036" was printed onto the white disc
+       of Sirius. hudOrbPx is filled by drawCenteredStar earlier in the same
+       frame, so the value here is this frame's, and it is 0 with no bright
+       orb on screen: every other parked view is unchanged. */
+    var is = hudScrim();
+    hudLine(idleCands,
+            '600 ', 15, 10, hb3.maxW, hudY, textColor(0.92), hb3.cx, is);
     hudLine([coarsePointer ? 'Drag to look around. Tap the sky to leave.'
                            : 'Drag to look around. Esc or tap the sky to leave.'],
-            '', 12, 9.5, maxW, hudY + 21, textColor(0.5));
+            '', 12, 9.5, hb3.maxW, hudY + 21,
+            textColor(is > 0.02 ? 0.72 : 0.5), hb3.cx, is);
     ctx.textAlign = 'left';
     if (!SHIPS || !RIG.ok || !idlePose.ok) return;
     /* the light comes from the body it is parked at, as a screen angle */
@@ -5958,13 +6024,27 @@
     for (i = 0; i < hudDrawn.length; i++) {
       if (hudDrawn[i].y > hudBottom) hudBottom = hudDrawn[i].y;
     }
-    var barB = 0;
+    var barT = 0, barB = 0;
     if (elFpBar && !elFpBar.hidden && elFpBar.getBoundingClientRect) {
       var r = elFpBar.getBoundingClientRect();
-      if (r && r.height > 0) barB = r.bottom;
+      if (r && r.height > 0) { barT = r.top; barB = r.bottom; }
     }
+    /* the lowest a middle-aligned line can sit and still clear the chat bar,
+       measured rather than assumed (it is injected a second after load) */
+    var floor = H - chatClearance() - 4;
     var y = Math.max(hudBottom, barB) + 18;
-    return (y > H - 96) ? H * 0.78 : y;
+    if (y <= floor) return y;
+    /* A short landscape screen has no room under the bar. The old fallback
+       was a flat H * 0.78, which at 740x360 landed INSIDE the control bar and
+       printed the caption through the speed slider. Tuck it into whatever the
+       bar leaves instead, and keep the low band only for when the bar is not
+       on screen at all. */
+    if (barB > 0) {
+      if (floor >= barB + 12) return floor;
+      var above = barT - 14;
+      if (above >= hudBottom + 20) return above;
+    }
+    return Math.min(H * 0.78, Math.max(hudBottom + 18, floor));
   }
   function drawCaption(now, maxW) {
     if (!capCur) return;
@@ -6008,17 +6088,20 @@
        from and capture into a star both park a photosphere behind these
        exact lines */
     var hs = hudScrim();
+    /* one strip for the whole three-line block, so the lines stay a block */
+    var hb = hudStrip(hudY - 13, hudY + 53,
+                      lines ? blockW(lines.alt1, '600 ', 15) : 0);
     if (lines) {
-      var used = hudLine(lines.alt1, '600 ', 15, 10, maxW, hudY, textColor(0.92),
-                         undefined, hs);
+      var used = hudLine(lines.alt1, '600 ', 15, 10, hb.maxW, hudY, textColor(0.92),
+                         hb.cx, hs);
       /* the shortest first line drops the calendar year, so line 2 takes it */
-      hudLine(used >= 2 ? lines.alt2y : lines.alt2, '', 13, 9.5, maxW,
-              hudY + 21, textColor(0.75), undefined, hs);
+      hudLine(used >= 2 ? lines.alt2y : lines.alt2, '', 13, 9.5, hb.maxW,
+              hudY + 21, textColor(0.75), hb.cx, hs);
     }
     /* CL-40, verbatim: nothing on screen used to say free look existed */
     hudLine([coarsePointer ? 'Drag to look around. Tap to skip.'
                            : 'Drag to look around. Esc or tap to skip.'], '', 12, 9.5,
-            maxW, hudY + 42, textColor(hs > 0.02 ? 0.72 : 0.5), undefined, hs);
+            hb.maxW, hudY + 42, textColor(hs > 0.02 ? 0.72 : 0.5), hb.cx, hs);
 
     /* ---- the queue, on the SCALED clock ---- */
     var el = c.ms || 0;
@@ -6138,13 +6221,15 @@
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     var lines = sysHudLines(s);
+    var hb2 = hudStrip(hudY - 13, hudY + 53,
+                       lines ? blockW(lines.a1, '600 ', 15) : 0);
     if (lines) {
-      hudLine(lines.a1, '600 ', 15, 10, maxW, hudY, textColor(0.92), undefined, hudScrim());
-      hudLine(lines.a2, '', 13, 9.5, maxW, hudY + 21, textColor(0.75), undefined, hudScrim());
+      hudLine(lines.a1, '600 ', 15, 10, hb2.maxW, hudY, textColor(0.92), hb2.cx, hudScrim());
+      hudLine(lines.a2, '', 13, 9.5, hb2.maxW, hudY + 21, textColor(0.75), hb2.cx, hudScrim());
     }
     hudLine([coarsePointer ? 'Drag to look around. Tap to skip.'
                            : 'Drag to look around. Esc or tap to skip.'], '', 12, 9.5,
-            maxW, hudY + 42, textColor(0.5));
+            hb2.maxW, hudY + 42, textColor(0.5), hb2.cx);
 
     /* ---- captions, on the scaled clock ---- */
     var el = s.ms || 0;
@@ -6275,6 +6360,18 @@
     ctx.arcTo(x, y + h, x, y, r);
     ctx.arcTo(x, y, x + w, y, r);
     ctx.closePath();
+  }
+
+  /* the chat widget's rect in canvas coordinates, or null. It is injected a
+     second or so after load and it owns the bottom-right corner (the whole
+     bottom strip on a phone), so anything drawn low has to measure it rather
+     than assume it is not there yet. */
+  function rectOfChat() {
+    var el = document.getElementById('chat-widget');
+    if (!el || !el.getBoundingClientRect) return null;
+    var r = el.getBoundingClientRect();
+    if (!r || !(r.width > 0) || !(r.height > 0) || r.top >= H) return null;
+    return { x: r.left, y: r.top, w: r.width, h: r.height };
   }
 
   /* the open card's rect in canvas coordinates, or null */
@@ -6517,15 +6614,63 @@
       ctx.fillStyle = accent();
       var ly2 = Math.max(130, O.y);
       ctx.fillText('you are here', O.x + 12, ly2);
+      claimHereLab('you are here', O.x + 12, ly2);
       ctx.globalAlpha = 1;
     }
-    /* the honest caption */
+    /* The honest caption. It used to be centred on W / 2 at a fixed size, so
+       an open card (bottom-left, up to 420 px wide) swallowed its first words
+       and the sentence read "is an illustration...". Every form below still
+       says both honest things; only the wording tightens, and the strip the
+       card leaves sets which one is used. */
     if (ga > 0.4) {
+      var gcands = [
+        'The galaxy here is an illustration, roughly to scale. Everything you can click is real.',
+        'The galaxy is an illustration, roughly to scale. Everything you can click is real.',
+        'The galaxy is an illustration. Everything you can click is real.'
+      ];
+      var gx0 = 8, gx1 = W - 8, gy = H - 44, gq2, go;
+      /* the two things that live down here: the open card (bottom-left) and
+         the chat bar (bottom-right on a desktop, full width on a phone) */
+      var gocc = [];
+      if (cardOpen()) gocc.push(rectOfCard());
+      gocc.push(rectOfChat());
+      /* the sentence keeps its centred place unless something is really on
+         top of it: measure the natural box first and only dodge when one of
+         these rects lands inside it */
       ctx.font = '12px ' + FONT;
+      var gw0 = ctx.measureText(gcands[0]).width;
+      var gb0 = W / 2 - gw0 / 2, gb1 = W / 2 + gw0 / 2, gclash = false;
+      for (gq2 = 0; gq2 < gocc.length; gq2++) {
+        go = gocc[gq2];
+        if (!go) continue;
+        if (gy + 10 > go.y && gy - 10 < go.y + go.h && go.x < gb1 && go.x + go.w > gb0) {
+          gclash = true;
+        }
+      }
+      if (gclash) {
+        for (gq2 = 0; gq2 < gocc.length; gq2++) {
+          go = gocc[gq2];
+          if (!go) continue;
+          if (!(gy + 10 > go.y && gy - 10 < go.y + go.h)) continue;
+          if (go.x < W / 2 && W - (go.x + go.w) - 18 >= 190) gx0 = Math.max(gx0, go.x + go.w + 10);
+          else if (go.x + go.w > W / 2 && go.x - 18 >= 190) gx1 = Math.min(gx1, go.x - 10);
+          else gy = clampN(go.y - 16, 132, H - 44);   /* a full-width sheet: go above it */
+        }
+      }
+      var gmax = gx1 - gx0, gpx = 12, gtxt = gcands[gcands.length - 1], gq;
+      for (gq = 0; gq < gcands.length; gq++) {
+        ctx.font = gpx + 'px ' + FONT;
+        if (ctx.measureText(gcands[gq]).width <= gmax) { gtxt = gcands[gq]; break; }
+      }
+      ctx.font = gpx + 'px ' + FONT;
+      while (gpx > 9.5 && ctx.measureText(gtxt).width > gmax) {
+        gpx -= 0.5;
+        ctx.font = gpx + 'px ' + FONT;
+      }
       ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
       ctx.fillStyle = textColor(0.6 * ga);
-      ctx.fillText('The galaxy here is an illustration, roughly to scale. Everything you can click is real.',
-        W / 2, H - 44);
+      ctx.fillText(gtxt, (gx0 + gx1) / 2, gy);
       ctx.textAlign = 'left';
     }
   }
@@ -7119,6 +7264,17 @@
     ctx.moveTo(x, y + 10.5); ctx.lineTo(x, y + 15);
   }
   var farLab = [];                         /* label boxes claimed this frame */
+  /* The "you are here" / "your ship" labels claim their boxes too. They are
+     drawn first (drawGalaxy at galaxy zoom, drawHereMarkers at cluster zoom)
+     and they are the one label on the page a visitor navigates by, so a far
+     object's name gives way to them rather than printing through: "M4" used
+     to land on top of the accent "you are here" at galaxy zoom. Cleared once
+     per frame with the HUD ledger. */
+  var hereLab = [];
+  function claimHereLab(txt, x, y) {
+    var w = ctx.measureText(txt).width;
+    if (isFinite(x) && isFinite(y) && w > 0) hereLab.push({ x: x, y: y, w: w });
+  }
   function farLabClash(x, y, w) {
     for (var k = 0; k < farLab.length; k++) {
       var b = farLab[k];
@@ -7265,6 +7421,8 @@
       ctx.fillStyle = g;
       ctx.globalAlpha = fa * 0.85;
       farLab.length = 0;
+      /* the navigation markers drawn earlier this frame own their boxes */
+      for (var hq = 0; hq < hereLab.length; hq++) farLab.push(hereLab[hq]);
       var right = W - (W > 900 ? 320 : 8);
       for (i = 0; i < farScr.length; i++) {
         var f = farScr[i], ci = FAR.cls[f.i];
@@ -7886,7 +8044,9 @@
       ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.arc(x, y, 6, 0, 6.2832); ctx.stroke();
       ctx.fillStyle = color;
-      ctx.fillText(txt, x + 12, clampN(y, 130, H - 14));
+      var ty2 = clampN(y, 130, H - 14);
+      ctx.fillText(txt, x + 12, ty2);
+      claimHereLab(txt, x + 12, ty2);
       ctx.globalAlpha = 1;
       hereMarks.push({ txt: txt, x: x, y: y, alpha: a });
       return { x: x, y: y };
@@ -7932,7 +8092,7 @@
       gsb.addColorStop(0.84, 'rgba(' + sbBase + ',' + sbA + ')');
       gsb.addColorStop(1, 'rgba(' + sbBase + ',0)');
       ctx.fillStyle = gsb;
-      ctx.fillRect(gx0, y - 34, gx1 - gx0, 44);
+      ctx.fillRect(gx0, y - 38, gx1 - gx0, 48);
     }
     ctx.strokeStyle = textColor(0.6);
     ctx.lineWidth = 1;
@@ -7945,8 +8105,11 @@
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
     ctx.fillStyle = textColor(sbScrim > 0.02 ? 0.92 : 0.65);
-    ctx.fillText(ns.label, (x0 + x1) / 2, y - 5);
-    sbRect = { x: x0, y: y - 20, w: ns.px, h: 22 };
+    /* clear of the rule and of the two end ticks (which rise to y - 4): at the
+       old y - 5 the digits sat on the tick tops and a descender could touch
+       the rule itself */
+    ctx.fillText(ns.label, (x0 + x1) / 2, y - 9);
+    sbRect = { x: x0, y: y - 24, w: ns.px, h: 26 };
     /* Honesty whisper while a star or planet disc is on screen. It keys off
        the same blend the disc does, so it lasts exactly as long as the disc
        it is disclosing (the old D < 200 test would have gone quiet while the
@@ -7955,11 +8118,11 @@
     if (centeredStar >= 0 && lastOrbBlend > 0) {
       ctx.font = '10px ' + FONT;
       ctx.fillStyle = textColor(whisperA);
-      ctx.fillText('star disc not to scale', (x0 + x1) / 2, y - 20);
+      ctx.fillText('star disc not to scale', (x0 + x1) / 2, y - 24);
     } else if (planetOrbIdx >= 0) {
       ctx.font = '10px ' + FONT;
       ctx.fillStyle = textColor(whisperA);
-      ctx.fillText('planet disc not to scale', (x0 + x1) / 2, y - 20);
+      ctx.fillText('planet disc not to scale', (x0 + x1) / 2, y - 24);
     }
     ctx.textAlign = 'left';
   }
@@ -7991,7 +8154,12 @@
   }
 
   function drawPorkchop() {
-    var job = jobs[pcTarget], sp = specOf(pcTarget);
+    /* jobs is keyed by pairKey(origin, target) since any-to-any routing
+       landed, so the bare target key never matched and the readout below was
+       handed an undefined job on every frame: it printed "Pick a spot on the
+       map." however many spots you picked. curJob() is the accessor that
+       knows the key. */
+    var job = curJob(), sp = specOf(pcTarget);
     var pc = L.pc, plot = L.plot;
     ctx.fillStyle = panelFill();
     ctx.strokeStyle = 'rgba(127,127,127,0.28)';
@@ -8134,6 +8302,7 @@
        useless for the 390 px [8, W-8] assertion. */
     hudDrawn = [];
     hudOrbPx = 0;                        /* and the bright-orb ledger with it */
+    hereLab.length = 0;                  /* and the marker-label ledger (E7) */
     /* One frame, at most GL_MAX_BLITS orb blits: tell VoyageGL the frame
        started so the budget is per frame and not per call. This takes the
        WALL clock, never orbT: VoyageGL resets the counter when the time it
@@ -8404,15 +8573,30 @@
     return best;
   }
 
+  /* The search box is the page's "where am I looking" field, so a pick made
+     on the sky has to write itself into it. Without this it kept the last
+     thing typed: search Sirius, fly there, tap Vega, and the box still read
+     Sirius. Only the canvas path calls this; chooseSearch sets its own label
+     (an exoplanet hit selects the HOST star, and the box should keep saying
+     the planet the visitor asked for). */
+  function syncSearchBox(txt) {
+    if (!elSearch) return;
+    elSearch.value = txt || '';
+    /* the canvas pointerdown preventDefaults, so the box can still hold focus
+       and an open list of hits for a name that is no longer in it */
+    if (elList && !elList.hidden) closeSearchList();
+  }
+
   function tapSelect(p, type) {
     var hit = pickBody(p, type === 'touch' ? 20 : 16);
     if (!hit) {
-      if (sel || cardOpen()) deselect();
+      if (sel || cardOpen()) { deselect(); syncSearchBox(''); }
       return;
     }
     if (hit.kind === 'x') {
       var host = SD.planets.host[hit.idx];
       selectBody({ kind: 's', idx: host }, { openCard: true, exo: hit.idx });
+      syncSearchBox(SD.planets.name[hit.idx]);
       return;
     }
     var name = bodyLabel(hit);
@@ -8424,6 +8608,7 @@
     }
     lastTap = { name: name, t: now };
     selectBody(hit, { openCard: true, fly: false });
+    syncSearchBox(name);
   }
 
   function userTouched() {

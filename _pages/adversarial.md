@@ -3,14 +3,14 @@ layout: single
 title: "Fool a Neural Network"
 permalink: /adversarial/
 author_profile: false
-excerpt: "Add invisible noise to a digit and watch a neural network change its mind — adversarial examples, live in your browser."
+excerpt: "Add a small, carefully chosen amount of noise to a digit and watch a neural network change its mind: adversarial examples, running live in your browser."
 description: "An interactive adversarial-example demo by Keane Lucas: a small MNIST classifier runs entirely in your browser, and the Fast Gradient Sign Method nudges every pixel just enough to flip its prediction while the image looks unchanged to you. Draw your own digits and attack them too."
 ---
 
 <div class="adv-app life-app">
   <div class="adv-topfade" aria-hidden="true"></div>
   <canvas id="adv-canvas" class="adv-canvas"
-          aria-label="Three images: an original digit, an amplified noise pattern, and their sum — which the neural network misclassifies even though it looks identical to the original."></canvas>
+          aria-label="Three images: an original digit, an amplified noise pattern, and their sum, which the neural network misclassifies even though it looks identical to the original."></canvas>
 
   <div class="adv-panel" id="adv-panel">
     <div class="adv-panel__head">
@@ -127,7 +127,9 @@ html[data-theme="light"] .adv-topfade {
 
 .adv-panel {
   position: fixed; top: 4.6rem; right: 1rem; z-index: 30;
-  width: 300px; max-width: calc(100vw - 2rem); max-height: calc(100vh - 6rem); max-height: calc(100dvh - 6rem);
+  width: 300px; max-width: calc(100vw - 2rem);
+  /* leave room at the bottom for the chat bar and the fixed corner buttons */
+  max-height: calc(100vh - 10rem); max-height: calc(100dvh - 10rem);
   overflow: auto; padding: 0.85rem 1rem 1rem;
   border: 1px solid rgba(255,255,255,0.12); border-radius: 10px;
   background: rgba(18,18,18,0.94);
@@ -152,8 +154,10 @@ html[data-theme="light"] .adv-panel { background: rgba(255,255,255,0.97); border
 .adv-slider { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.95em; }
 .adv-slider strong { font-variant-numeric: tabular-nums; }
 .adv-slider input[type="range"] { width: 100%; accent-color: #82a6cc; }
-.adv-check { display: inline-flex; align-items: center; gap: 0.45rem; font-size: 0.95em; cursor: pointer; }
-.adv-check input { accent-color: #82a6cc; }
+/* flex-start (plus a hair of top offset) keeps the box on the FIRST line when
+   the label wraps to two lines, e.g. the Advanced row in a 300px panel */
+.adv-check { display: inline-flex; align-items: flex-start; gap: 0.45rem; font-size: 0.95em; line-height: 1.35; cursor: pointer; }
+.adv-check input { accent-color: #82a6cc; flex: none; margin-top: 0.22em; }
 .adv-row { display: flex; flex-wrap: wrap; gap: 0.4rem; }
 .adv-btn {
   font: inherit; color: inherit; cursor: pointer; line-height: 1;
@@ -204,6 +208,11 @@ html[data-theme="light"] .adv-swatch--std { background: #34568a; }
 @media (prefers-color-scheme: light) {
   html:not([data-theme="dark"]) .adv-seg__btn--on { border-color: #34568a; background: rgba(52,86,138,0.14); }
   html:not([data-theme="dark"]) .adv-swatch--std { background: #34568a; }
+}
+
+/* phones: the corner buttons sit higher (bottom: 4rem), so the panel stops higher too */
+@media (max-width: 768px) {
+  .adv-panel { max-height: calc(100vh - 12.5rem); max-height: calc(100dvh - 12.5rem); }
 }
 
 html[data-theme="light"] .adv-slider input[type="range"],

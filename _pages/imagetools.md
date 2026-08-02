@@ -3,7 +3,7 @@ layout: single
 title: "Resize an Image to an Exact File Size in Your Browser"
 permalink: /imagetools/
 author_profile: false
-excerpt: "Resize an image to a target file size, crop, rotate, strip metadata, and generate a favicon pack — all privately in your browser."
+excerpt: "Resize an image to a target file size, crop it, rotate it, strip metadata, and generate a favicon pack, all running privately in your browser with nothing uploaded."
 description: "Resize an image to an exact file size (like 500 KB) for upload forms, right in your browser. Also crop, rotate, convert JPEG/PNG/WebP, strip EXIF metadata, and generate a favicon pack as a .zip. Nothing is uploaded; everything runs locally."
 ---
 
@@ -17,7 +17,7 @@ description: "Resize an image to an exact file size (like 500 KB) for upload for
     Nothing is uploaded anywhere; the file never leaves your device, and re-saving it strips the EXIF
     metadata (camera model, GPS location, timestamps) along the way.
   </p>
-  <p class="it-privacy" style="margin:0 0 1.1rem">A caveat: this is a personal side project and I have not
+  <p class="it-privacy" style="margin:0 0 0.4rem">A caveat: this is a personal side project and I have not
   tested it exhaustively. I make no guarantees; keep your original files.</p>
 
   <div class="it-grid">
@@ -38,7 +38,7 @@ description: "Resize an image to an exact file size (like 500 KB) for upload for
         <button id="it-undo" class="it-btn" type="button" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
         <button id="it-reset" class="it-btn" type="button">Reset</button>
       </div>
-      <p class="it-dims"><span id="it-dims">—</span> <span class="it-hint" id="it-rot-hint"></span></p>
+      <p class="it-dims"><span id="it-dims">–</span> <span class="it-hint" id="it-rot-hint"></span></p>
     </div>
 
     <div class="it-right">
@@ -126,10 +126,15 @@ description: "Resize an image to an exact file size (like 500 KB) for upload for
 .page__inner-wrap, .page__content { max-width: 100%; }
 /* The front-matter title is search-facing; the on-page heading stays "Image Studio". */
 .page__title { display: none; }
-.it-title { margin: 0 0 0.4em; }
-.it-wrap { max-width: 1080px; margin: 0 auto; }
-.it-intro { max-width: 64ch; opacity: 0.9; line-height: 1.6; }
-.it-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 1.5rem; margin-top: 1.5rem; align-items: start; }
+.it-title { margin: 0 0 0.2em; }
+/* Bottom padding so the Export column's buttons can always be scrolled clear of
+   the fixed chat bar (full width at 768px and under) and the corner buttons. */
+.it-wrap { max-width: 1080px; margin: 0 auto; padding-bottom: 2rem; }
+@media (max-width: 768px) { .it-wrap { padding-bottom: 4rem; } }
+/* The vertical rhythm above the Export column is deliberately tight: it is what
+   keeps "Download image" above the chat bar at a 900px-tall window. */
+.it-intro { max-width: 64ch; opacity: 0.9; line-height: 1.6; margin-bottom: 0.35rem; }
+.it-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 1.5rem; margin-top: 1rem; align-items: start; }
 @media (max-width: 760px) { .it-grid { grid-template-columns: 1fr; } }
 
 .it-drop {
@@ -150,9 +155,9 @@ description: "Resize an image to an exact file size (like 500 KB) for upload for
 .it-dims { font-size: 0.85em; opacity: 0.7; margin: 0.5rem 0 0; font-variant-numeric: tabular-nums; }
 .it-hint { opacity: 0.85; }
 
-.it-h { font-size: 1.15rem; margin: 0 0 0.6rem; }
+.it-h { font-size: 1.15rem; margin: 0 0 0.45rem; }
 .it-h--gap { margin-top: 1.6rem; }
-.it-field { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.95em; margin-bottom: 0.8rem; }
+.it-field { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.95em; margin-bottom: 0.6rem; }
 /* Solid, high-contrast controls (the theme's faint form styling washed these out). */
 .it-field select, .it-field input[type="number"] {
   font: inherit; padding: 0.45em 0.5em; border-radius: 6px;
@@ -170,7 +175,7 @@ html[data-theme="light"] .it-field select option { color: #1f2430; background: #
 .it-rotfield { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.92em; margin-top: 0.7rem; }
 .it-rotfield input[type="range"] { width: 100%; accent-color: #82a6cc; }
 .it-rotfield strong { font-variant-numeric: tabular-nums; }
-.it-adv { margin: 0 0 0.6rem; font-size: 0.95em; }
+.it-adv { margin: 0 0 0.4rem; font-size: 0.95em; }
 .it-adv summary { cursor: pointer; opacity: 0.8; font-size: 0.9em; }
 .it-adv .it-field { margin-top: 0.6rem; }
 html[data-theme="light"] .it-rotfield input[type="range"] { accent-color: #34568a; }
@@ -186,7 +191,7 @@ html[data-theme="light"] .it-rotfield input[type="range"] { accent-color: #34568
 .it-btn--accent { background: #82a6cc; border-color: #82a6cc; color: #fff; }
 .it-btn--accent:hover { background: #6f97c2; }
 .it-wide { width: 100%; padding: 0.6em; margin-top: 0.3rem; }
-.it-estimate { font-size: 0.9em; opacity: 0.85; min-height: 1.2em; margin: 0.2rem 0 0.6rem; font-variant-numeric: tabular-nums; }
+.it-estimate { font-size: 0.9em; opacity: 0.85; min-height: 1.2em; margin: 0.15rem 0 0.4rem; font-variant-numeric: tabular-nums; }
 .it-note { font-size: 0.85em; opacity: 0.8; line-height: 1.5; margin: 0 0 0.6rem; }
 .it-status { font-size: 0.88em; opacity: 0.9; min-height: 1.2em; margin: 0.8rem 0 0.4rem; }
 .it-privacy { font-size: 0.82em; opacity: 0.7; margin: 0; }

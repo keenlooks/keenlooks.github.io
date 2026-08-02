@@ -4,7 +4,7 @@ title: "Conway's Game of Life"
 permalink: /life/
 author_profile: false
 excerpt: "An interactive, full-screen Conway's Game of Life."
-description: "A full-screen, interactive Conway's Game of Life — draw cells, change the speed, and edit the birth/survival rules."
+description: "A full-screen, interactive version of Conway's Game of Life: draw cells with your mouse or finger, change the speed, and edit the birth and survival rules that govern it."
 ---
 
 <div class="life-app">
@@ -34,9 +34,9 @@ description: "A full-screen, interactive Conway's Game of Life — draw cells, c
 
       <div class="life-presets">
         <span>Patterns:</span>
-        <button class="life-pattern" data-pattern="glider-gun" type="button" title="Gosper's glider gun — fires a glider every 30 generations">Glider gun</button>
+        <button class="life-pattern" data-pattern="glider-gun" type="button" title="Gosper's glider gun: fires a glider every 30 generations">Glider gun</button>
         <button class="life-pattern" data-pattern="pulsar" type="button" title="A period-3 oscillator">Pulsar</button>
-        <button class="life-pattern" data-pattern="lwss" type="button" title="Lightweight spaceship — flies right forever">Spaceship</button>
+        <button class="life-pattern" data-pattern="lwss" type="button" title="Lightweight spaceship: flies right forever">Spaceship</button>
       </div>
 
       <label class="life-slider">
@@ -49,11 +49,11 @@ description: "A full-screen, interactive Conway's Game of Life — draw cells, c
       </label>
 
       <div class="life-rule-group">
-        <span class="life-rule-label"><strong>Born</strong> &mdash; neighbor counts that bring a cell to life</span>
+        <span class="life-rule-label"><strong>Born</strong>: neighbor counts that bring a cell to life</span>
         <div id="life-born" class="life-toggles"></div>
       </div>
       <div class="life-rule-group">
-        <span class="life-rule-label"><strong>Survives</strong> &mdash; neighbor counts that keep a cell alive</span>
+        <span class="life-rule-label"><strong>Survives</strong>: neighbor counts that keep a cell alive</span>
         <div id="life-survive" class="life-toggles"></div>
       </div>
 
@@ -68,7 +68,7 @@ description: "A full-screen, interactive Conway's Game of Life — draw cells, c
       <div class="life-rulestring">Rule: <code id="life-rulestring">B3/S23</code></div>
 
       <p class="life-credit">
-        Conway's Game of Life &mdash; learn more on
+        Conway's Game of Life. Learn more on
         <a href="https://en.wikipedia.org/wiki/Conway%27s_Game_of_Life" target="_blank" rel="noopener">Wikipedia</a>.
       </p>
     </div>
@@ -131,8 +131,10 @@ html[data-theme="light"] .life-topfade {
   z-index: 30;
   width: 290px;
   max-width: calc(100vw - 2rem);
-  max-height: calc(100vh - 6rem);
-  max-height: calc(100dvh - 6rem);
+  /* keep the bottom edge clear of the chat bar (desktop) and the fixed
+     corner buttons (phones, where they sit higher) */
+  max-height: calc(100vh - 10rem);
+  max-height: calc(100dvh - 10rem);
   overflow: auto;
   padding: 0.85rem 1rem 1rem;
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -153,6 +155,13 @@ html[data-theme="light"] .life-panel {
     background: rgba(255, 255, 255, 0.97);
     border-color: rgba(0, 0, 0, 0.12);
     box-shadow: 0 6px 24px rgba(0, 0, 0, 0.15);
+  }
+}
+@media screen and (max-width: 768px) {
+  /* the corner buttons are raised to bottom: 4rem here, so give them more room */
+  .life-panel {
+    max-height: calc(100vh - 12.5rem);
+    max-height: calc(100dvh - 12.5rem);
   }
 }
 .life-panel__head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }

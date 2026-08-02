@@ -3,6 +3,7 @@ layout: archive
 title: "CV"
 permalink: /cv/
 author_profile: true
+description: "CV of Keane Lucas: PhD in Electrical and Computer Engineering from Carnegie Mellon, now a Member of Technical Staff on Anthropic's Frontier Red Team."
 redirect_from:
   - /resume
   - /Resume
@@ -18,7 +19,7 @@ Education
 * B.S. in Computer Science, United States Air Force Academy, 2014
 * M.S. in Information Security, Carnegie Mellon University, 2016
 * M.S. in Machine Learning, Carnegie Mellon University, 2024
-* Ph.D in Electrical and Computer Engineering, Carnegie Mellon University, 2024
+* PhD in Electrical and Computer Engineering, Carnegie Mellon University, 2024
 
 Highlighted Experience
 ======
@@ -41,7 +42,7 @@ Highlighted Experience
 
 * Machine Learning Researcher at Center for Communications Research La Jolla
   * Summer 2018
-  * Co-wrote 2 technical papers submitted for publication. Executed 100+ hours of experimentation with top university mathematicians to solve DoD’s hardest problems. Implemented experimental ML process derived from research
+  * Co-wrote 2 technical papers submitted for publication. Executed 100+ hours of experimentation with top university mathematicians to solve DoD’s hardest problems. Implemented experimental ML process derived from research.
 
 * Technical Project Lead at DoD Joint Artificial Intelligence Center
   * Fall 2018 to Spring 2019
@@ -61,7 +62,7 @@ Presentations
   
 Projects
 ======
-* Doom Bot &mdash; deep reinforcement learning agent that plays DOOM from raw visual input ([GIF-filled presentation](https://bit.ly/mldoom))
+* Doom Bot: deep reinforcement learning agent that plays DOOM from raw visual input ([GIF-filled presentation](https://bit.ly/mldoom))
 
 
 Top Achievements

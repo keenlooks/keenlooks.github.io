@@ -101,7 +101,8 @@ html[data-theme="light"] .tt-topfade {
 .tt-stage {
   position: fixed; inset: 0; z-index: 0;
   display: flex; flex-direction: column; gap: 0.8rem;
-  padding: 7rem 1rem 0.9rem 1rem;
+  /* the bottom padding clears the fixed corner buttons and the chat bar */
+  padding: 7rem 1rem 5.2rem 1rem;
   overflow-y: auto;
 }
 .tt-text, .tt-bars-wrap, .tt-attn-wrap { width: 100%; max-width: 1000px; margin: 0 auto; }
@@ -164,7 +165,9 @@ html[data-theme="light"] .tt-bar__fill { background: #34568a; }
 /* ---- controls panel ---- */
 .tt-panel {
   position: fixed; top: 4.6rem; right: 1rem; z-index: 30;
-  width: 320px; max-width: calc(100vw - 2rem); max-height: calc(100vh - 6rem); max-height: calc(100dvh - 6rem);
+  width: 320px; max-width: calc(100vw - 2rem);
+  /* leave room at the bottom for the chat bar and the fixed corner buttons */
+  max-height: calc(100vh - 10rem); max-height: calc(100dvh - 10rem);
   overflow: auto; padding: 0.85rem 1rem 1rem;
   border: 1px solid rgba(255,255,255,0.12); border-radius: 10px;
   background: rgba(18,18,18,0.94);
@@ -226,15 +229,35 @@ html[data-theme="light"] .tt-slider input[type="range"] { accent-color: #34568a;
 .tt-verify--bad { color: #c4574a; opacity: 1; font-weight: 600; }
 
 /* ---- responsive ---- */
-@media (min-width: 1080px) {
+/* The controls panel is expanded from 600px up (it starts collapsed below
+   that), so the stage reserves its column from 600px up too. Without this the
+   last probability bars, the caption and part of the heatmap sat under it. */
+@media (min-width: 600px) {
   .tt-stage { padding-right: calc(320px + 2.6rem); }
 }
+/* Below 600px the panel starts collapsed and keeps its full 320px width, so it
+   sits over the text card instead of beside it: its head runs from top 4.6rem
+   to about 8.25rem, and the stage's 7rem of top padding put the first line of
+   generated text underneath it. Drop the stage a little further so the text
+   starts clear of the collapsed header. */
+@media (max-width: 599px) {
+  .tt-stage { padding-top: 8.75rem; }
+}
 @media (max-width: 768px) {
-  .tt-stage { padding-bottom: 1rem; }  /* the chat widget is hidden on phones for .life-app pages */
+  /* the chat widget is hidden on phones for .life-app pages, but the corner
+     buttons are raised to bottom: 4rem, so keep the stage above them */
+  .tt-stage { padding-bottom: 7.2rem; }
+  .tt-panel { max-height: calc(100vh - 12.5rem); max-height: calc(100dvh - 12.5rem); }
 }
 @media (max-width: 480px) {
   .tt-bar__pct { display: none; }
   .tt-bars { gap: 3px; }
+}
+/* 600 to 767px the panel takes its column, which leaves the bars too narrow for
+   the percentages to sit apart (the same trade the phone layout already makes) */
+@media (min-width: 600px) and (max-width: 767px) {
+  .tt-bar__pct { display: none; }
+  .tt-bars { gap: 4px; }
 }
 </style>
 
