@@ -100,7 +100,10 @@ html[data-theme="light"] .c4-topfade {
 .c4-panel {
   position: fixed; top: 4.6rem; right: 1rem; z-index: 30;
   width: 300px; max-width: calc(100vw - 2rem);
-  max-height: calc(100vh - 6rem); max-height: calc(100dvh - 6rem);
+  /* The chat widget is a fixed bar across the bottom right (a full-width bar on
+     phones), so a panel that runs to within 2rem of the bottom edge ends with
+     its last controls underneath it and unclickable. Stop well short of it. */
+  max-height: calc(100vh - 10rem); max-height: calc(100dvh - 10rem);
   overflow: auto; padding: 0.85rem 1rem 1rem;
   border: 1px solid rgba(255,255,255,0.12); border-radius: 10px;
   background: rgba(18,18,18,0.94);
@@ -146,14 +149,14 @@ html[data-theme="light"] .c4-panel { background: rgba(255,255,255,0.97); border-
 .c4-verify-line { margin: 0; font-size: 0.78em; opacity: 0.6; line-height: 1.4; }
 .c4-credit { margin: 0; font-size: 0.78em; opacity: 0.55; line-height: 1.4; }
 
-/* Small screens: the blurb runs to a dozen lines, which pushed New game and the
-   strength slider below the fold. The panel body is a flex column, so lead with
-   the things you touch and let the prose follow. */
-@media (max-width: 768px) {
-  .c4-blurb { order: 1; }
-  .c4-verify-line { order: 2; }
-  .c4-credit { order: 3; }
-}
+/* The blurb runs to a dozen lines and the notes under it to a dozen more, which
+   is taller than the panel is ever allowed to be: it pushed New game, the
+   strength slider and the Share buttons below the fold (on a laptop they landed
+   under the chat bar). The panel body is a flex column, so lead with the things
+   you touch everywhere and let the prose follow and scroll. */
+.c4-blurb { order: 1; }
+.c4-verify-line { order: 2; }
+.c4-credit { order: 3; }
 /* touch targets */
 @media (pointer: coarse) {
   .c4-btn { min-height: 40px; padding: 0.5em 0.85em; }

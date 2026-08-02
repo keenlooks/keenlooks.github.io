@@ -424,19 +424,29 @@
   }
 
   /* The fixed #theme-toggle / #life-link buttons float over the bottom-left of
-     every .life-app page. They are created on DOMContentLoaded, i.e. possibly
-     after this deferred script's first layout, so fall back to the measured
-     band until they exist. */
-  function cornerBandHeight() {
+     every .life-app page. Their union is what the board and the column numbers
+     under it have to stay clear of. They are created on DOMContentLoaded, i.e.
+     possibly after this deferred script's first layout, so this returns null
+     until they exist and cornerBandHeight falls back to a measured band. */
+  function cornerBandRect() {
     var els = [document.getElementById('theme-toggle'), document.getElementById('life-link')];
-    var top = Infinity;
+    var top = Infinity, left = Infinity, right = -Infinity;
     for (var i = 0; i < els.length; i++) {
       if (!els[i]) continue;
       var r = els[i].getBoundingClientRect();
-      if (r.height && r.top < top) top = r.top;
+      if (!r.height) continue;
+      if (r.top < top) top = r.top;
+      if (r.left < left) left = r.left;
+      if (r.right > right) right = r.right;
     }
-    if (!isFinite(top)) return CW <= 768 ? 116 : 96;
-    return Math.max(40, Math.round(CH - top) + 10);
+    if (!isFinite(top)) return null;
+    return { x: left, y: top, w: right - left };
+  }
+
+  function cornerBandHeight() {
+    var band = cornerBandRect();
+    if (!band) return CW <= 768 ? 116 : 96;
+    return Math.max(40, Math.round(CH - band.y) + 10);
   }
 
   function layout() {
@@ -463,24 +473,39 @@
     geo.wide = wide;
     geo.showTree = think && CW >= 700;
     var bx, bw, bh, by;
+    /* Horizontal extents first: they do not depend on the top reserve, and the
+       panel test below has to know where the board is really going to sit. */
     if (wide) {
       geo.tw = twWide;
       geo.tx = twRight - twWide;
       bx = CW * 0.03; bw = geo.tx - 24 - bx;
-      by = topPad; bh = CH - topPad - botPad;
     } else if (think) {
       bx = CW * 0.06; bw = CW * 0.88;
-      by = topPad; bh = (CH - topPad - botPad) * 0.52;
     } else {
       /* thinking hidden: the board would otherwise fill the height and leave
          the robot nowhere to stand but on top of it, so keep a row free */
       bx = CW * 0.10; bw = CW * 0.80;
-      by = topPad; bh = CH - topPad - botPad - 58;
     }
     /* The stacked branches must respect the panel too: between 600 and 1000px
        wide with the panel open (a tablet in portrait), an unclamped board runs
        under it and those columns become unclickable. */
     if (!wide) bw = Math.min(bw, twRight - bx);
+    /* Collapsed, the panel is a header floating over the top-right corner and
+       nothing was reserved beside the board for it (under 600px there is no
+       room to reserve). Where the two overlap it covers the board's top row:
+       those cells are hidden and their taps land on the panel instead of the
+       canvas, which is exactly what a phone in portrait gets. Start the board
+       below it. The height guard leaves an expanded panel alone, since covering
+       the board while it is open is accepted and clearing a full-height panel
+       would squeeze the board to nothing. */
+    var pnl = geo.panel;
+    if (!reserve && pnl && pnl.h < CH * 0.5 && pnl.x < bx + bw && pnl.x + pnl.w > bx) {
+      topPad = Math.max(topPad, pnl.y + pnl.h + 10);
+    }
+    by = topPad;
+    bh = wide ? (CH - topPad - botPad)
+       : think ? (CH - topPad - botPad) * 0.52
+               : (CH - topPad - botPad - 58);
     /* the 3px floor keeps ctx.arc radii positive on absurdly short viewports —
        a thrown draw would otherwise kill the rAF loop for good */
     var s = Math.max(3, Math.min(bw / NC, bh / (NR + 0.6)));
@@ -489,6 +514,19 @@
     geo.botPad = botPad;
     geo.bx = bx + (bw - boardW) / 2;
     geo.by = by + (bh - boardH) / 2 + s * 0.3;
+    /* The column numbers run in a row under the board and the corner buttons
+       float over the bottom left, so where the board reaches that far left the
+       "1" ends up behind them. The board is centred in its band with room to
+       spare above, so lift it by the overlap rather than making it smaller. */
+    var band = cornerBandRect();
+    if (band) {
+      var labelRoom = s * 0.28 + Math.max(11, s * 0.22) * 1.3;
+      var labL = geo.bx + s * 0.5 - 10, labR = geo.bx + boardW - s * 0.5 + 10;
+      if (labL < band.x + band.w && labR > band.x) {
+        var over = (geo.by + boardH + labelRoom) - band.y;
+        if (over > 0) geo.by -= Math.min(over, Math.max(0, geo.by - by));
+      }
+    }
     geo.bw = boardW;
     geo.bh = boardH;
     if (wide) {
@@ -1767,7 +1805,8 @@
     /* laid-out boxes so overlap can be asserted in tests rather than eyeballed */
     get boxes() {
       return { robot: st.robotBox || null, bubble: st.bubbleBox || null,
-               panel: geo.panel || null, think: geo.tw
+               panel: geo.panel || null, board: geo.s ? boardRect() : null,
+               band: cornerBandRect(), think: geo.tw
                  ? { x: geo.tx, y: geo.ty, w: geo.tw, h: geo.th } : null };
     },
     say: function (t) { say(String(t || '')); }
