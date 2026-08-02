@@ -106,6 +106,54 @@
     });
   };
 
+  // rotate a normalized POINT (fraction of the effective page) by a multiple of 90°,
+  // same frame/formula as rotateRects (a zero-size rect) — the generalized point rotator
+  PURE.rotatePoint = function (x, y, delta) {
+    var r = PURE.rotateRects([{ x: x, y: y, w: 0, h: 0 }], delta)[0];
+    return { x: r.x, y: r.y };
+  };
+
+  // rotate text annotations' anchors with the page, same frame as rotateRects/rotateWords
+  // (fractions of the EFFECTIVE page view). Text is always drawn upright/horizontal here
+  // (there is no glyph-rotation support), so the ANCHOR is what moves; font size is in
+  // absolute PDF points and is unaffected by which way the page is turned.
+  // `boxes` (optional) is a parallel array of {w,h} — an approximate normalized bounding
+  // box for each text, measured by the caller (a canvas is needed for that, so it can't
+  // happen in this DOM-free PURE function). Treating the anchor as a bare POINT (the
+  // default when boxes is omitted) is only correct for text sitting well clear of the
+  // page edge — a real box lets the rotation account for the box's own footprint, so text
+  // placed close to an edge does not get rotated into a spot where it runs off the page.
+  // `Wpt`/`Hpt` (also optional) are the CURRENT effective page size in points, before this
+  // rotation — with them supplied, the anchor is additionally clamped so the text's own
+  // PHYSICAL size (which never changes; the glyphs are never actually rotated) still fits
+  // inside the rotated page, rather than only having its footprint's fraction swapped
+  // (fine for redaction rects, which have no fixed physical content, but not for text).
+  PURE.rotateTexts = function (texts, delta, boxes, Wpt, Hpt) {
+    var d = ((delta % 360) + 360) % 360, swap = (d === 90 || d === 270);
+    return (texts || []).map(function (t, i) {
+      var b = (boxes && boxes[i]) || { w: 0, h: 0 };
+      var r = PURE.rotateRects([{ x: t.x, y: t.y, w: b.w, h: b.h }], delta)[0];
+      if (Wpt && Hpt) {
+        var wNew = swap ? b.w * (Wpt / Hpt) : b.w;
+        var hNew = swap ? b.h * (Hpt / Wpt) : b.h;
+        r.x = Math.min(r.x, Math.max(0, 1 - wNew));
+        r.y = Math.min(r.y, Math.max(0, 1 - hNew));
+      }
+      return { x: r.x, y: r.y, text: t.text, size: t.size, font: t.font, color: t.color };
+    });
+  };
+
+  // rotate signature rects with the page — same treatment PURE.rotateRects already gives
+  // redaction boxes (position + a w/h swap on 90°/270°). The placed PNG itself is never
+  // re-rendered, so this keeps the box (and thus the signature) anchored to the same
+  // corner/edge of the rotated page rather than left in the old, now-wrong, position.
+  PURE.rotateSigs = function (sigs, delta) {
+    return (sigs || []).map(function (s) {
+      var r = PURE.rotateRects([{ x: s.x, y: s.y, w: s.w, h: s.h }], delta)[0];
+      return { png: s.png, x: r.x, y: r.y, w: r.w, h: r.h };
+    });
+  };
+
   // drop OCR words whose box overlaps any redaction rect — the invisible text layer
   // must never resurrect content the user blacked out
   PURE.filterOcrWords = function (words, rects) {
@@ -258,6 +306,10 @@
   var lastFlattenedRot = 0;  // pages the last build rasterized because overlays sat on a rotated page
   var lastFlattenedSrc = 0;  // pages the last build rasterized because the source was encrypted/damaged
   var lastDropped = 0;       // added texts/watermarks that lost characters (not WinAnsi-encodable)
+  var lastSigFailed = 0;     // placed signatures that could not be embedded into the output
+  var lastFormFailed = 0;    // filled form field values that could not be applied
+  var lastDpiCapped = 0;     // pages flattened at a lower DPI than requested (page too large)
+  var lastDpiFloor = 0;      // the lowest effective DPI actually used, when lastDpiCapped > 0
   var redactDpi = 150;       // render quality used when redacted pages are flattened on download
   var busy = false;          // one long operation at a time
   var undoStack = PURE.makeUndoStack(25);
@@ -273,9 +325,31 @@
   }
   function hasRedacts(pg) { return !!(pg.redacts && pg.redacts.length); }
 
+  // approximate normalized {w,h} bounding box for a text annotation, measured against
+  // the CURRENT effective page size (Wpt, Hpt) — used only when rotating a page (see
+  // PURE.rotateTexts) so the rotation can account for the text's own footprint instead
+  // of treating it as a zero-size point (which lets it get rotated into a spot where it
+  // runs off the page — text only ever grows right/down from its anchor).
+  var measureCanvas = null;
+  function textFontCss(t) {
+    var fam = t.font === 'Times' ? 'Georgia, "Times New Roman", serif' : t.font === 'Courier' ? '"Courier New", monospace' : 'Arial, Helvetica, sans-serif';
+    return (t.size || 14) + 'px ' + fam;
+  }
+  function textBoxFrac(t, Wpt, Hpt) {
+    if (!measureCanvas) measureCanvas = document.createElement('canvas');
+    var mx = measureCanvas.getContext('2d');
+    mx.font = textFontCss(t);
+    var lines = (t.text || '').split('\n'), maxW = 0;
+    lines.forEach(function (line) { maxW = Math.max(maxW, mx.measureText(line).width); });
+    var hPt = (t.size || 14) * 1.2 * Math.max(1, lines.length);
+    return { w: Wpt ? Math.min(1, maxW / Wpt) : 0, h: Hpt ? Math.min(1, hPt / Hpt) : 0 };
+  }
+  function textBoxes(texts, Wpt, Hpt) { return (texts || []).map(function (t) { return textBoxFrac(t, Wpt, Hpt); }); }
+
   // ---- elements ----
   var drop = $('pt-drop'), grid = $('pt-grid'), fileInput = $('pt-file'), toolbar = $('pt-toolbar');
   var statusEl = $('pt-status'), countEl = $('pt-count');
+  var tipEl = $('pt-tip'), btnEditPage = $('pt-editpage');
   var btnAdd = $('pt-add'), btnSelAll = $('pt-selall'), btnRotate = $('pt-rotate'), btnRotCcw = $('pt-rotccw'),
       btnDup = $('pt-dup'), btnBlank = $('pt-blank'), btnDelete = $('pt-delete'), btnUndo = $('pt-undo'),
       btnShrink = $('pt-shrink'), btnExtract = $('pt-extract'), btnSplit = $('pt-split'), btnDownload = $('pt-download'),
@@ -283,15 +357,20 @@
   var rangeInput = $('pt-range'), rangeInfo = $('pt-range-info');
   var progWrap = $('pt-progress'), progFill = $('pt-progress-fill');
 
-  function setStatus(msg) {
+  // kind: 'err' | 'warn' | omit — styles the status line (see .pt-status--err/--warn)
+  function setStatus(msg, kind) {
     if (!statusEl) return;
     statusEl.textContent = msg || '';
+    statusEl.classList.remove('pt-status--err', 'pt-status--warn');
+    if (kind === 'err') statusEl.classList.add('pt-status--err');
+    else if (kind === 'warn') statusEl.classList.add('pt-status--warn');
     // the status line sits below the grid, which for multi-page docs is below the fold —
     // bring terminal messages (saved / errors / warnings) into view, never progress ticks
     if (!msg) return;
     var edEl = document.getElementById('pt-ed');
     if (edEl && !edEl.hidden) return;   // the full-screen editor covers the page anyway
-    if (/^(Saved|Error|Couldn|Skipped|No pages)/.test(msg) || msg.indexOf('flattened') >= 0 || msg.indexOf('could not') >= 0) {
+    if (/^(Saved|Error|Couldn|Skipped|No pages|Heads up)/.test(msg) || msg.indexOf('flattened') >= 0 ||
+        msg.indexOf('could not') >= 0 || msg.indexOf('larger') >= 0) {
       var r = statusEl.getBoundingClientRect();
       if (r.top > window.innerHeight - 30 || r.bottom < 0) {
         try { statusEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
@@ -409,12 +488,13 @@
 
   function addFiles(fileList) {
     // a drop while a load is running must not vanish silently — say so
-    if (busy) { setStatus('Still busy with the current operation — add those files again in a moment.'); return; }
-    var arr = Array.prototype.slice.call(fileList).filter(function (f) { return isPdf(f) || isImage(f); });
-    var rejectedTypes = Array.prototype.slice.call(fileList).length - arr.length;
-    if (!arr.length) { if (rejectedTypes) setStatus('Those files aren’t PDFs or images.'); return; }
+    if (busy) { setStatus('Still busy with the current operation, add those files again in a moment.', 'warn'); return; }
+    var all = Array.prototype.slice.call(fileList);
+    var arr = all.filter(function (f) { return isPdf(f) || isImage(f); });
+    var badType = all.filter(function (f) { return !isPdf(f) && !isImage(f); });
+    if (!arr.length) { if (badType.length) setStatus('Those files aren’t PDFs or images.', 'err'); return; }
     setBusy(true);
-    var beforeLen = pages.length;
+    var beforeLen = pages.length, beforeDocs = docs.length;
     snapshot('add ' + arr.length + ' file' + (arr.length > 1 ? 's' : ''));
     var addSeq = snapSeq;   // guards the trailing dropSnapshot below (top-of-stack check)
     var failed = [], skipped = [];
@@ -452,10 +532,40 @@
       if (added > 0) msg.push('Added ' + added + ' page' + (added > 1 ? 's' : '') + '.');
       if (failed.length) msg.push('Couldn’t read: ' + failed.join(', ') + ' (the file may be corrupted or an unsupported format).');
       if (skipped.length) msg.push('Skipped (password not provided): ' + skipped.join(', ') + '.');
-      setStatus(msg.join(' '));
+      if (badType.length) msg.push('Skipped ' + badType.map(function (f) { return f.name; }).join(', ') + ' (not a PDF or image).');
+      var addKind = added === 0 ? 'err' : (failed.length || skipped.length || badType.length) ? 'warn' : undefined;
+      var base = msg.join(' ');
+      setStatus(base, addKind);
+      // a form PDF looks like any other one in the grid until you open the editor — say so
+      if (added > 0) hasFillableFields(beforeDocs).then(function (yes) {
+        if (!yes || !statusEl || statusEl.textContent !== base) return;   // something else has spoken since
+        setStatus(base + ' This PDF has fillable form fields. Double-click a page to fill them.', addKind);
+      }, function () {});   // a notice is a nicety: never let it break the rest of the load
       // let the open editor refresh its page label / nav arrows for the new pages
       if (added > 0 && window.__PT && window.__PT.onPagesChanged) window.__PT.onPagesChanged();
     });
+  }
+
+  // do any of the docs added from index `from` on carry fillable AcroForm fields? Uses
+  // pdf.js's already-parsed field map (cheap — no second pdf-lib load of the bytes) and
+  // ignores push buttons and signature widgets, which are not things you can type into.
+  function hasFillableFields(from) {
+    var ds = docs.slice(from).filter(function (d) { return d && d.js && d.js.getFieldObjects; });
+    if (!ds.length) return Promise.resolve(false);
+    return Promise.all(ds.map(function (d) {
+      var p;
+      // a torn-down pdf.js document throws from this call rather than rejecting
+      try { p = d.js.getFieldObjects(); } catch (e) { return false; }
+      if (!p || !p.then) return false;
+      return p.then(function (fo) {
+        if (!fo) return false;
+        return Object.keys(fo).some(function (k) {
+          return (fo[k] || []).some(function (f) {
+            return f && f.type && f.type !== 'button' && f.type !== 'signature';
+          });
+        });
+      }, function () { return false; });
+    })).then(function (r) { return r.some(Boolean); });
   }
 
   function addPdfBytes(bytes, name) {
@@ -485,15 +595,28 @@
   var passResolve = null;
   function askPassword(name, again) {
     if (!passDialog) return Promise.resolve(null);
-    return new Promise(function (res) {
-      passResolve = res;
-      if (passMsg) passMsg.textContent = (again ? 'That password didn’t work. ' : '') +
-        '“' + name + '” is password-protected. Enter its password to open it, or cancel to skip this file.';
-      if (passInput) passInput.value = '';
-      if (passDialog.hidden) passDialog.__opener = document.activeElement;   // opened directly, not via openDialog
-      passDialog.hidden = false;
-      setTimeout(function () { if (passInput) passInput.focus(); }, 0);
-    });
+    function show() {
+      return new Promise(function (res) {
+        passResolve = res;
+        if (passMsg) passMsg.textContent = (again ? 'That password didn’t work. ' : '') +
+          '“' + name + '” is password-protected. Enter its password to open it, or cancel to skip this file.';
+        if (passInput) passInput.value = '';
+        if (passDialog.hidden) passDialog.__opener = document.activeElement;   // opened directly, not via openDialog
+        passDialog.hidden = false;
+        setTimeout(function () { if (passInput) passInput.focus(); }, 0);
+      });
+    }
+    // a drag-dropped encrypted file can trigger this while the user already has a
+    // different dialog open (Watermark, Shrink, …) — the one-modal-at-a-time design means
+    // never stacking a second one on top; wait for the slot to free up first
+    if (modalOpen()) {
+      return new Promise(function (res) {
+        var iv = setInterval(function () {
+          if (!modalOpen()) { clearInterval(iv); show().then(res); }
+        }, 200);
+      });
+    }
+    return show();
   }
   function passDone(val) {
     if (!passResolve) return;
@@ -782,12 +905,19 @@
       var rb = document.createElement('button'); rb.className = 'pt-thumb__act'; rb.type = 'button'; rb.title = 'Rotate 90°'; rb.textContent = '⟳';
       rb.addEventListener('click', function (e) {
         e.stopPropagation(); if (busy) return;
-        snapshot('rotate page ' + (idx + 1));
-        pg.rot = (pg.rot + 90) % 360;
-        pg.redacts = PURE.rotateRects(pg.redacts, 90);   // boxes + OCR words follow the content
-        pg.ocrWords = PURE.rotateWords(pg.ocrWords, 90);
-        markDirty(pg); renderGrid();
-        setStatus('Rotated page ' + (idx + 1) + '.');
+        setBusy(true);
+        // Wpt/Hpt (needed to measure the text boxes below) may require an async pdf.js
+        // call for a live vector page — get it BEFORE mutating anything
+        effPointSize(pg).then(function (sz) {
+          snapshot('rotate page ' + (idx + 1));
+          pg.rot = (pg.rot + 90) % 360;
+          pg.redacts = PURE.rotateRects(pg.redacts, 90);   // boxes + OCR words + text/sig
+          pg.ocrWords = PURE.rotateWords(pg.ocrWords, 90); // annotations all follow the content
+          pg.texts = PURE.rotateTexts(pg.texts, 90, textBoxes(pg.texts, sz.w, sz.h), sz.w, sz.h);
+          pg.sigs = PURE.rotateSigs(pg.sigs, 90);
+          markDirty(pg); renderGrid();
+          setStatus('Rotated page ' + (idx + 1) + '.');
+        }).then(function () { setBusy(false); });
       });
       var db = document.createElement('button'); db.className = 'pt-thumb__act'; db.type = 'button'; db.title = 'Delete page'; db.textContent = '×';
       db.addEventListener('click', function (e) {
@@ -942,12 +1072,23 @@
     if (!v) return { empty: true, idx: null };
     return { empty: false, idx: PURE.parsePageRange(v, pages.length) };
   }
+  // pages to act on for the "Download selected" button: a VALID, non-empty range
+  // overrides the thumbnail selection; an EMPTY box or one that could not be parsed both
+  // fall back to the selection — an invalid range must not strand selected thumbnails
+  function extractIdx() {
+    var st = rangeState();
+    return (st.idx && st.idx.length) ? st.idx : selectedIdx();
+  }
   function updateRangeInfo() {
     if (!rangeInfo) return;
     var st = rangeState();
-    if (st.empty) { rangeInfo.textContent = ''; rangeInfo.classList.remove('pt-range-info--bad'); }
-    else if (st.idx) { rangeInfo.textContent = '→ ' + st.idx.length + ' page' + (st.idx.length > 1 ? 's' : ''); rangeInfo.classList.remove('pt-range-info--bad'); }
-    else { rangeInfo.textContent = 'invalid'; rangeInfo.classList.add('pt-range-info--bad'); }
+    if (st.empty) { rangeInfo.textContent = ''; rangeInfo.title = ''; rangeInfo.classList.remove('pt-range-info--bad'); }
+    else if (st.idx) { rangeInfo.textContent = '→ ' + st.idx.length + ' page' + (st.idx.length > 1 ? 's' : ''); rangeInfo.title = ''; rangeInfo.classList.remove('pt-range-info--bad'); }
+    else {
+      rangeInfo.textContent = 'not a valid range';
+      rangeInfo.title = 'This range could not be read, so the buttons use the pages selected in the grid instead. Try something like 1-5, 9, 12-';
+      rangeInfo.classList.add('pt-range-info--bad');
+    }
   }
   if (rangeInput) rangeInput.addEventListener('input', function () { updateRangeInfo(); updateToolbar(); });
 
@@ -955,12 +1096,22 @@
     var has = pages.length > 0, sel = selectedIdx().length;
     if (toolbar) toolbar.hidden = !has && docs.length === 0;
     if (has && toolbar) toolbar.hidden = false;
-    if (countEl) countEl.textContent = has ? (pages.length + ' page' + (pages.length > 1 ? 's' : '') + (sel ? ', ' + sel + ' selected' : '')) : '';
+    if (tipEl) tipEl.hidden = !has;
+    // "none selected" is the state most of the toolbar is disabled FOR — say it, rather
+    // than leaving the count silent about why Rotate/Delete are greyed out
+    if (countEl) countEl.textContent = has ? (pages.length + ' page' + (pages.length > 1 ? 's' : '') + (sel ? ', ' + sel + ' selected' : ', none selected')) : '';
+    if (btnEditPage) btnEditPage.disabled = !has;
     if (btnRotate) btnRotate.disabled = sel === 0;
     if (btnRotCcw) btnRotCcw.disabled = sel === 0;
     if (btnDup) btnDup.disabled = sel === 0;
     if (btnDelete) btnDelete.disabled = sel === 0;
     if (btnBlank) btnBlank.disabled = false;
+    // a disabled button explains itself: the tooltip says what to do first, not just
+    // what the button would have done
+    if (btnRotate) btnRotate.title = sel ? 'Rotate selected pages 90° clockwise' : 'Select pages first, then rotate them 90° clockwise';
+    if (btnRotCcw) btnRotCcw.title = sel ? 'Rotate selected pages 90° counterclockwise' : 'Select pages first, then rotate them 90° counterclockwise';
+    if (btnDup) btnDup.title = sel ? 'Duplicate selected pages' : 'Select pages first, then duplicate them';
+    if (btnDelete) btnDelete.title = sel ? 'Delete selected pages' : 'Select pages first, then delete them';
     if (btnUndo) {
       btnUndo.disabled = undoStack.size() === 0;
       var top = undoStack.peek();
@@ -974,13 +1125,18 @@
     }
     var st = rangeState();
     if (btnExtract) {
-      btnExtract.disabled = st.empty ? sel === 0 : !(st.idx && st.idx.length);
+      var exIdx = extractIdx();
+      btnExtract.disabled = exIdx.length === 0;
       // same verb as the main button, scope is the only difference: "Download all (12)"
       // vs "Download selected" / "Download 3 pages" (selection or the typed range)
-      var exN = st.empty ? sel : (st.idx ? st.idx.length : 0);
-      btnExtract.textContent = exN ? ('Download ' + exN + ' page' + (exN > 1 ? 's' : '')) : 'Download selected';
+      btnExtract.textContent = exIdx.length ? ('Download ' + exIdx.length + ' page' + (exIdx.length > 1 ? 's' : '')) : 'Download selected';
+      btnExtract.title = exIdx.length
+        ? 'Download ONLY those pages as their own PDF. The document here stays as it is.'
+        : 'Select pages (or type a range in the Pages box) first, then download just those as their own PDF.';
     }
-    if (btnSplit) btnSplit.disabled = !has || (!st.empty && !st.idx);
+    // Split always has a fallback (the typed range, else the whole document), so an
+    // invalid range must not disable it — only having zero pages at all should
+    if (btnSplit) btnSplit.disabled = !has;
     if (btnDownload) {
       btnDownload.disabled = !has;
       btnDownload.textContent = has ? ('Download all (' + pages.length + ')') : 'Download all';
@@ -992,6 +1148,13 @@
 
   // ---------- toolbar actions ----------
   btnAdd.addEventListener('click', function () { if (!busy) fileInput.click(); });
+  // the editor used to be reachable only by double-click or the small ✎ on a thumbnail —
+  // this opens the first selected page, else page 1
+  if (btnEditPage) btnEditPage.addEventListener('click', function () {
+    if (busy || !pages.length) return;
+    var sel = selectedIdx();
+    if (window.__PT && window.__PT.openEditor) window.__PT.openEditor(sel.length ? sel[0] : 0);
+  });
   fileInput.addEventListener('change', function () { addFiles(fileInput.files); fileInput.value = ''; });
 
   drop.addEventListener('click', function (e) { if (busy) return; if (pages.length === 0 && e.target === drop || e.target.classList.contains('pt-drop__hint') || (e.target.parentNode && e.target.parentNode.classList && e.target.parentNode.classList.contains('pt-drop__hint'))) fileInput.click(); });
@@ -1027,15 +1190,23 @@
   function rotateSelected(delta, label) {
     if (busy) return;
     var sel = selectedIdx(); if (!sel.length) return;
-    snapshot(label + ' ' + sel.length + ' page' + (sel.length > 1 ? 's' : ''));
-    sel.forEach(function (i) {
-      pages[i].rot = (pages[i].rot + delta) % 360;
-      pages[i].redacts = PURE.rotateRects(pages[i].redacts, delta);   // boxes + OCR words follow the content
-      pages[i].ocrWords = PURE.rotateWords(pages[i].ocrWords, delta);
-      markDirty(pages[i]);
-    });
-    renderGrid();
-    setStatus('Rotated ' + sel.length + ' page' + (sel.length > 1 ? 's' : '') + '.');
+    setBusy(true);
+    // Wpt/Hpt (to measure each page's text boxes) may need an async pdf.js call for a
+    // live vector page — collect them all BEFORE mutating anything
+    Promise.all(sel.map(function (i) { return effPointSize(pages[i]); })).then(function (sizes) {
+      snapshot(label + ' ' + sel.length + ' page' + (sel.length > 1 ? 's' : ''));
+      sel.forEach(function (i, k) {
+        var pg = pages[i], sz = sizes[k];
+        pg.rot = (pg.rot + delta) % 360;
+        pg.redacts = PURE.rotateRects(pg.redacts, delta);   // boxes + OCR words +
+        pg.ocrWords = PURE.rotateWords(pg.ocrWords, delta); // text/sig annotations
+        pg.texts = PURE.rotateTexts(pg.texts, delta, textBoxes(pg.texts, sz.w, sz.h), sz.w, sz.h); // all
+        pg.sigs = PURE.rotateSigs(pg.sigs, delta);          // follow the content
+        markDirty(pg);
+      });
+      renderGrid();
+      setStatus('Rotated ' + sel.length + ' page' + (sel.length > 1 ? 's' : '') + '.');
+    }).then(function () { setBusy(false); });
   }
   btnRotate.addEventListener('click', function () { rotateSelected(90, 'rotate'); });
   if (btnRotCcw) btnRotCcw.addEventListener('click', function () { rotateSelected(270, 'rotate'); });
@@ -1065,17 +1236,32 @@
   if (btnBlank) btnBlank.addEventListener('click', function () {
     if (busy) return;
     var sel = selectedIdx();
+    var selPages = sel.map(function (i) { return pages[i]; });   // capture the OBJECTS, not
+                                                                  // indices — the await below
+                                                                  // is a gap another action
+                                                                  // could otherwise splice into
+    setBusy(true);
     var sizeP = sel.length ? effPointSize(pages[sel[0]]) : Promise.resolve({ w: 595.28, h: 841.89 });   // A4 default
     sizeP.then(function (sz) {
+      // re-validate after the await: setBusy(true) should already block a concurrent
+      // Delete/Ctrl+Z, but re-find the selection by identity anyway rather than trust a
+      // captured index that may no longer point at the same page
+      var lastSel = -1;
+      selPages.forEach(function (p) {
+        var at2 = pages.indexOf(p);
+        if (at2 > lastSel) lastSel = at2;
+      });
       snapshot('insert blank page');
       var pg = newPage(-1, -1);
       pg.blank = { wPt: sz.w, hPt: sz.h };
-      var at = sel.length ? sel[sel.length - 1] + 1 : pages.length;
+      var at = lastSel >= 0 ? lastSel + 1 : pages.length;
       pages.splice(at, 0, pg);
       lastSelIdx = -1;
       orderChanged(); renderGrid(); updateToolbar();
       setStatus('Inserted a blank page at position ' + (at + 1) + '.');
-    });
+    }).catch(function () {
+      setStatus('Could not insert a blank page.', 'err');
+    }).then(function () { setBusy(false); });
   });
   if (btnUndo) btnUndo.addEventListener('click', undo);
 
@@ -1154,7 +1340,10 @@
                   if (opts && oi >= 0 && oi < opts.length && String(oi) === sv) f.select(String(opts[oi]));
                 }
               }
-            } catch (e2) {}
+            } catch (e2) {
+              lastFormFailed++;
+              if (window.console) console.warn('pdftools: form field "' + name + '" could not be filled.', e2);
+            }
           });
           form.flatten();
         } catch (e) {}
@@ -1229,7 +1418,10 @@
       chain = chain.then(function () {
         return out.embedPng(sig.png).then(function (img) {
           info.page.drawImage(img, { x: sig.x * info.w, y: info.h - (sig.y + sig.h) * info.h, width: sig.w * info.w, height: sig.h * info.h });
-        }).catch(function (e) { if (window.console) console.warn('pdftools: a signature could not be drawn.', e); });
+        }).catch(function (e) {
+          lastSigFailed++;
+          if (window.console) console.warn('pdftools: a signature could not be drawn.', e);
+        });
       });
     });
     if (pg.ocrWords && pg.ocrWords.length) {
@@ -1276,6 +1468,13 @@
   function bakedPage(out, pg, dpi) {
     return effPointSize(pg).then(function (sz) {
       var scale = Math.min(dpi / 72, 4000 / sz.w, 4000 / sz.h);   // stay inside canvas limits
+      var effDpi = scale * 72;
+      // an oversized page silently rendered at a lower DPI than requested must be
+      // disclosed, not just quietly downgraded
+      if (effDpi < dpi - 0.5) {
+        lastDpiCapped++;
+        lastDpiFloor = lastDpiFloor ? Math.min(lastDpiFloor, effDpi) : effDpi;
+      }
       return renderPageCanvas(pg, Math.max(1, sz.w * scale)).then(function (r) {
         // copy into a fresh identity-transform canvas before painting the boxes —
         // the same belt-and-suspenders compress() and rasterFallback() use, so a
@@ -1307,6 +1506,7 @@
   function buildPdf(pageList, onTick, numMap) {
     var cache = {}, fontCache = {}, failures = 0;
     lastFlattenedRot = 0; lastFlattenedSrc = 0; lastDropped = 0;
+    lastSigFailed = 0; lastFormFailed = 0; lastDpiCapped = 0; lastDpiFloor = 0;
     return PDFLib.PDFDocument.create().then(function (out) {
       var chain = Promise.resolve();
       pageList.forEach(function (pg, i) {
@@ -1377,7 +1577,7 @@
             .then(function () { return onTick ? onTick(i + 1, pageList.length) : null; });
         });
       });
-      return chain.then(function () { return applyMetadata(out, cache); }).then(function () {
+      return chain.then(function () { return applyMetadata(out, cache, pageList); }).then(function () {
         if (failures && out.getPageCount() === 0) throw new Error('No pages could be processed.');
         if (failures) setStatus(failures + ' page(s) could not be processed and were skipped.');
         return out.save();
@@ -1389,15 +1589,17 @@
   // docs[0] may belong to a file whose pages were ALL deleted — the export identity
   // (filename base, "-merged" suffix, carried-over metadata) must come from the source
   // docs that still have live pages, or a fully-deleted first file haunts the output.
-  function liveDocIndices() {
+  // `list` (an array of page objects, e.g. an Extract/Split/Pages-to-images subset)
+  // scopes this to just those pages; omit it for whole-document operations (Download all).
+  function liveDocIndices(list) {
     var seen = {}, out = [];
-    pages.forEach(function (p) {
+    (list || pages).forEach(function (p) {
       if (p.docIndex >= 0 && !seen[p.docIndex]) { seen[p.docIndex] = true; out.push(p.docIndex); }
     });
     return out.sort(function (a, b) { return a - b; });
   }
 
-  function applyMetadata(out, cache) {
+  function applyMetadata(out, cache, list) {
     if (chkStrip.checked) {
       out.setTitle(''); out.setAuthor(''); out.setSubject(''); out.setKeywords([]);
       out.setProducer(''); out.setCreator('');
@@ -1405,8 +1607,9 @@
       return Promise.resolve();
     }
     // not stripping: carry over title/author/subject from the first source doc that
-    // still has live pages, best-effort (skip entirely if none — e.g. all blank pages)
-    var live = liveDocIndices();
+    // still has live pages IN THIS EXPORT (best-effort; skip entirely if none — e.g. all
+    // blank pages) — a subset export (Extract/Split) must not borrow another file's metadata
+    var live = liveDocIndices(list);
     if (!live.length) return Promise.resolve();
     return Promise.resolve(getLibDoc(cache, live[0])).then(function (src) {
       try {
@@ -1417,8 +1620,10 @@
     }).catch(function () {});
   }
 
-  function exportName(kind) {
-    var live = liveDocIndices();
+  // `list` scopes the derived name to a subset export (Extract/Split/Pages-to-images);
+  // omit it for whole-document operations, which keeps existing Download-all behavior.
+  function exportName(kind, list) {
+    var live = liveDocIndices(list);
     return PURE.deriveExportName(live.length ? docs[live[0]].name : '', live.length, kind);
   }
 
@@ -1440,49 +1645,57 @@
     buildPdf(pages, buildTick('Building')).then(function (bytes) {
       var name = exportName('download');
       downloadBytes(bytes, name);
-      setStatus('Saved ' + name + ' (' + fmtSize(bytes.length) + ').' + flattenNote());
-    }).catch(function (e) { setStatus('Error: ' + (e && e.message || e)); })
+      setStatus('Saved ' + name + ' (' + fmtSize(bytes.length) + ').' + flattenNote(), flattenKind());
+    }).catch(function (e) { setStatus('Error: ' + (e && e.message || e), 'err'); })
       .then(function () { setBusy(false); });
   });
 
   btnExtract.addEventListener('click', function () {
     if (busy) return;
-    var st = rangeState();
-    var idxs = st.empty ? selectedIdx() : st.idx;
-    if (!idxs || !idxs.length) return;
+    var idxs = extractIdx();
+    if (!idxs.length) return;
     setBusy(true);
     var list = idxs.map(function (i) { return pages[i]; });
     progress(0, list.length, 'Downloading ' + list.length + ' page' + (list.length > 1 ? 's' : '') + '…');
     buildPdf(list, buildTick('Downloading'), { idx: idxs, total: pages.length }).then(function (bytes) {
-      var name = exportName('extract');
+      var name = exportName('extract', list);
       downloadBytes(bytes, name);
-      setStatus('Saved ' + name + ' (' + list.length + ' page' + (list.length > 1 ? 's' : '') + ', ' + fmtSize(bytes.length) + ').' + flattenNote());
-    }).catch(function (e) { setStatus('Error: ' + (e && e.message || e)); })
+      setStatus('Saved ' + name + ' (' + list.length + ' page' + (list.length > 1 ? 's' : '') + ', ' + fmtSize(bytes.length) + ').' + flattenNote(), flattenKind());
+    }).catch(function (e) { setStatus('Error: ' + (e && e.message || e), 'err'); })
       .then(function () { setBusy(false); });
   });
 
   btnSplit.addEventListener('click', function () {
     if (!pages.length || busy) return;
     var st = rangeState();
-    var idxs = st.empty ? pages.map(function (_, i) { return i; }) : st.idx;
-    if (!idxs || !idxs.length) return;
+    var idxs = (st.idx && st.idx.length) ? st.idx : pages.map(function (_, i) { return i; });
+    if (!idxs.length) return;
     setBusy(true);
-    var files = []; var chain = Promise.resolve();
+    var list = idxs.map(function (i) { return pages[i]; });
+    var files = [], splitFailed = 0; var chain = Promise.resolve();
     idxs.forEach(function (pi, k) {
       chain = chain.then(function () {
         return progress(k, idxs.length, 'Splitting page ' + (k + 1) + ' of ' + idxs.length + '…');
       }).then(function () {
+        // one unprocessable page must not abort the whole zip — isolate it with its own
+        // catch, same principle as buildPdf's own internal per-page isolation
         return buildPdf([pages[pi]], null, { idx: [pi], total: pages.length }).then(function (bytes) {
           files.push({ name: 'page-' + String(pi + 1).padStart(3, '0') + '.pdf', data: bytes });
+        }).catch(function (e) {
+          splitFailed++;
+          if (window.console) console.warn('pdftools: could not split out page ' + (pi + 1) + '.', e);
         });
       });
     });
     chain.then(function () {
+      if (!files.length) { setStatus('No pages could be processed.', 'err'); return; }
       var zip = storeZip(files);
-      var name = exportName('split');
+      var name = exportName('split', list);
       downloadBytes(zip, name, 'application/zip');
-      setStatus('Saved ' + name + ' (' + files.length + ' files, ' + fmtSize(zip.length) + ').');
-    }).catch(function (e) { setStatus('Error: ' + (e && e.message || e)); })
+      var msg = 'Saved ' + name + ' (' + files.length + ' files, ' + fmtSize(zip.length) + ').';
+      if (splitFailed) msg = 'Split ' + files.length + ' page' + (files.length === 1 ? '' : 's') + '; ' + splitFailed + ' could not be processed. ' + msg;
+      setStatus(msg, splitFailed ? 'warn' : undefined);
+    }).catch(function (e) { setStatus('Error: ' + (e && e.message || e), 'err'); })
       .then(function () { setBusy(false); });
   });
 
@@ -1493,9 +1706,15 @@
     var parts = [];
     if (lastFlattenedRot) parts.push(lastFlattenedRot + ' page(s) were flattened to images so added content (text, signatures, watermarks, or page numbers) renders correctly on rotated pages');
     if (lastFlattenedSrc) parts.push(lastFlattenedSrc + ' page(s) from an encrypted or damaged PDF were flattened to images');
-    if (lastDropped) parts.push(lastDropped + ' added text/watermark item(s) contained characters the built-in PDF fonts can’t encode (like emoji or non-Latin scripts) — those characters were left out');
+    if (lastDropped) parts.push(lastDropped + ' added text/watermark item(s) contained characters the built-in PDF fonts can’t encode (like emoji or non-Latin scripts), so those characters were left out');
+    if (lastSigFailed) parts.push(lastSigFailed + ' signature' + (lastSigFailed > 1 ? 's' : '') + ' could not be embedded');
+    if (lastFormFailed) parts.push(lastFormFailed + ' form field' + (lastFormFailed > 1 ? 's' : '') + ' could not be filled');
+    if (lastDpiCapped) parts.push(lastDpiCapped + ' page(s) were too large to flatten at the requested quality and were rendered smaller instead (about ' + Math.round(lastDpiFloor) + ' DPI)');
     return parts.length ? ' ' + parts.join('. ') + '.' : '';
   }
+  // 'warn' when the build hit a real, disclosable problem (as opposed to routine,
+  // expected flatten notes like a rotated page) — callers use this to style the status line
+  function flattenKind() { return (lastSigFailed || lastFormFailed || lastDpiCapped) ? 'warn' : undefined; }
 
   // ---------- shared page-render helpers (used by sign / compress / redact-bake / OCR) ----------
   function canvasToBytes(canvas, type, quality) {
@@ -1774,9 +1993,16 @@
     compress(dpi, q, buildTick('Shrinking')).then(function (bytes) {
       var name = exportName('compressed');
       downloadBytes(bytes, name);
-      var pct = before ? Math.round((1 - bytes.length / before) * 100) : 0;
-      setStatus('Saved ' + name + ' — ' + fmtSize(bytes.length) + (before ? ' (input was ' + fmtSize(before) + ', ' + (pct >= 0 ? pct + '% smaller' : Math.abs(pct) + '% larger') + ')' : '') + '.');
-    }).catch(function (e) { setStatus('Error: ' + (e && e.message || e)); })
+      if (before && bytes.length > before) {
+        // lead with the warning instead of burying it in a parenthesis — a text-only PDF
+        // coming out bigger is the one outcome that needs explaining, not celebrating
+        setStatus('Heads up: ' + name + ' came out larger (' + fmtSize(bytes.length) + ' vs ' + fmtSize(before) +
+          ' in). Shrink helps scanned pages, not text PDFs. The file was still downloaded.', 'warn');
+      } else {
+        var pct = before ? Math.round((1 - bytes.length / before) * 100) : 0;
+        setStatus('Saved ' + name + ', ' + fmtSize(bytes.length) + (before ? ' (input was ' + fmtSize(before) + ', ' + pct + '% smaller)' : '') + '.');
+      }
+    }).catch(function (e) { setStatus('Error: ' + (e && e.message || e), 'err'); })
       .then(function () { setBusy(false); });
   });
   if (shrinkDialog) shrinkDialog.addEventListener('click', function (e) { if (e.target === shrinkDialog) closeDialog(shrinkDialog); });

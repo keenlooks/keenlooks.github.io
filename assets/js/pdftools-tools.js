@@ -110,20 +110,23 @@
         PT.setStatus('Watermarked ' + idxs.length + ' page' + (idxs.length > 1 ? 's' : '') + '.' +
           (wmFlat ? ' ' + wmFlat + ' rotated page' + (wmFlat > 1 ? 's were' : ' was') + ' flattened upright first (Ctrl+Z undoes it).' : '') +
           ' Download to save the result.');
-      }).catch(function (e) { PT.setStatus('Watermark failed: ' + (e && e.message || e)); })
+      }).catch(function (e) { PT.setStatus('Watermark failed: ' + (e && e.message || e), 'err'); })
         .then(function () { PT.setBusy(false); });
     });
 
     wmRemove.addEventListener('click', function () {
+      // respect the same "Apply to" scope shown above this button, not always every page
+      var idxs = scopeIdx(wmScope), scoped = wmScope.value === 'sel';
       PT.closeDialog(wmDialog);
       if (PT.isBusy()) return;
       PT.snapshot('remove watermarks');
       var n = 0;
-      PT.pages().forEach(function (pg) {
+      idxs.forEach(function (pi) {
+        var pg = PT.pages()[pi];
         if (pg.wms && pg.wms.length) { pg.wms = []; PT.markDirty(pg); n++; }
       });
       PT.renderGrid(); PT.updateToolbar();
-      PT.setStatus('Removed watermarks from ' + n + ' page' + (n === 1 ? '' : 's') + '.');
+      PT.setStatus('Removed watermarks from ' + n + ' page' + (n === 1 ? '' : 's') + (scoped ? ' (selected pages only)' : '') + '.');
     });
   }
 
@@ -166,9 +169,15 @@
       PT.setBusy(true);
       PT.snapshot('page numbers');
       // numbers are drawn with rotation-0 math, so flatten any rotated pages first —
-      // and SAY so (the watermark flow discloses the same flatten; this one must too)
+      // and SAY so (the watermark flow discloses the same flatten; this one must too).
+      // Only flatten pages that will actually RECEIVE a number (e.g. "Skip the first
+      // page" leaves the cover page alone) — flattening it anyway would needlessly
+      // destroy that page's vector quality for nothing.
       var pnFlat = 0;
-      eachPage(allIdx(), function (pg) { return ensureUprightPage(pg).then(function (f) { if (f) pnFlat++; }); }, 'Preparing').then(function () {
+      eachPage(allIdx(), function (pg, pi) {
+        if (PURE.pageNumText(cfg, pi, pnTotal) == null) return Promise.resolve();
+        return ensureUprightPage(pg).then(function (f) { if (f) pnFlat++; });
+      }, 'Preparing').then(function () {
         PT.setPageNums(cfg);
         PT.markAllDirty();
         PT.renderGrid();
@@ -176,7 +185,7 @@
           ? 'Page numbers on. They follow the current page order and are added on download.'
           : 'Page numbering is set, but with “Skip the first page” checked this 1-page document gets no visible number; pages added later will be numbered.') +
           (pnFlat ? ' ' + pnFlat + ' rotated page' + (pnFlat > 1 ? 's were' : ' was') + ' flattened upright first (Ctrl+Z undoes it).' : ''));
-      }).catch(function (e) { PT.setStatus('Page numbering failed: ' + (e && e.message || e)); })
+      }).catch(function (e) { PT.setStatus('Page numbering failed: ' + (e && e.message || e), 'err'); })
         .then(function () { PT.setBusy(false); });
     });
 
@@ -213,15 +222,20 @@
       if (!idxs.length || PT.isBusy()) return;
       PT.setBusy(true);
       var docs = PT.docs();
-      // per-file names must come from a doc that still has live pages, like the zip name
-      // does — docs[0] may be fully deleted (tombstoned) and would haunt the filenames
-      var live = PT.liveDocIndices();
+      var list = idxs.map(function (i) { return PT.pages()[i]; });
+      // per-file names (and the zip name) must come from a doc that still has live pages
+      // AMONG THE ONES BEING EXPORTED — docs[0] may be fully deleted (tombstoned), or
+      // simply not part of a "selected pages" subset, and would haunt the filenames
+      var live = PT.liveDocIndices(list);
       var base = PURE.sanitizeBaseName(live.length ? docs[live[0]].name : '');
       var ext = fmt === 'jpeg' ? 'jpg' : 'png';
-      var files = [];
+      var files = [], dpiCapped = 0, dpiFloor = dpi;
       eachPage(idxs, function (pg, pi) {
         return PT.effPointSize(pg).then(function (sz) {
           var scale = Math.min(dpi / 72, 4000 / sz.w, 4000 / sz.h);
+          var effDpi = scale * 72;
+          // a huge page silently rendered below the requested DPI must be disclosed
+          if (effDpi < dpi - 0.5) { dpiCapped++; dpiFloor = Math.min(dpiFloor, effDpi); }
           return PT.renderPageCanvas(pg, Math.max(1, sz.w * scale));
         }).then(function (r) {
           // keep the user's form fill-ins, watermarks / page numbers / texts /
@@ -243,16 +257,19 @@
         });
       }, 'Rendering').then(function () {
         if (!files.length) throw new Error('no pages could be rendered');
+        var note = dpiCapped ? (' ' + dpiCapped + ' page' + (dpiCapped > 1 ? 's were' : ' was') +
+          ' too large for ' + dpi + ' DPI and rendered at about ' + Math.round(dpiFloor) + ' DPI instead.') : '';
+        var kind = dpiCapped ? 'warn' : undefined;
         if (files.length === 1) {
           PT.downloadBytes(files[0].data, files[0].name, 'image/' + fmt);
-          PT.setStatus('Saved ' + files[0].name + ' (' + PT.fmtSize(files[0].data.length) + ').');
+          PT.setStatus('Saved ' + files[0].name + ' (' + PT.fmtSize(files[0].data.length) + ').' + note, kind);
         } else {
           var zip = PT.storeZip(files);
-          var name = PT.exportName('images');
+          var name = PT.exportName('images', list);
           PT.downloadBytes(zip, name, 'application/zip');
-          PT.setStatus('Saved ' + name + ' (' + files.length + ' images, ' + PT.fmtSize(zip.length) + ').');
+          PT.setStatus('Saved ' + name + ' (' + files.length + ' images, ' + PT.fmtSize(zip.length) + ').' + note, kind);
         }
-      }).catch(function (e) { PT.setStatus('Image export failed: ' + (e && e.message || e)); })
+      }).catch(function (e) { PT.setStatus('Image export failed: ' + (e && e.message || e), 'err'); })
         .then(function () { PT.setBusy(false); });
     });
   }
@@ -297,11 +314,11 @@
 
   function runOcr(idxs) {
     if (!idxs.length || PT.isBusy()) return;
-    if (typeof WebAssembly !== 'object') { PT.setStatus('OCR needs WebAssembly, which this browser does not support.'); return; }
+    if (typeof WebAssembly !== 'object') { PT.setStatus('OCR needs WebAssembly, which this browser does not support.', 'err'); return; }
     PT.setBusy(true);
     ocrCurPage = -1; ocrTotal = idxs.length;
     PT.progress(0, idxs.length, 'Loading the OCR engine (about 6 MB on first use, then cached)…');
-    var worker = null, totalWords = 0, okPages = 0, failedPages = 0, ocrFlat = 0;
+    var worker = null, totalWords = 0, okPages = 0, failedPages = 0, ocrFlat = 0, dpiCapped = 0, dpiFloor = 300;
     loadTesseract().then(function (T) {
       return T.createWorker('eng', 1, {
         workerPath: PT.jsBase + 'tesseractlib/worker.min.js',
@@ -333,6 +350,8 @@
           }).then(function (sz) {
             // ~300 DPI, capped so huge pages stay inside browser canvas limits
             var scale = Math.min(300 / 72, 4000 / sz.w, 4000 / sz.h);
+            var effDpi = scale * 72;
+            if (effDpi < 300 - 0.5) { dpiCapped++; dpiFloor = Math.min(dpiFloor, effDpi); }
             return PT.renderPageCanvas(pg, Math.max(1, sz.w * scale));
           }).then(function (r) {
             var c = r.canvas;
@@ -376,10 +395,11 @@
         msg = 'No text was recognized. OCR reads printed English and works best on clean scans; handwriting usually does not work.';
       }
       if (ocrFlat) msg += ' ' + ocrFlat + ' rotated page' + (ocrFlat > 1 ? 's were' : ' was') + ' flattened upright first (Ctrl+Z undoes it).';
+      if (dpiCapped) msg += ' ' + dpiCapped + ' page' + (dpiCapped > 1 ? 's were' : ' was') + ' too large for 300 DPI and read at about ' + Math.round(dpiFloor) + ' DPI instead.';
       if (failedPages) msg += ' ' + failedPages + ' page' + (failedPages === 1 ? '' : 's') + ' could not be read.';
-      PT.setStatus(msg);
+      PT.setStatus(msg, (!totalWords || dpiCapped || failedPages) ? 'warn' : undefined);
     }).catch(function (e) {
-      PT.setStatus('OCR failed: ' + (e && e.message || e));
+      PT.setStatus('OCR failed: ' + (e && e.message || e), 'err');
     }).then(function () {
       if (worker) { try { worker.terminate(); } catch (e) {} }
       PT.setBusy(false);
@@ -458,9 +478,18 @@
 
   if (protDialog) {
     var protPw = $('pt-protect-pw'), protPw2 = $('pt-protect-pw2'), protErr = $('pt-protect-err');
+    var protShow = $('pt-protect-show');
+    // a password you cannot recover later is one you want to read back before committing
+    function applyProtMask() {
+      var t = (protShow && protShow.checked) ? 'text' : 'password';
+      protPw.type = t; protPw2.type = t;
+    }
+    if (protShow) protShow.addEventListener('change', applyProtMask);
     $('pt-protect').addEventListener('click', function () {
       if (!PT.pages().length) return;
       protPw.value = ''; protPw2.value = ''; protErr.textContent = '';
+      if (protShow) protShow.checked = false;
+      applyProtMask();
       if (PT.openDialog(protDialog)) setTimeout(function () { protPw.focus(); }, 0);
     });
     wireCancel(protDialog, 'pt-protect-cancel');
@@ -484,8 +513,8 @@
       }).then(function (enc) {
         var name = PT.exportName('protected');
         PT.downloadBytes(enc, name);
-        PT.setStatus('Saved ' + name + ' (' + PT.fmtSize(enc.length) + '). Opening it now requires the password — there is no way to recover it if you forget it.');
-      }).catch(function (e) { PT.setStatus('Error: ' + (e && e.message || e)); })
+        PT.setStatus('Saved ' + name + ' (' + PT.fmtSize(enc.length) + '). Opening it now requires the password. There is no way to recover it if you forget it.');
+      }).catch(function (e) { PT.setStatus('Error: ' + (e && e.message || e), 'err'); })
         .then(function () { PT.setBusy(false); });
     }
     $('pt-protect-go').addEventListener('click', protSubmit);

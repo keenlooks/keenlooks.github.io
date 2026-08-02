@@ -157,7 +157,7 @@
     Array.prototype.forEach.call(layer.querySelectorAll('.pt-anno__txt'), function (el) { el.contentEditable = (t === 'text'); });
     hint.textContent = t === 'text' ? 'Click anywhere on the page to add text. Pick font, size, and color above.'
       : t === 'sign' ? 'Draw or upload a signature, click “Place on page”, then drag it where you want. Saved signatures stay in this browser only.'
-      : t === 'redact' ? 'Drag boxes over anything to remove — they apply right away and stay with the page. On download the page is flattened to an image, so the covered text is truly gone. Click a box for its ×, or Ctrl+Z, to remove it.'
+      : t === 'redact' ? 'Drag boxes over anything to remove. Each box is kept and shown as soon as you draw it, so you can move it, click it for its ×, or press Ctrl+Z. On download the page is flattened to an image, which is what actually removes the covered text.'
       : 'Click a text box, signature, or redaction to move or delete it. Use ‹ › or the arrow keys to change pages.';
   }
   ['move', 'text', 'sign', 'redact'].forEach(function (k) { $('pt-tool-' + k).addEventListener('click', function () { setTool(k); }); });
@@ -210,7 +210,7 @@
     if (selected === el) selected = null;   // never clobber a selection this el doesn't own
     PT.markDirty(pg);
     if (kind === 'redaction' && !(pg.redacts || []).length)
-      PT.setStatus('All redactions removed from this page — it keeps its original quality on download.');
+      PT.setStatus('All redactions removed from this page. It keeps its original quality on download.');
   }
 
   function buildAnnoEls() {
@@ -308,10 +308,13 @@
                                  // state) instead of deselecting while it keeps tracking
   function startDrag(e, el, model) {
     var r = layer.getBoundingClientRect();
+    var pid = e.pointerId;   // ignore any other simultaneous pointer (a resting palm)
+                             // so it can't hijack this drag
     var ox = e.clientX - r.left - model.x * dispW, oy = e.clientY - r.top - model.y * dispH;
     var sx = e.clientX, sy = e.clientY, moved = false, pg0 = pg;
     var mx0 = model.x, my0 = model.y, mySnap = -1;   // pre-drag state for Escape cancel
     function mv(ev) {
+      if (ev.pointerId !== pid) return;
       if (pg !== pg0 || ed.hidden) return;
       if (!moved) {
         if (Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) < 3) return;   // a plain click just selects
@@ -323,7 +326,8 @@
       model.y = Math.min(Math.max(0, ny), 1 - (el.offsetHeight / dispH) * 0.3);
       el.style.left = (model.x * dispW) + 'px'; el.style.top = (model.y * dispH) + 'px';
     }
-    function up() {
+    function up(ev) {
+      if (ev.pointerId !== pid) return;
       activeDragCancel = null;
       window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
       if (moved && pg === pg0 && pg) PT.markDirty(pg);
@@ -341,9 +345,12 @@
   function startResize(e, el) {
     e.preventDefault(); e.stopPropagation(); var s = el.__model;
     var r = layer.getBoundingClientRect(), aspect = s.h / s.w;
+    var pid = e.pointerId;   // ignore any other simultaneous pointer (a resting palm)
+                             // so it can't hijack this resize
     var moved = false, pg0 = pg;
     var w0 = s.w, h0 = s.h, mySnap = -1;             // pre-resize state for Escape cancel
     function mv(ev) {
+      if (ev.pointerId !== pid) return;
       if (pg !== pg0 || ed.hidden) return;
       if (!moved) { moved = true; if (PT.snapshot) { PT.snapshot('resize signature on page ' + (idx + 1)); mySnap = PT.snapSeq ? PT.snapSeq() : -1; } }
       var w = (ev.clientX - r.left) / dispW - s.x; w = Math.max(0.03, Math.min(w, 1 - s.x));
@@ -352,7 +359,8 @@
                                    // the signature by Wpt/Hpt on every resize
       el.style.width = (s.w * dispW) + 'px'; el.style.height = (s.h * dispH) + 'px';
     }
-    function up() {
+    function up(ev) {
+      if (ev.pointerId !== pid) return;
       activeDragCancel = null;
       window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
       if (moved && pg === pg0 && pg) PT.markDirty(pg);
@@ -409,7 +417,10 @@
     var box = document.createElement('div'); box.className = 'pt-anno pt-anno--redact pt-anno--redact-tmp'; layer.appendChild(box);
     var rec = { x: p0.x / dispW, y: p0.y / dispH, w: 0, h: 0 };
     var pg0 = pg;   // arrow-key nav or Escape mid-drag must not commit to the wrong page
+    var pid = e.pointerId;   // ignore any other simultaneous pointer (a resting palm) so
+                             // it can't hijack the box being drawn
     function mv(ev) {
+      if (ev.pointerId !== pid) return;
       var p = stagePos(ev); var x0 = p0.x, y0 = p0.y;
       var x = Math.min(x0, p.x), y = Math.min(y0, p.y), w = Math.abs(p.x - x0), h = Math.abs(p.y - y0);
       box.style.left = x + 'px'; box.style.top = y + 'px'; box.style.width = w + 'px'; box.style.height = h + 'px';
@@ -427,8 +438,8 @@
       }
       commitRedact(rec, box);
     }
-    function up() { fin(true); }
-    function cancel() { fin(false); }
+    function up(ev) { if (ev.pointerId === pid) fin(true); }
+    function cancel(ev) { if (ev.pointerId === pid) fin(false); }
     activeRedactCancel = function () { fin(false); };
     window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', cancel);
   }
@@ -527,17 +538,47 @@
   $('pt-sign-tab-draw').addEventListener('click', function () { tab('draw'); });
   $('pt-sign-tab-upload').addEventListener('click', function () { tab('upload'); });
   var drawing = false, last = null, padSnap = null, padPid = null;
+  // an empty white box does not say "draw here" — ghost a prompt on it (the ruled
+  // baseline is a CSS background, deliberately NOT canvas ink). This IS canvas ink, so
+  // it must be wiped before the first stroke or trimToInk would export it.
+  var padPlaceholder = false, padHadPlaceholder = false;
+  function drawPadPlaceholder() {
+    padCtx.clearRect(0, 0, pad.width, pad.height);
+    padCtx.save();
+    padCtx.fillStyle = 'rgba(60,60,60,0.34)';
+    padCtx.font = '13px Arial, Helvetica, sans-serif';
+    padCtx.textAlign = 'center'; padCtx.textBaseline = 'middle';
+    padCtx.fillText('Draw your signature here', pad.width / 2, pad.height / 2 - 4);
+    padCtx.restore();
+    padPlaceholder = true;
+  }
+  function clearPadPlaceholder() {
+    if (!padPlaceholder) return;
+    padPlaceholder = false;
+    padCtx.clearRect(0, 0, pad.width, pad.height);
+  }
+  drawPadPlaceholder();
   function padPos(e) { var r = pad.getBoundingClientRect(); return { x: (e.clientX - r.left) * pad.width / r.width, y: (e.clientY - r.top) * pad.height / r.height }; }
   pad.addEventListener('pointerdown', function (e) {
     if (e.button != null && e.button !== 0) return;
     drawing = true; last = padPos(e); padPid = e.pointerId;
     // pre-stroke snapshot so Escape can abort the stroke instead of closing the editor
+    // (taken BEFORE the placeholder is wiped, so an aborted first stroke restores it)
     try { padSnap = padCtx.getImageData(0, 0, pad.width, pad.height); } catch (er) { padSnap = null; }
+    padHadPlaceholder = padPlaceholder;
+    clearPadPlaceholder();
     try { pad.setPointerCapture(e.pointerId); } catch (er) {}
     e.preventDefault();
   });
   pad.addEventListener('pointermove', function (e) { if (!drawing) return; var p = padPos(e); padCtx.strokeStyle = '#111'; padCtx.lineWidth = 2.2; padCtx.lineCap = 'round'; padCtx.beginPath(); padCtx.moveTo(last.x, last.y); padCtx.lineTo(p.x, p.y); padCtx.stroke(); last = p; });
-  function commitPad() { if (!drawing) return; drawing = false; padSnap = null; padPid = null; sigCanvas = trimToInk(pad) || sigCanvas; sigReady(); }
+  function commitPad() {
+    if (!drawing) return;
+    drawing = false; padSnap = null; padPid = null;
+    var ink = trimToInk(pad);
+    if (ink) sigCanvas = ink;
+    else if (padHadPlaceholder) drawPadPlaceholder();   // a tap that drew nothing: bring the prompt back
+    sigReady();
+  }
   // Escape mid-stroke: abort the stroke (restore the pad's pre-stroke ink), keep the editor
   function abortPadStroke() {
     if (!drawing) return;
@@ -545,10 +586,11 @@
     if (padPid != null) { try { pad.releasePointerCapture(padPid); } catch (er) {} padPid = null; }
     padCtx.clearRect(0, 0, pad.width, pad.height);
     if (padSnap) { try { padCtx.putImageData(padSnap, 0, 0); } catch (er) {} }
+    padPlaceholder = padHadPlaceholder;   // the restored pixels are the placeholder again
     padSnap = null;
   }
   pad.addEventListener('pointerup', commitPad); pad.addEventListener('pointercancel', commitPad);
-  $('pt-sig-clear').addEventListener('click', function () { padCtx.clearRect(0, 0, pad.width, pad.height); sigCanvas = null; sigReady(); });
+  $('pt-sig-clear').addEventListener('click', function () { drawPadPlaceholder(); sigCanvas = null; sigReady(); });
   var sigFile = $('pt-sigfile');
   $('pt-sig-pick').addEventListener('click', function () { sigFile.click(); });
   // shared by the file input and by images DROPPED onto the open editor (PT.onEditorDrop)
@@ -558,7 +600,7 @@
       URL.revokeObjectURL(url);
       var c = document.createElement('canvas'); c.width = im.naturalWidth; c.height = im.naturalHeight;
       c.getContext('2d').drawImage(im, 0, 0); sigCanvas = c; sigReady();
-      edNotice('Signature image loaded — click “Place on page”.');
+      edNotice('Signature image loaded. Click “Place on page”.');
     };
     im.onerror = function () { URL.revokeObjectURL(url); edNotice('Could not read that image.'); };
     im.src = url;
@@ -597,7 +639,7 @@
           var c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight;
           c.getContext('2d').drawImage(img, 0, 0);
           sigCanvas = c; sigReady();
-          PT.setStatus('Signature loaded — click “Place on page”.');
+          PT.setStatus('Signature loaded. Click “Place on page”.');
         };
         img.src = durl;
       });
@@ -639,7 +681,7 @@
         // setTool BEFORE select — setTool starts with a deselect, which used to wipe
         // the fresh selection and leave the just-placed sig with no ×/resize handles
         setTool('move'); select(el);
-        PT.setStatus('Signature placed — drag it where you want.');
+        PT.setStatus('Signature placed. Drag it where you want.');
       });
     }).then(done, function () {
       if (myPg === pg) edNotice('Could not place the signature on this page.');
@@ -679,7 +721,7 @@
                 pc.width = 0;
               });
             }
-            hint.textContent = 'This page has form fields, but they can only be filled while the page is upright — rotate it in the page grid (filled values are kept). ' + hint.textContent;
+            hint.textContent = 'This page has form fields, but they can only be filled while the page is upright. Rotate it in the page grid (filled values are kept). ' + hint.textContent;
             return;
           }
           var di = pg.docIndex, vals = (PT.docs()[di].formValues) || {};
@@ -724,7 +766,7 @@
             el.addEventListener('input', commit);
             layer.appendChild(el);
           });
-          if (hasFields) hint.textContent = 'This page has form fields (highlighted) — click into them to fill. ' + hint.textContent;
+          if (hasFields) hint.textContent = 'This page has form fields (highlighted). Click into them to fill. ' + hint.textContent;
         });
       });
     });
@@ -829,7 +871,7 @@
     if (ed.hidden) return;
     pageLabel.textContent = 'Page ' + (idx + 1) + ' of ' + PT.pages().length;
     updateNav();
-    edNotice('Pages added at the end — use › or the arrow keys to reach them.');
+    edNotice('Pages added at the end. Use › or the arrow keys to reach them.');
   };
 
   // expose the opener for the thumbnail Edit buttons
