@@ -46,6 +46,7 @@ description: "Free private PDF tools that run entirely in your browser: merge an
     </div>
     <div class="pt-toolbar__row">
       <button id="pt-ocr" class="pt-btn" type="button" data-pt-needs-pages disabled title="Add an invisible, searchable text layer to scanned pages (OCR)">Make searchable (OCR)…</button>
+      <button id="pt-copytext" class="pt-btn" type="button" data-pt-needs-pages disabled title="Extract the text, cleaned up for pasting into an AI chat or anywhere else">Copy clean text…</button>
       <button id="pt-watermark" class="pt-btn" type="button" data-pt-needs-pages disabled title="Stamp text like DRAFT across pages">Watermark…</button>
       <button id="pt-pagenums" class="pt-btn" type="button" data-pt-needs-pages disabled title="Add page numbers">Page numbers…</button>
       <button id="pt-images" class="pt-btn" type="button" data-pt-needs-pages disabled title="Export pages as PNG or JPEG images">Pages → images…</button>
@@ -110,6 +111,16 @@ description: "Free private PDF tools that run entirely in your browser: merge an
       browser reads each page and adds an invisible text layer on top, so the file looks identical but
       you can select, copy, and search the text. It reads printed English and works best on clean
       scans. Handwriting usually does not work.</p>
+    </details>
+    <details>
+      <summary>What does "Copy clean text" do?</summary>
+      <p>It pulls the text out of the document, cleaned up for pasting into an AI chat or anywhere
+      else. Running headers, footers, and page numbers are removed by a heuristic: a line that repeats
+      in about the same spot on most pages, or a line that is just a page number, is dropped. Words
+      broken across a line wrap are rejoined, and the rest is reflowed into paragraphs. It is a
+      heuristic, not a layout engine, so complex layouts like tables and multi-column pages can come
+      out in the wrong order, and scanned pages need "Make searchable" first since there is no text to
+      read yet. Nothing is uploaded; it reads the text already open in your browser.</p>
     </details>
     <details>
       <summary>What happens to my files?</summary>
@@ -314,6 +325,29 @@ description: "Free private PDF tools that run entirely in your browser: merge an
       <button id="pt-ocr-cancel" class="pt-btn" type="button">Cancel</button>
       <span class="pt-spacer"></span>
       <button id="pt-ocr-go" class="pt-btn pt-btn--accent" type="button">Make searchable</button>
+    </div>
+  </div>
+</div>
+
+<!-- Copy clean text dialog -->
+<div class="pt-modal" id="pt-ct-dialog" hidden>
+  <div class="pt-modal__box" role="dialog" aria-modal="true" aria-labelledby="pt-ct-head">
+    <div class="pt-modal__head" id="pt-ct-head"><strong>Copy clean text</strong></div>
+    <div class="pt-dialog__body">
+      <p>Extracts the text on <strong id="pt-ct-scope"></strong>, with running headers, footers, and
+        page numbers heuristically removed, line-wrap hyphens repaired, and paragraphs reflowed into
+        plain text, ready to paste into an AI chat or anywhere else. This reads the text layer already
+        open in your browser; nothing is uploaded.</p>
+      <label class="pt-check pt-field--row"><input type="checkbox" id="pt-ct-markers"> Keep page markers</label>
+      <textarea id="pt-ct-preview" class="pt-ct-preview" readonly spellcheck="false" aria-label="Extracted text preview"></textarea>
+      <p class="pt-ct-progress" id="pt-ct-progress" aria-live="polite"></p>
+      <p class="pt-modal__hint pt-ct-note" id="pt-ct-note" hidden></p>
+    </div>
+    <div class="pt-modal__foot">
+      <button id="pt-ct-close" class="pt-btn" type="button">Close</button>
+      <span class="pt-spacer"></span>
+      <button id="pt-ct-download" class="pt-btn" type="button" disabled>Download .txt</button>
+      <button id="pt-ct-copy" class="pt-btn pt-btn--accent" type="button" disabled>Copy to clipboard</button>
     </div>
   </div>
 </div>
@@ -585,6 +619,15 @@ html[data-theme="light"] .pt-modal__box { background: #fff; border-color: rgba(0
 .pt-modal__hint { font-size: 0.86rem; opacity: 0.8; line-height: 1.5; margin: 0.6rem 0 0; }
 .pt-modal__foot { display: flex; align-items: center; gap: 0.5rem; }
 .pt-canvas-wrap { overflow: auto; background: rgba(127,127,127,0.12); border-radius: 8px; display: flex; justify-content: center; align-items: flex-start; min-height: 200px; max-height: 64vh; }
+.pt-ct-preview {
+  display: block; width: 100%; height: 14rem; resize: vertical; box-sizing: border-box;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.82em; line-height: 1.5;
+  padding: 0.6em 0.7em; border-radius: 6px; white-space: pre-wrap;
+  color: #e8e8e8; background: #20242c; border: 1px solid rgba(255,255,255,0.18);
+}
+html[data-theme="light"] .pt-ct-preview { color: #1f2430; background: #fff; border-color: rgba(0,0,0,0.2); }
+@media (prefers-color-scheme: light) { html:not([data-theme="dark"]) .pt-ct-preview { color: #1f2430; background: #fff; border-color: rgba(0,0,0,0.2); } }
+.pt-ct-progress { font-size: 0.85em; opacity: 0.75; min-height: 1.1em; margin: 0.4rem 0 0; }
 .pt-editor { display: block; cursor: crosshair; touch-action: none; background: #fff; }
 .pt-dialog__body p { font-size: 0.9rem; line-height: 1.55; margin: 0 0 0.6rem; }
 .pt-dialog__tradeoff { opacity: 0.95; }

@@ -522,4 +522,199 @@
       inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); protSubmit(); } });
     });
   }
+
+  // ==================================================================================
+  // Copy clean text — extract the document's text with running headers/footers/page
+  // numbers heuristically stripped, hyphenated line wraps repaired, and paragraphs
+  // reflowed, ready to paste elsewhere. All the geometry/text logic lives in PURE
+  // (pdftools.js), unit-tested on plain objects; this just feeds it pdf.js positions
+  // and pg.ocrWords and wires the dialog.
+  // ==================================================================================
+  var ctDialog = $('pt-ct-dialog');
+  if (ctDialog) {
+    var ctScopeEl = $('pt-ct-scope'), ctPreview = $('pt-ct-preview'), ctMarkers = $('pt-ct-markers'),
+        ctNote = $('pt-ct-note'), ctProgress = $('pt-ct-progress'),
+        ctCopy = $('pt-ct-copy'), ctDownload = $('pt-ct-download');
+    var ctLastBlocks = null, ctLastLabels = null, ctLastText = '', ctLastName = 'document-clean.txt', ctBusy = false;
+
+    // same precedence as "Download selected" (a valid typed range wins, else the
+    // thumbnail selection) — but unlike that button, which disables itself when both
+    // are empty, this one falls all the way back to the WHOLE document, since "nothing
+    // selected" is the ordinary state right after loading a file and Copy-clean-text
+    // should still do something useful.
+    function ctScopeIdx() {
+      var st = PT.rangeState();
+      if (st.idx && st.idx.length) return st.idx;
+      var sel = PT.selectedIdx();
+      if (sel.length) return sel;
+      return allIdx();
+    }
+    function ctScopeLabel(idxs) {
+      var total = PT.pages().length;
+      var st = PT.rangeState();
+      if (st.idx && st.idx.length) return idxs.length + ' page' + (idxs.length === 1 ? '' : 's') + ' (the typed range)';
+      if (PT.selectedIdx().length) return idxs.length + ' selected page' + (idxs.length === 1 ? '' : 's');
+      return 'all ' + total + ' page' + (total === 1 ? '' : 's');
+    }
+
+    // OCR words ({text,x0,y0,x1,y1}) -> the same token shape pdf.js items produce, so
+    // both feed the same grouping/paragraph pipeline
+    function ocrWordsToTokens(words) {
+      return (words || []).map(function (w) {
+        return { text: w.text, x0: w.x0, y0: w.y0, x1: w.x1, y1: w.y1, fontSize: Math.max(1e-4, w.y1 - w.y0) };
+      });
+    }
+
+    // tokens for one page. A page we ourselves rasterized (pg.raster, e.g. a rotated
+    // page flattened for a watermark/page-number/OCR, or one with committed redaction
+    // boxes at DOWNLOAD time) no longer has a live text layer worth reading from the
+    // ORIGINAL source page — that could resurrect content a redaction hid, or text in a
+    // frame that no longer matches the raster's — so a raster page contributes only its
+    // own pg.ocrWords (if "Make searchable" has been run on it), same as a real scan.
+    // A live (non-raster) page reads pdf.js's text content AND merges in any pg.ocrWords
+    // (OCR run on an already-upright page stays live), then filters BOTH by pg.redacts —
+    // redaction is only a visual paint until download, so the live text layer still has
+    // the original text underneath a committed box.
+    function ctPageTokens(pg) {
+      if (pg.blank) return Promise.resolve({ tokens: [], scan: false, blank: true });
+      if (pg.raster) {
+        var toks = PURE.filterRedactedTokens(ocrWordsToTokens(pg.ocrWords), pg.redacts);
+        return Promise.resolve({ tokens: toks, scan: toks.length === 0, blank: false });
+      }
+      return Promise.all([PT.pdfjsPage(pg), PT.effPointSize(pg), PT.pageEffRotation(pg)]).then(function (r) {
+        var page = r[0], sz = r[1], rot = r[2];
+        return page.getTextContent().then(function (tc) {
+          var vp = page.getViewport({ scale: 1, rotation: rot });
+          var toks = [];
+          (tc.items || []).forEach(function (it) {
+            var tok = PURE.itemToToken(vp.transform, it, sz.w, sz.h);
+            if (tok) toks.push(tok);
+          });
+          toks = toks.concat(ocrWordsToTokens(pg.ocrWords));
+          toks = PURE.filterRedactedTokens(toks, pg.redacts);
+          return { tokens: toks, scan: toks.length === 0, blank: false };
+        });
+      });
+    }
+
+    // chunked so the tab never freezes on a big document: PT.progress yields a frame
+    // between pages, and the dialog's own progress line (visible — the shared
+    // #pt-progress bar sits behind this modal's backdrop) mirrors the same ticks.
+    function ctExtract(idxs) {
+      var pagesTokens = new Array(idxs.length);
+      var scanCount = 0, blankCount = 0;
+      var chain = Promise.resolve();
+      idxs.forEach(function (pi, k) {
+        chain = chain.then(function () {
+          if (ctProgress) ctProgress.textContent = 'Reading page ' + (k + 1) + ' of ' + idxs.length + '…';
+          return PT.progress(k, idxs.length);
+        }).then(function () {
+          return ctPageTokens(PT.pages()[pi]).then(function (r) {
+            pagesTokens[k] = r.tokens;
+            if (r.blank) blankCount++; else if (r.scan) scanCount++;
+          });
+        });
+      });
+      return chain.then(function () { return PT.progress(idxs.length, idxs.length); }).then(function () {
+        var labels = idxs.map(function (i) { return i + 1; });
+        var res = PURE.tokensToCleanText(pagesTokens, { pageMarkers: false, pageLabels: labels });
+        return { blocks: res.blocks, labels: labels, scanCount: scanCount, blankCount: blankCount };
+      });
+    }
+
+    function ctScanNote(scanCount, blankCount) {
+      var bits = [];
+      if (scanCount) {
+        bits.push(scanCount + ' page' + (scanCount === 1 ? '' : 's') + ' look' + (scanCount === 1 ? 's' : '') +
+          ' like ' + (scanCount === 1 ? 'a scan' : 'scans') + ' with no text layer. Run Make searchable first to include ' +
+          (scanCount === 1 ? 'it' : 'them') + '.');
+      }
+      if (blankCount) bits.push(blankCount + ' blank page' + (blankCount === 1 ? '' : 's') + ' contributed nothing.');
+      return bits.join(' ');
+    }
+
+    function ctRenderText() {
+      if (!ctLastBlocks) return '';
+      return PURE.blocksToText(ctLastBlocks, { pageMarkers: !!(ctMarkers && ctMarkers.checked), pageLabels: ctLastLabels });
+    }
+
+    function ctSetBusy(b) {
+      ctBusy = b;
+      if (ctCopy) ctCopy.disabled = b || !ctLastText;
+      if (ctDownload) ctDownload.disabled = b || !ctLastText;
+      if (ctMarkers) ctMarkers.disabled = b;
+    }
+
+    function ctRun() {
+      var idxs = ctScopeIdx();
+      if (ctScopeEl) ctScopeEl.textContent = ctScopeLabel(idxs);
+      ctLastBlocks = null; ctLastLabels = null; ctLastText = '';
+      if (ctNote) { ctNote.hidden = true; ctNote.textContent = ''; }
+      if (!idxs.length) {
+        ctPreview.value = '';
+        ctSetBusy(false);
+        return;
+      }
+      ctSetBusy(true);
+      ctPreview.value = '';
+      if (ctProgress) ctProgress.textContent = 'Reading…';
+      ctExtract(idxs).then(function (r) {
+        ctLastBlocks = r.blocks; ctLastLabels = r.labels;
+        ctLastText = ctRenderText();
+        ctPreview.value = ctLastText || '(No extractable text was found.)';
+        var docs = PT.docs();
+        var live = PT.liveDocIndices(idxs.map(function (i) { return PT.pages()[i]; }));
+        ctLastName = PURE.sanitizeBaseName(live.length ? docs[live[0]].name : '') + '-clean.txt';
+        var note = ctScanNote(r.scanCount, r.blankCount);
+        if (ctNote) { ctNote.textContent = note; ctNote.hidden = !note; }
+      }).catch(function (e) {
+        ctPreview.value = '';
+        if (ctNote) { ctNote.textContent = 'Could not extract text: ' + (e && e.message || e); ctNote.hidden = false; }
+      }).then(function () {
+        if (ctProgress) ctProgress.textContent = '';
+        ctSetBusy(false);
+      });
+    }
+
+    $('pt-copytext').addEventListener('click', function () {
+      if (!PT.pages().length) return;
+      if (PT.openDialog(ctDialog)) ctRun();
+    });
+    wireCancel(ctDialog, 'pt-ct-close');
+    if (ctMarkers) ctMarkers.addEventListener('change', function () {
+      if (ctBusy || !ctLastBlocks) return;
+      ctLastText = ctRenderText();
+      ctPreview.value = ctLastText || '(No extractable text was found.)';
+    });
+
+    function ctFlash(btn, label) {
+      var was = btn.textContent;
+      btn.textContent = label;
+      setTimeout(function () { btn.textContent = was; btn.disabled = ctBusy || !ctLastText; }, 1200);
+    }
+    function ctFallbackCopy() {
+      try {
+        ctPreview.focus(); ctPreview.select();
+        var ok = document.execCommand('copy');
+        var sel = window.getSelection(); if (sel) sel.removeAllRanges();
+        return ok;
+      } catch (e) { return false; }
+    }
+    if (ctCopy) ctCopy.addEventListener('click', function () {
+      if (!ctLastText) return;
+      /* clipboard API needs a secure context (https or localhost); fall back to the
+         old select+execCommand trick everywhere else */
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(ctLastText).then(function () { ctFlash(ctCopy, 'Copied'); }, function () {
+          if (ctFallbackCopy()) ctFlash(ctCopy, 'Copied');
+          else PT.setStatus('Could not copy automatically. Select the text in the box and copy it manually.', 'warn');
+        });
+      } else if (ctFallbackCopy()) ctFlash(ctCopy, 'Copied');
+      else PT.setStatus('Could not copy automatically. Select the text in the box and copy it manually.', 'warn');
+    });
+    if (ctDownload) ctDownload.addEventListener('click', function () {
+      if (!ctLastText) return;
+      PT.downloadBytes(new TextEncoder().encode(ctLastText), ctLastName, 'text/plain');
+    });
+  }
 })();

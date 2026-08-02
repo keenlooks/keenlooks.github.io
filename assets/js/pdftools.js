@@ -256,6 +256,330 @@
     return drawn;
   };
 
+  /* ==================================================================================
+     "Copy clean text" pipeline — extracts the document's text with running
+     headers/footers/page numbers heuristically stripped, line-wrap hyphenation
+     repaired, and paragraphs reflowed. Every stage is pure and unit-tested on plain
+     objects; only the very first stage (pdf.js item -> normalized token) needs numbers
+     that come from a real pdf.js page (viewport.transform, item.transform/width/height),
+     and even that stage takes them as plain arrays/numbers so it can be tested here
+     with synthetic ones. See assets/js/pdftools-tools.js for how the app wires pdf.js
+     and pg.ocrWords into these.
+     ================================================================================== */
+
+  // 2D affine matrix composition, m1 * m2 (apply m2 first, then m1) — the exact
+  // convention pdf.js's own Util.transform uses to combine a viewport transform with a
+  // text item's transform, reimplemented here (it's four lines) so this stays pure/testable.
+  PURE.combine2d = function (m1, m2) {
+    return [
+      m1[0] * m2[0] + m1[2] * m2[1],
+      m1[1] * m2[0] + m1[3] * m2[1],
+      m1[0] * m2[2] + m1[2] * m2[3],
+      m1[1] * m2[2] + m1[3] * m2[3],
+      m1[0] * m2[4] + m1[2] * m2[5] + m1[4],
+      m1[1] * m2[4] + m1[3] * m2[5] + m1[5]
+    ];
+  };
+
+  // reconstruct a pdf.js text item's on-screen bounding box the same way pdf.js's own
+  // text layer does it (see pdf.js's text_layer.js appendText): combine the viewport
+  // transform with the item's transform, take the rotation angle and font height off
+  // the result, and place a width x fontHeight box starting `fontHeight*0.8` (pdf.js's
+  // own fallback ascent ratio, used when a font's real metrics aren't available) above
+  // the baseline anchor, rotated by that same angle. Returns a normalized
+  // {text, x0, y0, x1, y1, fontSize} box (fractions of a Wpx x Hpx viewport, y down from
+  // the top — the same frame pg.redacts/pg.ocrWords already use), or null for a blank/
+  // degenerate item so callers can just filter falsy results out.
+  PURE.itemToToken = function (viewportTransform, item, Wpx, Hpx) {
+    if (!item || !item.str || !String(item.str).trim() || !(Wpx > 0) || !(Hpx > 0)) return null;
+    var tx = PURE.combine2d(viewportTransform, item.transform);
+    if (!tx.every(function (n) { return isFinite(n); })) return null;
+    var angle = Math.atan2(tx[1], tx[0]);
+    var fontHeight = Math.hypot(tx[2], tx[3]) || Math.abs(item.height) || 0;
+    if (!(fontHeight > 0)) return null;
+    var ascent = fontHeight * 0.8;
+    var cosA = Math.cos(angle), sinA = Math.sin(angle);
+    var left = tx[4] + ascent * sinA, top = tx[5] - ascent * cosA;
+    var width = item.width || 0;
+    var c0x = left, c0y = top;
+    var c1x = left + width * cosA, c1y = top + width * sinA;
+    var c2x = left - fontHeight * sinA, c2y = top + fontHeight * cosA;
+    var c3x = c1x + (c2x - c0x), c3y = c1y + (c2y - c0y);
+    var xs = [c0x, c1x, c2x, c3x], ys = [c0y, c1y, c2y, c3y];
+    var x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
+    var y0 = Math.min.apply(null, ys), y1 = Math.max.apply(null, ys);
+    return { text: String(item.str), x0: x0 / Wpx, y0: y0 / Hpx, x1: x1 / Wpx, y1: y1 / Hpx, fontSize: fontHeight / Hpx };
+  };
+
+  // group normalized tokens ({text,x0,y0,x1,y1,fontSize}, y down) into reading-order
+  // LINES: cluster by vertical center (tolerance scaled to the taller token's own
+  // height, so small and large text both cluster sensibly), sort each line's tokens
+  // left-to-right, and join them inferring a space wherever the x-gap between adjacent
+  // tokens is bigger than a small fraction of the local font size — pdf.js's own runs
+  // already include internal spaces, but per-word OCR tokens don't, so this is what
+  // puts the spaces back between them.
+  PURE.groupLines = function (tokens) {
+    var toks = (tokens || []).filter(function (t) {
+      return t && t.text && String(t.text).trim() && isFinite(t.x0) && isFinite(t.y0) && isFinite(t.x1) && isFinite(t.y1);
+    });
+    if (!toks.length) return [];
+    toks = toks.slice().sort(function (a, b) { return (a.y0 + a.y1) - (b.y0 + b.y1); });
+    var lines = [];
+    toks.forEach(function (t) {
+      var cy = (t.y0 + t.y1) / 2, h = Math.max(1e-6, t.y1 - t.y0);
+      var line = null;
+      for (var i = lines.length - 1; i >= 0; i--) {
+        var L = lines[i];
+        var tol = Math.max(L.h, h) * 0.55;
+        if (Math.abs(cy - L.cy) <= tol) { line = L; break; }
+        if (L.cy < cy - tol * 3) break;   // clearly above any plausible match — stop scanning
+      }
+      if (!line) { line = { cy: cy, h: h, y0: t.y0, y1: t.y1, toks: [] }; lines.push(line); }
+      line.toks.push(t);
+      line.cy = (line.cy * (line.toks.length - 1) + cy) / line.toks.length;   // running average
+      line.h = Math.max(line.h, h);
+      line.y0 = Math.min(line.y0, t.y0); line.y1 = Math.max(line.y1, t.y1);
+    });
+    lines.sort(function (a, b) { return a.cy - b.cy; });
+    return lines.map(function (L) {
+      L.toks.sort(function (a, b) { return a.x0 - b.x0; });
+      var text = '', prev = null;
+      L.toks.forEach(function (t) {
+        var s = String(t.text);
+        if (prev) {
+          var gap = t.x0 - prev.x1;
+          var thresh = Math.max(prev.fontSize || 0, t.fontSize || 0) * 0.18;
+          if (gap > thresh) text += ' ';
+        }
+        text += s;
+        prev = t;
+      });
+      var fs = L.toks.reduce(function (a, t) { return a + (t.fontSize || 0); }, 0) / L.toks.length;
+      return {
+        text: text.replace(/[ \t]+/g, ' ').trim(),
+        y0: L.y0, y1: L.y1, cy: L.cy, fontSize: fs,
+        x0: L.toks[0].x0, x1: L.toks[L.toks.length - 1].x1
+      };
+    }).filter(function (L) { return L.text; });
+  };
+
+  // normalize a line for running header/footer comparison: lowercase, collapse every
+  // run of digits to a single '#', collapse whitespace. "Page 3 of 12" and "Page 4 of
+  // 97" both normalize to "page # of #", so a running header/footer is recognized even
+  // though the visible page number (or a date, etc.) changes from page to page.
+  PURE.normLine = function (s) {
+    return String(s || '').toLowerCase().replace(/\d+/g, '#').replace(/\s+/g, ' ').trim();
+  };
+
+  // a line that consists ONLY of a page number: "12", "- 12 -", "Page 12 of 99", "12 / 99"
+  PURE.isPageNumberLine = function (s) {
+    var t = String(s || '').trim();
+    if (!t) return false;
+    if (/^[-–—\s]*\d+[-–—\s]*$/.test(t)) return true;
+    if (/^page\s+\d+(\s+of\s+\d+)?$/i.test(t)) return true;
+    if (/^\d+\s*\/\s*\d+$/.test(t)) return true;
+    return false;
+  };
+
+  // detect running headers/footers across a whole document: look at the first/last
+  // `edgeLines` grouped lines of every page that ALSO sit within `edgeBand` of the top
+  // or bottom of the page (default the top/bottom 15%), normalize them (PURE.normLine),
+  // and flag any normalized line that recurs at a similar normalized y-position on at
+  // least `minFrac` of pages (and at least `minPages` pages) as a running header/footer.
+  // The y-band requirement matters: on a short page (few lines), the first/last GROUPED
+  // LINE by index can land well into the body (e.g. a short cover page), and a body
+  // sentence that only varies by a page/section number would otherwise normalize
+  // identically across pages and get mistaken for a running footer — real headers and
+  // footers actually sit near the physical edge of the page, so requiring that too is
+  // what keeps this from firing on ordinary body text. `pagesLines` is an array (one
+  // entry per page) of grouped-line objects, e.g. from PURE.groupLines.
+  PURE.findRunningLines = function (pagesLines, opts) {
+    opts = opts || {};
+    var edgeN = opts.edgeLines || 2, minFrac = opts.minFrac == null ? 0.6 : opts.minFrac,
+        minPages = opts.minPages || 3, yTol = opts.yTol == null ? 0.08 : opts.yTol,
+        edgeBand = opts.edgeBand == null ? 0.15 : opts.edgeBand;
+    var n = (pagesLines || []).length;
+    if (n < minPages) return [];
+    var buckets = {};   // normalized text -> [{page, cy, line}]
+    pagesLines.forEach(function (lines, pi) {
+      var cands = [];
+      for (var i = 0; i < Math.min(edgeN, lines.length); i++) cands.push(lines[i]);
+      for (var j = Math.max(0, lines.length - edgeN); j < lines.length; j++) {
+        if (cands.indexOf(lines[j]) === -1) cands.push(lines[j]);
+      }
+      cands.forEach(function (L) {
+        if (!(L.cy <= edgeBand || L.cy >= 1 - edgeBand)) return;   // nowhere near a real edge
+        var key = PURE.normLine(L.text);
+        if (!key) return;
+        (buckets[key] || (buckets[key] = [])).push({ page: pi, cy: L.cy, line: L });
+      });
+    });
+    var running = [];
+    Object.keys(buckets).forEach(function (key) {
+      var occ = buckets[key].slice().sort(function (a, b) { return a.cy - b.cy; });
+      // cluster occurrences by cy within yTol and keep the largest cluster — the same
+      // normalized text could coincidentally appear at two unrelated edge bands. Chain
+      // to the LAST element added (not the first): a fixed first-of-cluster anchor lets
+      // a slowly-drifting sequence of occurrences (e.g. a heading that pushes everything
+      // below it down a bit on one page) sweep in an outlier that is only close to the
+      // first element by coincidence, not actually part of the same stable band.
+      var best = [], cur = [];
+      occ.forEach(function (o) {
+        if (cur.length && Math.abs(o.cy - cur[cur.length - 1].cy) > yTol) { if (cur.length > best.length) best = cur; cur = []; }
+        cur.push(o);
+      });
+      if (cur.length > best.length) best = cur;
+      var uniquePages = {};
+      best.forEach(function (o) { uniquePages[o.page] = 1; });
+      var pageCount = Object.keys(uniquePages).length;
+      if (pageCount >= minPages && pageCount / n >= minFrac) {
+        running.push({ key: key, lines: best.map(function (o) { return o.line; }) });
+      }
+    });
+    return running;
+  };
+
+  // drop running headers/footers (PURE.findRunningLines) and any edge line that is
+  // ONLY a page number, from every page's grouped lines. Returns a NEW array of arrays
+  // (one per page) — the input is not mutated.
+  PURE.stripHeadersFooters = function (pagesLines, opts) {
+    opts = opts || {};
+    var edgeN = opts.edgeLines || 2;
+    var running = PURE.findRunningLines(pagesLines, opts);
+    var dropRefs = [];
+    running.forEach(function (r) { r.lines.forEach(function (L) { dropRefs.push(L); }); });
+    return (pagesLines || []).map(function (lines) {
+      var n = lines.length;
+      return lines.filter(function (L, i) {
+        var isEdge = i < edgeN || i >= n - edgeN;
+        if (isEdge && PURE.isPageNumberLine(L.text)) return false;
+        if (dropRefs.indexOf(L) !== -1) return false;
+        return true;
+      });
+    });
+  };
+
+  // text/word tokens whose box overlaps a redaction rect must never leak into any
+  // output — this is the exact same geometry test PURE.filterOcrWords already uses to
+  // keep redacted content out of the invisible OCR text layer, reused here under a name
+  // that reads at the Copy-clean-text call site. The honesty contract is identical:
+  // redacted content must not survive in ANY extracted text, OCR-derived or vector.
+  PURE.filterRedactedTokens = PURE.filterOcrWords;
+
+  // a line starting with a common bullet glyph — kept as its own line (normalized to
+  // "- ") rather than merged into flowing prose.
+  PURE.BULLET_RE = /^[ \t]*[•◦▪‣∙·○●*]\s+/;
+
+  // median line-to-line vertical gap and median line font size, both computed only
+  // WITHIN each page (gaps are never compared across a page boundary — two different
+  // pages don't share a coordinate frame) — used as the "what's normal here" baseline
+  // for paragraph-break and heading detection.
+  PURE.textMetrics = function (pagesLines) {
+    var gaps = [], fonts = [];
+    (pagesLines || []).forEach(function (lines) {
+      for (var i = 0; i < lines.length; i++) {
+        fonts.push(lines[i].fontSize || 0);
+        if (i > 0) gaps.push(Math.max(0, lines[i].y0 - lines[i - 1].y1));
+      }
+    });
+    gaps.sort(function (a, b) { return a - b; });
+    fonts.sort(function (a, b) { return a - b; });
+    return {
+      medGap: gaps.length ? gaps[Math.floor(gaps.length / 2)] : 0.012,
+      medFont: fonts.length ? fonts[Math.floor(fonts.length / 2)] : 0.02
+    };
+  };
+
+  // stitch grouped lines (one array per page) into paragraph-level blocks. A heading
+  // (font size well above the document's median body size) becomes its own block; a
+  // bullet line keeps its own line inside a "bullets" block instead of merging into
+  // prose; otherwise consecutive lines merge into one paragraph, with a line ending in
+  // "-" joining to a lowercase-starting next line WITHOUT the hyphen (de-hyphenation)
+  // and everything else joining with a single space. A vertical gap bigger than ~1.6x
+  // this document's median line gap starts a new paragraph — and so does every PAGE
+  // BREAK, unless the previous line ends in a hyphen that continues onto the next
+  // page's first line (a plain page break has no meaningful "vertical gap" to compare,
+  // since the two pages don't share a coordinate frame, so it's always treated as a
+  // paragraph break rather than guessed at).
+  PURE.assembleBlocks = function (pagesLines, opts) {
+    opts = opts || {};
+    var m = PURE.textMetrics(pagesLines);
+    var medGap = opts.medGap != null ? opts.medGap : m.medGap;
+    var medFont = opts.medFont != null ? opts.medFont : m.medFont;
+    var blocks = [], cur = null, prevLine = null, prevPage = -1;
+
+    function startBlock(kind, page) { cur = { kind: kind, lines: [], pages: [page] }; blocks.push(cur); }
+    function touchPage(page) { if (cur.pages.indexOf(page) === -1) cur.pages.push(page); }
+    function pushLine(norm) {
+      if (cur.kind === 'bullets') { cur.lines.push(norm); return; }
+      if (!cur.lines.length) { cur.lines.push(norm); return; }
+      var last = cur.lines[0];
+      if (/[a-z]-$/i.test(last) && /^[a-z]/.test(norm)) cur.lines[0] = last.replace(/-\s*$/, '') + norm;
+      else cur.lines[0] = last + ' ' + norm;
+    }
+
+    (pagesLines || []).forEach(function (lines, pi) {
+      lines.forEach(function (L) {
+        var text = L.text;
+        var isBullet = PURE.BULLET_RE.test(text);
+        var norm = isBullet ? text.replace(PURE.BULLET_RE, '- ') : text;
+        var isHeading = !isBullet && medFont > 0 && L.fontSize >= medFont * 1.25 && text.length < 140;
+        var kind = isHeading ? 'heading' : (isBullet ? 'bullets' : 'para');
+        var isNewPage = pi !== prevPage;
+        var startNew;
+        if (!cur) startNew = true;
+        else if (kind !== cur.kind) startNew = true;
+        else if (isNewPage) {
+          var lastText = cur.lines[cur.lines.length - 1] || '';
+          var hyphenJoin = kind !== 'bullets' && /[a-z]-$/i.test(lastText) && /^[a-z]/.test(norm);
+          startNew = !hyphenJoin;
+        } else {
+          startNew = (L.y0 - prevLine.y1) > medGap * 1.6 + 1e-6;
+        }
+        if (startNew) startBlock(kind, pi); else touchPage(pi);
+        pushLine(norm);
+        prevLine = L; prevPage = pi;
+      });
+    });
+    return blocks;
+  };
+
+  // render blocks (PURE.assembleBlocks) to final plain text: bullet blocks keep one
+  // line per item, everything else is a single flowing line per block, and blocks are
+  // separated by a blank line. With `opts.pageMarkers`, a "--- page N ---" line is
+  // inserted the first time a block touches a page not yet announced (N comes from
+  // `opts.pageLabels[pageIndex]`, falling back to `pageIndex+1` — callers pass real
+  // document page numbers so a "selected pages" subset still shows the right numbers).
+  // A page that contributed no lines at all (blank, or no text layer) gets no marker —
+  // there is no content boundary to mark, and that omission is itself informative.
+  PURE.blocksToText = function (blocks, opts) {
+    opts = opts || {};
+    var labels = opts.pageLabels;
+    function label(p) { return (labels && labels[p] != null) ? labels[p] : (p + 1); }
+    var announced = {}, out = [];
+    (blocks || []).forEach(function (b) {
+      if (opts.pageMarkers) {
+        b.pages.forEach(function (p) {
+          if (!announced[p]) { announced[p] = true; out.push('--- page ' + label(p) + ' ---'); }
+        });
+      }
+      out.push(b.kind === 'bullets' ? b.lines.join('\n') : b.lines[0]);
+    });
+    return out.join('\n\n');
+  };
+
+  // full pipeline in one call: per-page TOKENS ({text,x0,y0,x1,y1,fontSize}, one array
+  // per page) -> grouped lines -> headers/footers stripped -> paragraph blocks -> text.
+  // Each stage above is independently unit-tested; the app (pdftools-tools.js) also
+  // calls PURE.blocksToText directly to re-render cheaply when only the "keep page
+  // markers" checkbox changes, without repeating the pdf.js work.
+  PURE.tokensToCleanText = function (pagesTokens, opts) {
+    var pagesLines = (pagesTokens || []).map(function (toks) { return PURE.groupLines(toks); });
+    var stripped = PURE.stripHeadersFooters(pagesLines, opts);
+    var blocks = PURE.assembleBlocks(stripped, opts);
+    return { blocks: blocks, text: PURE.blocksToText(blocks, opts) };
+  };
+
   if (typeof window === 'undefined') {
     // node (test harness): export the pure helpers and stop — everything below needs a DOM
     if (typeof module !== 'undefined' && module.exports) module.exports = PURE;
