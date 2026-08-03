@@ -21,11 +21,15 @@
   var loaded = false;
   var fineAngle = 0;                 // live free-rotation preview (degrees), baked on release
   var history = [];                  // undo stack of prior `work` states
+  /* Bumped every time the working image changes (load, crop, rotate, flip,
+     reset, undo, or an applyEdit from another module). The cutout tool keys
+     its cached image embedding on it, so any edit invalidates that cache. */
+  var editSeq = 0;
 
   /* ---------- undo ---------- */
   function snapshot() { var c = document.createElement('canvas'); c.width = work.width; c.height = work.height; c.getContext('2d').drawImage(work, 0, 0); return c; }
   function pushHistory() { history.push(snapshot()); if (history.length > 25) history.shift(); var u = id('it-undo'); if (u) u.disabled = false; }
-  function restore(c) { work.width = c.width; work.height = c.height; wctx.setTransform(1, 0, 0, 1, 0, 0); wctx.clearRect(0, 0, c.width, c.height); wctx.drawImage(c, 0, 0); }
+  function restore(c) { work.width = c.width; work.height = c.height; wctx.setTransform(1, 0, 0, 1, 0, 0); wctx.clearRect(0, 0, c.width, c.height); wctx.drawImage(c, 0, 0); editSeq++; }
   function undo() {
     if (!history.length) return;
     restore(history.pop());
@@ -98,8 +102,9 @@
       orig.width = work.width; orig.height = work.height;
       orig.getContext('2d').drawImage(work, 0, 0);
       URL.revokeObjectURL(url);
-      loaded = true; cropRect = null; cropping = false; fineAngle = 0; history = [];
+      loaded = true; cropRect = null; cropping = false; fineAngle = 0; history = []; editSeq++;
       var u = id('it-undo'); if (u) u.disabled = true;
+      var cb = id('it-cutout'); if (cb) cb.disabled = false;
       var rh = id('it-rot-hint'); if (rh) rh.textContent = '· drag the dot above the image to rotate';
       drop.classList.add('it-drop--has');
       requestAnimationFrame(function () { render(); updateInfo(); });   /* render after layout settles */
@@ -262,8 +267,16 @@
     if (!loaded) return;
     pushHistory();
     work.width = orig.width; work.height = orig.height; wctx.setTransform(1, 0, 0, 1, 0, 0); wctx.clearRect(0, 0, orig.width, orig.height); wctx.drawImage(orig, 0, 0);
-    fineAngle = 0;
+    fineAngle = 0; editSeq++;
     setCropping(false); render(); updateInfo();
+  });
+
+  /* ---------- cut out background (assets/js/imagetools-cutout.js) ---------- */
+  var cutBtn = id('it-cutout');
+  if (cutBtn) cutBtn.addEventListener('click', function () {
+    if (!loaded || !window.ImageCutout) return;
+    setCropping(false);          /* the cutout works on the whole image */
+    window.ImageCutout.open();
   });
 
   /* ---------- export controls ---------- */
@@ -401,6 +414,28 @@
     document.body.appendChild(a); a.click();
     setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
   }
+
+  /* ---------- small API for page modules that edit the image ----------
+     Kept deliberately thin: another module hands back a finished canvas and
+     it lands as ONE step in the same 25-deep undo history everything else
+     uses, so Undo and Reset keep working exactly as before. */
+  window.ImageStudio = {
+    getWorkCanvas: function () { return loaded ? work : null; },
+    isLoaded: function () { return loaded; },
+    editCount: function () { return editSeq; },
+    applyEdit: function (canvas, label) {
+      if (!loaded || !canvas || !canvas.width || !canvas.height) return false;
+      pushHistory();
+      restore(canvas);
+      fineAngle = 0; cropRect = null;
+      setCropping(false); render(); updateInfo();
+      if (label) { var st = id('it-status'); if (st) st.textContent = label; }
+      return true;
+    },
+    getFormat: function () { return elFmt ? elFmt.value : ''; },
+    setFormat: function (v) { if (elFmt) { elFmt.value = v; syncModeUI(); if (loaded) updateInfo(); } },
+    setStatus: function (msg) { var st = id('it-status'); if (st) st.textContent = msg; }
+  };
 
   syncModeUI();
 })();

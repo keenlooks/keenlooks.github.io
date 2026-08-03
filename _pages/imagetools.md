@@ -35,6 +35,7 @@ description: "Resize an image to an exact file size (like 500 KB) for upload for
         <button id="it-flip-h" class="it-btn" type="button" title="Flip horizontal">⇋</button>
         <button id="it-flip-v" class="it-btn" type="button" title="Flip vertical">⇅</button>
         <button id="it-crop" class="it-btn" type="button" title="Drag a box on the image to crop">Crop</button>
+        <button id="it-cutout" class="it-btn" type="button" title="Brush what to keep and what to remove" disabled>Cut out background</button>
         <button id="it-undo" class="it-btn" type="button" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
         <button id="it-reset" class="it-btn" type="button">Reset</button>
       </div>
@@ -100,6 +101,49 @@ description: "Resize an image to an exact file size (like 500 KB) for upload for
       <code>&lt;link&gt;</code> tags to paste into your page's head, all in one .zip. The icons are
       cut from a square center-crop of your image.</p>
     </details>
+  </div>
+
+  <p class="it-credit" id="it-cut-credit" hidden>Cutout segmentation: SAM 2 (Meta AI, Apache 2.0) via ONNX Runtime Web (Microsoft, MIT).</p>
+</div>
+
+<!-- Cut out background: the workspace overlay. Hidden until the button opens
+     it; imagetools-cutout.js hoists it to <body> so no stacking context in
+     the page can trap it under the masthead. -->
+<div id="it-cut" class="it-cut" hidden aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="it-cut-title">
+  <div class="it-cut__panel">
+    <div class="it-cut__head">
+      <h2 class="it-cut__title" id="it-cut-title">Cut out background</h2>
+      <button id="it-cut-close" class="it-btn it-cut__x" type="button" aria-label="Close the cutout workspace">✕</button>
+    </div>
+    <p class="it-cut__intro">Brush over what to keep and what to remove. The photo stays on your device.</p>
+    <p class="it-cut__dl" id="it-cut-dl"></p>
+
+    <div class="it-cut__stage" id="it-cut-stage">
+      <canvas id="it-cut-canvas" class="it-cut__canvas" aria-label="Cutout preview. Drag on the image to brush."></canvas>
+    </div>
+
+    <div class="it-cut__tools">
+      <button id="it-cut-keep" class="it-btn it-btn--on" type="button" aria-pressed="true">Keep</button>
+      <button id="it-cut-remove" class="it-btn" type="button" aria-pressed="false">Remove</button>
+      <button id="it-cut-undo" class="it-btn" type="button" disabled>↶ Undo stroke</button>
+      <label class="it-cut__check"><input id="it-cut-dots" type="checkbox" checked> Show brush marks</label>
+    </div>
+
+    <div class="it-cut__sliders">
+      <label class="it-field"><span>Brush size: <strong id="it-cut-radius-val">24 px</strong></span>
+        <input id="it-cut-radius" type="range" min="8" max="64" step="1" value="24"></label>
+      <label class="it-field"><span>Feather: <strong id="it-cut-feather-val">3</strong></span>
+        <input id="it-cut-feather" type="range" min="0" max="20" step="1" value="3"></label>
+    </div>
+
+    <p class="it-cut__status" id="it-cut-status" role="status" aria-live="polite"></p>
+    <p class="it-cut__limits">Soft edges like hair come out approximate, and a busy scene can take a few strokes
+    to get right. Everything runs locally, so nothing is uploaded.</p>
+
+    <div class="it-cut__actions">
+      <button id="it-cut-apply" class="it-btn it-btn--accent" type="button" disabled>Apply cutout</button>
+      <button id="it-cut-cancel" class="it-btn" type="button">Cancel</button>
+    </div>
   </div>
 </div>
 
@@ -188,6 +232,10 @@ html[data-theme="light"] .it-rotfield input[type="range"] { accent-color: #34568
 }
 .it-btn:hover { background: rgba(127,127,127,0.26); }
 .it-btn--on { background: #82a6cc; border-color: #82a6cc; color: #fff; }
+/* `.it-btn:hover` out-specifies `.it-btn--on`, which washed the selected
+   state out of a pressed toggle (Crop, and the cutout's Keep/Remove pair).
+   On touch the hover sticks after a tap, so the mode looked unset. */
+.it-btn--on:hover { background: #82a6cc; border-color: #82a6cc; color: #fff; }
 .it-btn--accent { background: #82a6cc; border-color: #82a6cc; color: #fff; }
 .it-btn--accent:hover { background: #6f97c2; }
 .it-wide { width: 100%; padding: 0.6em; margin-top: 0.3rem; }
@@ -202,11 +250,72 @@ html[data-theme="light"] .it-rotfield input[type="range"] { accent-color: #34568
 .it-faq p { font-size: 0.95em; line-height: 1.6; opacity: 0.9; margin: 0.5rem 0 0.3rem; }
 
 html[data-theme="light"] .it-btn--on, html[data-theme="light"] .it-btn--accent { background: #34568a; border-color: #34568a; }
+html[data-theme="light"] .it-btn--on:hover { background: #34568a; border-color: #34568a; }
 html[data-theme="light"] .it-field input[type="range"] { accent-color: #34568a; }
 @media (prefers-color-scheme: light) {
   html:not([data-theme="dark"]) .it-btn--on, html:not([data-theme="dark"]) .it-btn--accent { background: #34568a; border-color: #34568a; }
+  html:not([data-theme="dark"]) .it-btn--on:hover { background: #34568a; border-color: #34568a; }
   html:not([data-theme="dark"]) .it-field input[type="range"] { accent-color: #34568a; }
+}
+
+/* ---------- Cut out background ---------- */
+.it-credit { font-size: 0.8em; opacity: 0.65; margin: 1.6rem 0 0; }
+.it-credit[hidden] { display: none !important; }
+/* The overlay sits above the chat bar (1050) like the PDF Toolbench editor
+   does; `hidden` alone loses to the display rule, hence the [hidden] line. */
+.it-cut {
+  position: fixed; inset: 0; z-index: 1200; display: flex; overflow: auto;
+  padding: 1rem; background: rgba(8,8,10,0.74);
+}
+.it-cut[hidden] { display: none !important; }
+.it-cut, .it-cut * { box-sizing: border-box; }
+body.it-cut-open { overflow: hidden; }
+.it-cut__panel {
+  margin: auto; width: 100%; max-width: 980px; border-radius: 12px;
+  padding: 0.9rem 1.1rem 1.1rem; background: #17181c; color: #e2e2e2;
+  border: 1px solid rgba(255,255,255,0.15);
+}
+.it-cut__head { display: flex; align-items: center; gap: 0.6rem; }
+.it-cut__title { font-size: 1.2rem; margin: 0; flex: 1 1 auto; color: inherit; }
+.it-cut__x { padding: 0.3em 0.6em; line-height: 1; }
+.it-cut__intro { margin: 0.35rem 0 0.2rem; font-size: 0.95em; line-height: 1.5; }
+.it-cut__dl { margin: 0 0 0.6rem; font-size: 0.85em; opacity: 0.72; line-height: 1.5; }
+.it-cut__stage {
+  position: relative; height: min(52vh, 460px); border-radius: 8px; overflow: hidden;
+  background: rgba(127,127,127,0.10); border: 1px solid rgba(127,127,127,0.28);
+}
+/* touch-action: none — brushing uses Pointer Events, and without it a finger
+   drag scrolls the page instead of painting (site playbook). */
+.it-cut__canvas {
+  position: absolute; inset: 0; width: 100%; height: 100%; display: block;
+  touch-action: none; -ms-touch-action: none; cursor: crosshair;
+}
+.it-cut__tools { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin-top: 0.7rem; }
+.it-cut__check { display: inline-flex; align-items: center; gap: 0.35em; font-size: 0.9em; color: inherit; margin: 0 0 0 0.2rem; }
+.it-cut__check input { accent-color: #82a6cc; }
+.it-cut__sliders { display: grid; grid-template-columns: 1fr 1fr; gap: 0 1rem; margin-top: 0.7rem; }
+.it-cut__sliders .it-field { margin-bottom: 0.2rem; color: inherit; }
+.it-cut__sliders label span { color: inherit; }
+.it-cut__status { font-size: 0.9em; min-height: 1.3em; margin: 0.5rem 0 0.2rem; }
+.it-cut__limits { font-size: 0.82em; opacity: 0.7; line-height: 1.5; margin: 0 0 0.7rem; max-width: 62ch; }
+.it-cut__actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.it-cut__actions .it-btn { padding: 0.55em 1.1em; }
+html[data-theme="light"] .it-cut { background: rgba(232,234,238,0.8); }
+html[data-theme="light"] .it-cut__panel { background: #ffffff; color: #262626; border-color: rgba(0,0,0,0.14); }
+html[data-theme="light"] .it-cut__check input { accent-color: #34568a; }
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .it-cut { background: rgba(232,234,238,0.8); }
+  html:not([data-theme="dark"]) .it-cut__panel { background: #ffffff; color: #262626; border-color: rgba(0,0,0,0.14); }
+  html:not([data-theme="dark"]) .it-cut__check input { accent-color: #34568a; }
+}
+@media (max-width: 760px) {
+  .it-cut { padding: 0.5rem; }
+  .it-cut__panel { padding: 0.7rem 0.75rem 0.9rem; }
+  .it-cut__stage { height: 42vh; }
+  .it-cut__sliders { grid-template-columns: 1fr; }
+  .it-cut__actions .it-btn { flex: 1 1 auto; }
 }
 </style>
 
 <script defer src="{{ '/assets/js/imagetools.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
+<script defer src="{{ '/assets/js/imagetools-cutout.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
