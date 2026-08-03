@@ -241,7 +241,7 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
     </div>
     <div class="xp-card__body">
       <h2 class="xp-card__title">Image Studio</h2>
-      <p class="xp-card__desc">Resize an image to a target file size, crop, rotate, strip EXIF, or make a favicon pack. All in your browser.</p>
+      <p class="xp-card__desc">Cut out backgrounds, resize to a target file size, crop, rotate, strip EXIF, or make a favicon pack. All in your browser.</p>
     </div>
   </a>
 

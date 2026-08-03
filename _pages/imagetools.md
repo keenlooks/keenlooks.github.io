@@ -3,8 +3,8 @@ layout: single
 title: "Resize an Image to an Exact File Size in Your Browser"
 permalink: /imagetools/
 author_profile: false
-excerpt: "Resize an image to a target file size, crop it, rotate it, strip metadata, and generate a favicon pack, all running privately in your browser with nothing uploaded."
-description: "Resize an image to an exact file size (like 500 KB) for upload forms, right in your browser. Also crop, rotate, convert JPEG/PNG/WebP, strip EXIF metadata, and generate a favicon pack as a .zip. Nothing is uploaded; everything runs locally."
+excerpt: "Remove a background or resize an image to a target file size, crop, rotate, strip metadata, and generate a favicon pack, all running privately in your browser with nothing uploaded."
+description: "Remove a background without uploading the photo anywhere: brush what to keep and what to remove, and it runs in your browser. Also resize an image to an exact file size (like 500 KB), crop, rotate, convert JPEG/PNG/WebP, strip EXIF metadata, and generate a favicon pack as a .zip. Nothing is uploaded."
 ---
 
 <div class="it-wrap">
@@ -101,9 +101,40 @@ description: "Resize an image to an exact file size (like 500 KB) for upload for
       <code>&lt;link&gt;</code> tags to paste into your page's head, all in one .zip. The icons are
       cut from a square center-crop of your image.</p>
     </details>
+    <details>
+      <summary>Does my photo get uploaded when I remove a background?</summary>
+      <p>No. "Cut out background" downloads a segmentation model to your browser once, about 42 MB,
+      and from then on the whole thing runs on your device. The photo itself is never sent
+      anywhere. (I use Google Analytics to see whether anyone visits this page, but it cannot see
+      your photo.)</p>
+    </details>
+    <details>
+      <summary>How do the Keep and Remove brushes work?</summary>
+      <p>The first cut is automatic: the tool guesses at the subject in the middle of the frame.
+      Each stroke after that is a correction, and the model reworks the whole cut around it rather
+      than only adding or subtracting the bit you painted. Keep says this belongs to the subject,
+      Remove says this does not, and Remove works inside the subject too, so you can open a hole
+      like the gap in a mug handle. Because every stroke reworks the cut, one can occasionally take
+      more than you meant with it; brush the part you want back and it comes back. "Undo stroke"
+      steps back one correction at a time and "Start over" returns to the automatic cut.</p>
+    </details>
+    <details>
+      <summary>Why is the first cut slow?</summary>
+      <p>Two one-time costs. The model is downloaded the first time you use the tool, and your
+      browser caches it after that. Then the photo has to be read by the model once, which takes
+      about 10 seconds on a typical computer and longer on a phone. Every brush stroke after that
+      reuses that reading, so corrections come back in about half a second on a typical computer.</p>
+    </details>
+    <details>
+      <summary>Why do the cutout edges look soft?</summary>
+      <p>The model works on a smaller copy of the image, so its mask is scaled back up, and the
+      Feather slider then blends the edge along the colours in the photo. That keeps a hard cut
+      from looking like scissor work, but fine detail like flyaway hair comes out approximate. Set
+      Feather to 0 for a hard edge, or raise it for a softer one.</p>
+    </details>
   </div>
 
-  <p class="it-credit" id="it-cut-credit" hidden>Cutout segmentation: SAM 2 (Meta AI, Apache 2.0) via ONNX Runtime Web (Microsoft, MIT).</p>
+  <p class="it-credit" id="it-cut-credit" hidden>Cutout segmentation: MobileSAM (Chaoning Zhang et al., Apache 2.0; ONNX export by Acly, MIT) via ONNX Runtime Web (Microsoft, MIT).</p>
 </div>
 
 <!-- Cut out background: the workspace overlay. Hidden until the button opens
@@ -117,6 +148,7 @@ description: "Resize an image to an exact file size (like 500 KB) for upload for
     </div>
     <p class="it-cut__intro">Brush over what to keep and what to remove. The photo stays on your device.</p>
     <p class="it-cut__dl" id="it-cut-dl"></p>
+    <p class="it-cut__verify" id="it-cut-verify" hidden></p>
 
     <div class="it-cut__stage" id="it-cut-stage">
       <canvas id="it-cut-canvas" class="it-cut__canvas" aria-label="Cutout preview. Drag on the image to brush."></canvas>
@@ -126,6 +158,7 @@ description: "Resize an image to an exact file size (like 500 KB) for upload for
       <button id="it-cut-keep" class="it-btn it-btn--on" type="button" aria-pressed="true">Keep</button>
       <button id="it-cut-remove" class="it-btn" type="button" aria-pressed="false">Remove</button>
       <button id="it-cut-undo" class="it-btn" type="button" disabled>↶ Undo stroke</button>
+      <button id="it-cut-start" class="it-btn" type="button" title="Throw the brushwork away and go back to the automatic cut" disabled>Start over</button>
       <label class="it-cut__check"><input id="it-cut-dots" type="checkbox" checked> Show brush marks</label>
     </div>
 
@@ -159,7 +192,72 @@ description: "Resize an image to an exact file size (like 500 KB) for upload for
   "isAccessibleForFree": true,
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
   "author": { "@type": "Person", "name": "Keane Lucas", "url": "{{ site.url }}{{ site.baseurl }}/" },
-  "description": "An in-browser image utility: resize an image to an exact file size, crop, rotate, flip, convert between JPEG, PNG, and WebP, strip EXIF metadata, and generate a favicon pack as a .zip. Nothing is uploaded."
+  "description": "An in-browser image utility: remove a background by brushing what to keep, resize an image to an exact file size, crop, rotate, flip, convert between JPEG, PNG, and WebP, strip EXIF metadata, and generate a favicon pack as a .zip. Nothing is uploaded."
+}
+</script>
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "How do I resize an image to an exact file size?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Drop the image in, leave the mode on hitting a target file size, and set the size the form is asking for. The tool searches JPEG or WebP quality settings for the largest output that fits under the limit, and scales the image down if quality alone cannot get there."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Does my image get uploaded?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No. The whole tool runs in your browser, and the file never leaves your device. I use Google Analytics to see whether anyone visits this page, but it cannot see your image."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "What is in the favicon pack?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "PNG icons at 16, 32, 48, 96, 192, and 512 pixels, an apple-touch-icon.png at 180 pixels, a starter site.webmanifest, and a snippet.html with the link tags to paste into your page's head, all in one .zip. The icons are cut from a square center-crop of your image."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Does my photo get uploaded when I remove a background?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No. Cut out background downloads a segmentation model to your browser once, about 42 MB, and from then on the whole thing runs on your device. The photo itself is never sent anywhere. I use Google Analytics to see whether anyone visits this page, but it cannot see your photo."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How do the Keep and Remove brushes work?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "The first cut is automatic: the tool guesses at the subject in the middle of the frame. Each stroke after that is a correction, and the model reworks the whole cut around it rather than only adding or subtracting the bit you painted. Keep says this belongs to the subject, Remove says this does not, and Remove works inside the subject too, so you can open a hole like the gap in a mug handle. Because every stroke reworks the cut, one can occasionally take more than you meant with it; brush the part you want back and it comes back. Undo stroke steps back one correction at a time and Start over returns to the automatic cut."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Why is the first cut slow?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Two one-time costs. The model is downloaded the first time you use the tool, and your browser caches it after that. Then the photo has to be read by the model once, which takes about 10 seconds on a typical computer and longer on a phone. Every brush stroke after that reuses that reading, so corrections come back in about half a second on a typical computer."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Why do the cutout edges look soft?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "The model works on a smaller copy of the image, so its mask is scaled back up, and the Feather slider then blends the edge along the colours in the photo. That keeps a hard cut from looking like scissor work, but fine detail like flyaway hair comes out approximate. Set Feather to 0 for a hard edge, or raise it for a softer one."
+      }
+    }
+  ]
 }
 </script>
 
@@ -272,14 +370,27 @@ html[data-theme="light"] .it-field input[type="range"] { accent-color: #34568a; 
 body.it-cut-open { overflow: hidden; }
 .it-cut__panel {
   margin: auto; width: 100%; max-width: 980px; border-radius: 12px;
-  padding: 0.9rem 1.1rem 1.1rem; background: #17181c; color: #e2e2e2;
+  padding: 0.9rem 1.1rem 0.5rem; background: #17181c; color: #e2e2e2;
   border: 1px solid rgba(255,255,255,0.15);
 }
 .it-cut__head { display: flex; align-items: center; gap: 0.6rem; }
 .it-cut__title { font-size: 1.2rem; margin: 0; flex: 1 1 auto; color: inherit; }
 .it-cut__x { padding: 0.3em 0.6em; line-height: 1; }
 .it-cut__intro { margin: 0.35rem 0 0.2rem; font-size: 0.95em; line-height: 1.5; }
-.it-cut__dl { margin: 0 0 0.6rem; font-size: 0.85em; opacity: 0.72; line-height: 1.5; }
+.it-cut__dl { margin: 0 0 0.4rem; font-size: 0.85em; opacity: 0.72; line-height: 1.5; }
+/* The load-time model check. `hidden` alone loses to any display rule, so the
+   [hidden] line is doing real work here. */
+.it-cut__verify { margin: 0 0 0.6rem; font-size: 0.82em; line-height: 1.5; color: #82a6cc; }
+.it-cut__verify[hidden] { display: none !important; }
+.it-cut__verify--warn { color: inherit; opacity: 0.8; }
+html[data-theme="light"] .it-cut__verify { color: #34568a; }
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .it-cut__verify { color: #34568a; }
+}
+html[data-theme="light"] .it-cut__verify--warn { color: inherit; }
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .it-cut__verify--warn { color: inherit; }
+}
 .it-cut__stage {
   position: relative; height: min(52vh, 460px); border-radius: 8px; overflow: hidden;
   background: rgba(127,127,127,0.10); border: 1px solid rgba(127,127,127,0.28);
@@ -297,8 +408,19 @@ body.it-cut-open { overflow: hidden; }
 .it-cut__sliders .it-field { margin-bottom: 0.2rem; color: inherit; }
 .it-cut__sliders label span { color: inherit; }
 .it-cut__status { font-size: 0.9em; min-height: 1.3em; margin: 0.5rem 0 0.2rem; }
-.it-cut__limits { font-size: 0.82em; opacity: 0.7; line-height: 1.5; margin: 0 0 0.7rem; max-width: 62ch; }
-.it-cut__actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.it-cut__limits { font-size: 0.82em; opacity: 0.7; line-height: 1.5; margin: 0 0 0.3rem; max-width: 62ch; }
+/* Apply and Cancel are sticky at the bottom of the workspace. On a phone the
+   panel is taller than the screen, and these two sat below the fold: the tool
+   looked like it had no way to finish. `background: inherit` picks up whichever
+   theme the panel is painting, and the negative side margins let the row cover
+   the panel's own padding so nothing scrolls past beside it. */
+.it-cut__actions {
+  display: flex; flex-wrap: wrap; gap: 0.5rem;
+  position: sticky; bottom: 0; z-index: 2;
+  background: inherit;
+  margin: 0 -1.1rem; padding: 0.6rem 1.1rem 0.7rem;
+  border-top: 1px solid rgba(127,127,127,0.28);
+}
 .it-cut__actions .it-btn { padding: 0.55em 1.1em; }
 html[data-theme="light"] .it-cut { background: rgba(232,234,238,0.8); }
 html[data-theme="light"] .it-cut__panel { background: #ffffff; color: #262626; border-color: rgba(0,0,0,0.14); }
@@ -310,9 +432,10 @@ html[data-theme="light"] .it-cut__check input { accent-color: #34568a; }
 }
 @media (max-width: 760px) {
   .it-cut { padding: 0.5rem; }
-  .it-cut__panel { padding: 0.7rem 0.75rem 0.9rem; }
+  .it-cut__panel { padding: 0.7rem 0.75rem 0.4rem; }
   .it-cut__stage { height: 42vh; }
   .it-cut__sliders { grid-template-columns: 1fr; }
+  .it-cut__actions { margin: 0 -0.75rem; padding: 0.5rem 0.75rem 0.55rem; }
   .it-cut__actions .it-btn { flex: 1 1 auto; }
 }
 </style>
