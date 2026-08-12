@@ -7479,7 +7479,27 @@
 
   var planetScr = [];                     /* per-frame planet screens */
   var planetOrbPx = 0, planetOrbIdx = -1; /* last drawn solar-planet orb */
-  (function () { for (var i = 0; i < 8; i++) planetScr.push({ ok: false, x: 0, y: 0 }); })();
+  var planetZ = new Float64Array(8);      /* camera depth, for the draw order */
+  var planetOrbR = new Float64Array(8);   /* this frame's orb radius, 0 = a dot */
+  var planetCol = [];                     /* this frame's disc colour */
+  (function () {
+    for (var i = 0; i < 8; i++) { planetScr.push({ ok: false, x: 0, y: 0 }); planetCol.push(''); }
+  })();
+
+  /* one small planet disc, plus the ship if it is parked there */
+  function drawPlanetDot(i, pa, selRing, ship, now) {
+    var P2 = planetScr[i];
+    ctx.globalAlpha = pa;
+    ctx.fillStyle = planetCol[i];
+    ctx.beginPath(); ctx.arc(P2.x, P2.y, PLANET_R[i], 0, 6.2832); ctx.fill();
+    if (selRing) {
+      ctx.strokeStyle = gold();
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(P2.x, P2.y, PLANET_R[i] + 4, 0, 6.2832); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    if (ship) drawParkedShip(P2.x, P2.y, PLANET_R[i], now, pa);
+  }
 
   function drawPolyline(flat, alpha, color, lw) {
     ctx.strokeStyle = color;
@@ -7542,14 +7562,19 @@
     var sunScr = { ok: false, x: 0, y: 0 };
     sunScr.ok = projectPt(0, 0, 0, PRJ);
     if (sunScr.ok) { sunScr.x = PRJ.x; sunScr.y = PRJ.y; }
+    /* Pass one measures, pass two paints. A close-up orb is drawn hundreds of
+       pixels across, so the worlds that are genuinely behind it have to go
+       down before it and the ones in front after it; walking the eight in
+       index order put Mars on Earth's face. */
     for (i = 0; i < 8; i++) {
       var st = A.planetState(PLANET_KEYS[i], viewJD);
       var P2 = planetScr[i];
+      planetOrbR[i] = 0;
       P2.ok = projectPt(st.r[0], st.r[1], st.r[2], PRJ);
       if (!P2.ok) continue;
-      P2.x = PRJ.x; P2.y = PRJ.y;
+      P2.x = PRJ.x; P2.y = PRJ.y; planetZ[i] = PRJ.z;
       var isTgt = inPork && PLANET_KEYS[i] === pcTarget;
-      var color = (i === 2) ? accent() : (isTgt || selPlanet === i ? gold() : 'rgba(127,127,127,0.95)');
+      planetCol[i] = (i === 2) ? accent() : (isTgt || selPlanet === i ? gold() : 'rgba(127,127,127,0.95)');
       /* the selected world gets a real orb once the camera is close enough;
          the tiny orbit-view discs are left alone */
       /* The orb radius law is PLANET_R * 2.2 * (60 / camD), which is honest
@@ -7563,46 +7588,53 @@
                     (orbPlanet === i || (!isRigMode() && selPlanet === i)) &&
                     isFinite(P2.x) && isFinite(P2.y);
       if (wantOrb) {
-        var opx = clampN(PLANET_R[i] * 2.2 * (60 / Math.max(0.5, camD)),
-                         PLANET_R[i] + 2, Math.min(H * 0.34, 240));
-        var lds = Math.PI;
-        if (sunScr.ok) {
-          var la = Math.atan2(sunScr.y - P2.y, sunScr.x - P2.x);
-          if (isFinite(la)) lds = la;
-        }
-        ctx.globalAlpha = 1;
-        orbBacking(P2.x, P2.y, opx, pa);
-        orbDrawPlanet(ctx, P2.x, P2.y, opx, solArtOf(i), orbT(now),
-                      { quality: orbQuality(), lightDir: lds, alpha: pa }, true);
-        planetOrbPx = opx; planetOrbIdx = i;
-        /* the ring is a "this one" marker for a dot; on a big orb it is just
-           a circle drawn through the middle of a world */
-        if (opx <= ORB_SEL_MAX) {
-          ctx.strokeStyle = gold();
-          ctx.globalAlpha = clampN(0.6 * pa, 0, 1);
-          ctx.lineWidth = 1.4;
-          ctx.beginPath(); ctx.arc(P2.x, P2.y, opx + 6, 0, 6.2832); ctx.stroke();
-          ctx.globalAlpha = 1;
-        }
-      } else {
-        ctx.globalAlpha = pa;
-        ctx.fillStyle = color;
-        ctx.beginPath(); ctx.arc(P2.x, P2.y, PLANET_R[i], 0, 6.2832); ctx.fill();
-        if (selPlanet === i && !inPork) {
-          ctx.strokeStyle = gold();
-          ctx.lineWidth = 1.5;
-          ctx.beginPath(); ctx.arc(P2.x, P2.y, PLANET_R[i] + 4, 0, 6.2832); ctx.stroke();
-        }
-        ctx.globalAlpha = 1;
-      }
-      /* the parked ship, drawn at whichever planet it is orbiting */
-      if (!isRigMode() && shipAt.kind === 'p' && shipAt.idx === i && camD < 60) {
-        drawParkedShip(P2.x, P2.y, wantOrb ? planetOrbPx : PLANET_R[i], now, pa);
+        planetOrbR[i] = clampN(PLANET_R[i] * 2.2 * (60 / Math.max(0.5, camD)),
+                               PLANET_R[i] + 2, Math.min(H * 0.34, 240));
+        planetOrbPx = planetOrbR[i]; planetOrbIdx = i;
       }
       var wantLabel = camD < 60 || (inPork && (i === 2 || isTgt));
       if (wantLabel) {
         labels.push({ i: i, x: P2.x, y: P2.y, txt: PLANET_LABELS[i],
                       color: i === 2 ? accent() : (isTgt || selPlanet === i ? gold() : null) });
+      }
+    }
+    /* the parked ship is drawn at whichever planet it is orbiting */
+    var parkIdx = (!isRigMode() && shipAt.kind === 'p' && camD < 60) ? shipAt.idx : -1;
+    /* with no orb there is no occluder, and refZ = Infinity leaves every
+       world in the near pass, in the index order it has always used */
+    var refZ = planetOrbIdx >= 0 ? planetZ[planetOrbIdx] : Infinity;
+    for (i = 0; i < 8; i++) {
+      if (planetScr[i].ok && !planetOrbR[i] && planetZ[i] > refZ) {
+        drawPlanetDot(i, pa, selPlanet === i && !inPork, parkIdx === i, now);
+      }
+    }
+    for (i = 0; i < 8; i++) {
+      if (!planetScr[i].ok || !planetOrbR[i]) continue;
+      var P3 = planetScr[i], opx = planetOrbR[i];
+      if (parkIdx === i) drawParkedShip(P3.x, P3.y, opx, now, pa, -1);
+      var lds = Math.PI;
+      if (sunScr.ok) {
+        var la = Math.atan2(sunScr.y - P3.y, sunScr.x - P3.x);
+        if (isFinite(la)) lds = la;
+      }
+      ctx.globalAlpha = 1;
+      orbBacking(P3.x, P3.y, opx, pa);
+      orbDrawPlanet(ctx, P3.x, P3.y, opx, solArtOf(i), orbT(now),
+                    { quality: orbQuality(), lightDir: lds, alpha: pa }, true);
+      /* the ring is a "this one" marker for a dot; on a big orb it is just
+         a circle drawn through the middle of a world */
+      if (opx <= ORB_SEL_MAX) {
+        ctx.strokeStyle = gold();
+        ctx.globalAlpha = clampN(0.6 * pa, 0, 1);
+        ctx.lineWidth = 1.4;
+        ctx.beginPath(); ctx.arc(P3.x, P3.y, opx + 6, 0, 6.2832); ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+      if (parkIdx === i) drawParkedShip(P3.x, P3.y, opx, now, pa, 1);
+    }
+    for (i = 0; i < 8; i++) {
+      if (planetScr[i].ok && !planetOrbR[i] && !(planetZ[i] > refZ)) {
+        drawPlanetDot(i, pa, selPlanet === i && !inPork, parkIdx === i, now);
       }
     }
     /* A close-up orb owns its patch of screen. "Venus" and "Mars" landing on
@@ -7778,36 +7810,108 @@
   }
 
   /* One small ship on a tilted orbit ellipse around a body it is parked at.
-     rBody is the drawn radius of that body in px. */
-  function drawParkedShip(cx0, cy0, rBody, now, fade) {
+     rBody is the drawn radius of that body in px.
+
+     `half` splits that ellipse against the body it circles: -1 is the arc
+     that runs BEHIND the body, +1 the arc in front of it, and 0 or omitted
+     the whole loop in one pass as before. The ship rides whichever arc it is
+     on. The ellipse is a screen orbit tilted with its far side up, so
+     sin(th) < 0 is the far half. */
+  function drawParkedShip(cx0, cy0, rBody, now, fade, half) {
     if (!SHIPS || !isFinite(cx0) || !isFinite(cy0) || !(rBody > 0)) return;
     var orbR = Math.max(rBody * 1.7, 22);
     var th = reduced ? 0.9 : (now / 4200) % 6.2832;
     var ex = cx0 + orbR * Math.cos(th);
     var ey = cy0 + orbR * 0.34 * Math.sin(th);
     if (!isFinite(ex) || !isFinite(ey)) return;
+    var side = Math.sin(th) < 0 ? -1 : 1;
+    var q0 = (half < 0) ? 24 : 0, q1 = (half > 0) ? 24 : 48;
     ctx.save();
     ctx.globalAlpha = clampN(0.45 * fade, 0, 1);
     ctx.strokeStyle = textColor(0.7);
     ctx.lineWidth = 1;
     ctx.beginPath();
-    for (var q = 0; q <= 48; q++) {
+    for (var q = q0; q <= q1; q++) {
       var a2 = q / 48 * 6.2832;
       var px2 = cx0 + orbR * Math.cos(a2), py2 = cy0 + orbR * 0.34 * Math.sin(a2);
-      if (q === 0) ctx.moveTo(px2, py2); else ctx.lineTo(px2, py2);
+      if (q === q0) ctx.moveTo(px2, py2); else ctx.lineTo(px2, py2);
     }
     ctx.stroke();
-    ctx.globalAlpha = clampN(fade, 0, 1);
-    /* the real ship, sized against whatever it is orbiting: a marker that is
-       recognisably THIS trip's rocket beats a grey wedge */
-    var spx = clampN(rBody * 1.15, 16, 60);
-    SHIPS.drawShip(ctx, ex, ey, spx, -0.5, {
-      key: shipKeyOf(accelIdx), hull: shipHullOf(shipIdx),
-      thrust: 0, t: reduced ? 0 : now / 1000, quality: 0, flip: 0,
-      light: isLight()
-    });
+    if (!half || side === half) {
+      ctx.globalAlpha = clampN(fade, 0, 1);
+      /* the real ship, sized against whatever it is orbiting: a marker that is
+         recognisably THIS trip's rocket beats a grey wedge */
+      var spx = clampN(rBody * 1.15, 16, 60);
+      SHIPS.drawShip(ctx, ex, ey, spx, -0.5, {
+        key: shipKeyOf(accelIdx), hull: shipHullOf(shipIdx),
+        thrust: 0, t: reduced ? 0 : now / 1000, quality: 0, flip: 0,
+        light: isLight()
+      });
+    }
     ctx.restore();
     ctx.globalAlpha = 1;
+  }
+
+  /* Scratch for the close-up system, grown once and reused: the per-frame
+     work allocates nothing beyond the exoScr entries it always did. A ring
+     is stored flat as x, y, camera depth per sample, and a non-finite depth
+     marks a sample that failed to project, which breaks the polyline run
+     exactly as it always did. */
+  var EXO_RING = 65;
+  var exoRows = [];
+  function exoRowAt(k) {
+    while (exoRows.length <= k) {
+      exoRows.push({ j: -1, ok: false, x: 0, y: 0, z: 0, er: 0, sel: false,
+                     art: null, ring: new Float64Array(EXO_RING * 3) });
+    }
+    return exoRows[k];
+  }
+
+  /* One planet's orbit ring, restricted to the half of it that is farther
+     from the camera than the star (behind) or nearer than it. Splitting at
+     sample granularity is deliberate: no interpolated crossing point. */
+  function strokeExoRing(row, behind, starZc, fade) {
+    ctx.strokeStyle = 'rgba(127,127,127,0.9)';
+    ctx.globalAlpha = 0.35 * fade;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    var open = false, ring = row.ring;
+    for (var q = 0; q < EXO_RING; q++) {
+      var o = q * 3, zc = ring[o + 2];
+      if (isFinite(zc) && (behind ? zc >= starZc : zc < starZc)) {
+        if (!open) { ctx.moveTo(ring[o], ring[o + 1]); open = true; }
+        else ctx.lineTo(ring[o], ring[o + 1]);
+      } else open = false;
+    }
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  function drawExoOrb(row, cx0, cy0, rpx, fade, now) {
+    var ex2 = row.x, ey2 = row.y, er = row.er;
+    if (row.art) {
+      var ld = Math.atan2(cy0 - ey2, cx0 - ex2);   /* lit from the star */
+      if (!isFinite(ld)) ld = Math.PI;
+      /* the space vignette is there to lift an orb off a near-white SKY;
+         over the host star's own bright disc it is just a brown smudge */
+      if (Math.hypot(ex2 - cx0, ey2 - cy0) > rpx + er) orbBacking(ex2, ey2, er, fade);
+      /* exoplanet orbs stay on VoyageArt: D1 reserves the two GL blits
+         for the close-up body and the cruise destination */
+      orbDrawPlanet(ctx, ex2, ey2, er, row.art, orbT(now),
+                    { quality: orbQuality(), lightDir: ld, alpha: fade }, false);
+    } else {
+      ctx.globalAlpha = fade;
+      ctx.fillStyle = row.sel ? gold() : textColor(0.85);
+      ctx.beginPath(); ctx.arc(ex2, ey2, 3, 0, 6.2832); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    if (row.sel && er <= ORB_SEL_MAX) {
+      ctx.strokeStyle = gold();
+      ctx.globalAlpha = clampN(0.85 * fade, 0, 1);
+      ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.arc(ex2, ey2, er + 5, 0, 6.2832); ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
   }
 
   /* D4. The old version switched the whole close-up off at D = 200 AU and
@@ -7824,6 +7928,10 @@
     var P = PRJ;
     if (!projectPt(starX[i], starY[i], starZ[i], P)) return;
     var cx0 = P.x, cy0 = P.y;
+    /* the star's own camera depth, taken before anything else reuses PRJ: it
+       is what tells a planet or a stretch of orbit ring whether it passes in
+       front of this disc or behind it */
+    var starZc = P.z;
     if (!isFinite(cx0) || !isFinite(cy0)) return;
     var rpx = starOrbRadius(i, D);
     var fade = PURE.orbBlend(rpx);
@@ -7846,6 +7954,92 @@
     }
     if (fade <= 0) return;
 
+    /* known planets: real orbit sizes (a in AU), illustrative positions.
+       Below half blend the host star itself is under 4 px, so its planets
+       are far smaller than a pixel: the orbs are not drawn and, separately,
+       nothing is pushed to exoScr. The MODE gate on exoScr is load-bearing
+       and is NOT the same rule as the blend gate: during a cruise capture
+       the destination becomes the centered star at close range, and a tap
+       there means skip-to-arrival, never "open a planet card".
+
+       Measure the whole system first, paint it second. Every ring sample and
+       every planet carries its camera depth, so the star's disc can be laid
+       down between the half of the system that is behind it and the half in
+       front, instead of under all of it. */
+    var nRow = 0, selRow = -1, k, r, row;
+    var list = starPlanets[i];
+    if (fade >= 0.5 && list && list.length) {
+      var exoTappable = (mode === 'explore') || (mode === 'shipidle');
+      var tAnim = reduced ? 0 : now / 1000 / 600;   /* 600 s per Earth-year of sweep */
+      for (k = 0; k < list.length; k++) {
+        var j = list[k];
+        var a = SD.planets.a[j];
+        var per = SD.planets.per[j];
+        if ((a == null || !isFinite(a)) && per != null && isFinite(per) && per > 0) {
+          a = Math.pow(per / 365.25, 2 / 3);
+        }
+        if (a == null || !isFinite(a) || a <= 0) continue;
+        var pYr = (per != null && isFinite(per) && per > 0) ? per / 365.25 : Math.pow(a, 1.5);
+        var ph = k * 2.399 + (reduced ? 0 : tAnim * 2 * Math.PI / Math.max(1e-4, pYr));
+        row = exoRowAt(nRow++);
+        row.j = j;
+        /* orbit circle in the ecliptic plane around the star */
+        for (var q2 = 0; q2 < EXO_RING; q2++) {
+          var th = q2 / 64 * 2 * Math.PI;
+          var wx2 = starX[i] + a * Math.cos(th), wy2 = starY[i] + a * Math.sin(th);
+          var o2 = q2 * 3;
+          if (projectPt(wx2, wy2, starZ[i], PRJ)) {
+            row.ring[o2] = PRJ.x; row.ring[o2 + 1] = PRJ.y; row.ring[o2 + 2] = PRJ.z;
+          } else row.ring[o2 + 2] = NaN;
+        }
+        var wx3 = starX[i] + a * Math.cos(ph), wy3 = starY[i] + a * Math.sin(ph);
+        row.ok = projectPt(wx3, wy3, starZ[i], PRJ);
+        if (row.ok) {
+          row.x = PRJ.x; row.y = PRJ.y; row.z = PRJ.z;
+          row.sel = selExo === j;
+          row.art = exoArtOf(j);
+          /* size the orb from the orbit's own on-screen radius: a selected
+             planet grows as the camera closes in, everything else stays a
+             small orb that reads as a dot on the ring */
+          var orbitPx = fpxV * a / Math.max(1e-6, D);
+          var er = row.sel ? clampN(orbitPx * 0.28, 10, 120)
+                           : clampN(orbitPx * 0.10, 8, 14);
+          if (!isFinite(er) || er <= 0) er = 9;
+          row.er = er;
+          if (row.sel) selRow = nRow - 1;
+          /* a world the star disc fully covers is not on screen this frame,
+             so it is not a tap target either: it takes the same off-screen
+             sentinel a failed projection does. A partial cover keeps the tap
+             (the sliver is visible) and the selected close-up always draws. */
+          var covered = !row.sel && row.z > starZc &&
+                        Math.hypot(row.x - cx0, row.y - cy0) + er <= rpx;
+          if (exoTappable) {
+            if (covered) exoScr.push({ j: j, x: -9999, y: -9999, r: 3 });
+            else exoScr.push({ j: j, x: row.x, y: row.y, r: er });
+          }
+        } else if (exoTappable) {
+          exoScr.push({ j: j, x: -9999, y: -9999, r: 3 });
+        }
+      }
+    }
+    var parked = !isRigMode() && shipAt.kind === 's' && shipAt.idx === i;
+
+    /* the far side, rings before orbs so a world is never crossed by a ring
+       drawn in its own pass.
+
+       The SELECTED planet is exempt from the split and always paints in front.
+       Its orb is the close-up the card and the honesty caption are about, and
+       the disc it would hide behind is drawn hundreds of times life size (the
+       scale bar says so): a real TRAPPIST-1 planet orbits far outside its
+       star, so swallowing it there is an artefact of the illustration, not a
+       fact about the system. Hiding it left the caption pointing at nothing. */
+    for (r = 0; r < nRow; r++) strokeExoRing(exoRows[r], true, starZc, fade);
+    for (r = 0; r < nRow; r++) {
+      row = exoRows[r];
+      if (row.ok && !row.sel && row.z > starZc) drawExoOrb(row, cx0, cy0, rpx, fade, now);
+    }
+    if (parked) drawParkedShip(cx0, cy0, rpx, now, fade, -1);
+
     orbBacking(cx0, cy0, rpx, fade);
     var art = starArtOf(i);
     if (art) {
@@ -7865,96 +8059,25 @@
         ctx.globalAlpha = 1;
       } else starPulse = 0;
     }
-    if (!isRigMode() && shipAt.kind === 's' && shipAt.idx === i) {
-      drawParkedShip(cx0, cy0, rpx, now, fade);
+    if (parked) drawParkedShip(cx0, cy0, rpx, now, fade, 1);
+
+    /* the near side, plus the selected planet whatever its illustrative phase */
+    for (r = 0; r < nRow; r++) strokeExoRing(exoRows[r], false, starZc, fade);
+    for (r = 0; r < nRow; r++) {
+      row = exoRows[r];
+      if (row.ok && (row.sel || row.z <= starZc)) drawExoOrb(row, cx0, cy0, rpx, fade, now);
     }
-    /* known planets: real orbit sizes (a in AU), illustrative positions.
-       Below half blend the host star itself is under 4 px, so its planets
-       are far smaller than a pixel: the orbs are not drawn and, separately,
-       nothing is pushed to exoScr. The MODE gate on exoScr is load-bearing
-       and is NOT the same rule as the blend gate: during a cruise capture
-       the destination becomes the centered star at close range, and a tap
-       there means skip-to-arrival, never "open a planet card". */
-    if (fade < 0.5) return;
-    var exoTappable = (mode === 'explore') || (mode === 'shipidle');
-    var list = starPlanets[i];
-    if (!list || !list.length) return;
-    var tAnim = reduced ? 0 : now / 1000 / 600;   /* 600 s per Earth-year of sweep */
-    for (var k = 0; k < list.length; k++) {
-      var j = list[k];
-      var a = SD.planets.a[j];
-      var per = SD.planets.per[j];
-      if ((a == null || !isFinite(a)) && per != null && isFinite(per) && per > 0) {
-        a = Math.pow(per / 365.25, 2 / 3);
-      }
-      if (a == null || !isFinite(a) || a <= 0) continue;
-      var pYr = (per != null && isFinite(per) && per > 0) ? per / 365.25 : Math.pow(a, 1.5);
-      var ph = k * 2.399 + (reduced ? 0 : tAnim * 2 * Math.PI / Math.max(1e-4, pYr));
-      /* orbit circle in the ecliptic plane around the star */
-      ctx.strokeStyle = 'rgba(127,127,127,0.9)';
-      ctx.globalAlpha = 0.35 * fade;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      var open = false;
-      for (var q2 = 0; q2 <= 64; q2++) {
-        var th = q2 / 64 * 2 * Math.PI;
-        var wx2 = starX[i] + a * Math.cos(th), wy2 = starY[i] + a * Math.sin(th);
-        if (projectPt(wx2, wy2, starZ[i], PRJ)) {
-          if (!open) { ctx.moveTo(PRJ.x, PRJ.y); open = true; } else ctx.lineTo(PRJ.x, PRJ.y);
-        } else open = false;
-      }
-      ctx.stroke();
-      ctx.globalAlpha = 1;
-      var wx3 = starX[i] + a * Math.cos(ph), wy3 = starY[i] + a * Math.sin(ph);
-      if (projectPt(wx3, wy3, starZ[i], PRJ)) {
-        var isSel = selExo === j;
-        var ex2 = PRJ.x, ey2 = PRJ.y;
-        var eart = exoArtOf(j);
-        /* size the orb from the orbit's own on-screen radius: a selected
-           planet grows as the camera closes in, everything else stays a
-           small orb that reads as a dot on the ring */
-        var orbitPx = fpxV * a / Math.max(1e-6, D);
-        var er = isSel ? clampN(orbitPx * 0.28, 10, 120)
-                       : clampN(orbitPx * 0.10, 8, 14);
-        if (!isFinite(er) || er <= 0) er = 9;
-        if (eart) {
-          var ld = Math.atan2(cy0 - ey2, cx0 - ex2);   /* lit from the star */
-          if (!isFinite(ld)) ld = Math.PI;
-          /* the space vignette is there to lift an orb off a near-white SKY;
-             over the host star's own bright disc it is just a brown smudge */
-          if (Math.hypot(ex2 - cx0, ey2 - cy0) > rpx + er) orbBacking(ex2, ey2, er, fade);
-          /* exoplanet orbs stay on VoyageArt: D1 reserves the two GL blits
-             for the close-up body and the cruise destination */
-          orbDrawPlanet(ctx, ex2, ey2, er, eart, orbT(now),
-                        { quality: orbQuality(), lightDir: ld, alpha: fade }, false);
-        } else {
-          ctx.globalAlpha = fade;
-          ctx.fillStyle = isSel ? gold() : textColor(0.85);
-          ctx.beginPath(); ctx.arc(ex2, ey2, 3, 0, 6.2832); ctx.fill();
-          ctx.globalAlpha = 1;
-        }
-        if (isSel) {
-          if (er <= ORB_SEL_MAX) {
-            ctx.strokeStyle = gold();
-            ctx.globalAlpha = clampN(0.85 * fade, 0, 1);
-            ctx.lineWidth = 1.4;
-            ctx.beginPath(); ctx.arc(ex2, ey2, er + 5, 0, 6.2832); ctx.stroke();
-            ctx.globalAlpha = 1;
-          }
-          /* the same honesty line the card carries, next to the close-up. It
-             sits over the host star's disc more often than not, so it gets a
-             backing plate: this sentence has to be readable, always. */
-          if (er >= 26) {
-            captionPlate([
-              'An impression drawn from its measured size and temperature.',
-              'Nobody has seen this planet up close.'
-            ], clampN(ex2, W * 0.24, W * 0.76), ey2 + er + 12, W < 700 ? 10 : 11.5);
-          }
-        }
-        if (exoTappable) exoScr.push({ j: j, x: ex2, y: ey2, r: er });
-      } else if (exoTappable) {
-        exoScr.push({ j: j, x: -9999, y: -9999, r: 3 });
-      }
+
+    /* the same honesty line the card carries, next to the close-up. It sits
+       over the host star's disc more often than not, so it gets a backing
+       plate and it goes down after every orb in the system: this sentence
+       has to be readable, always. */
+    if (selRow >= 0 && exoRows[selRow].ok && exoRows[selRow].er >= 26) {
+      row = exoRows[selRow];
+      captionPlate([
+        'An impression drawn from its measured size and temperature.',
+        'Nobody has seen this planet up close.'
+      ], clampN(row.x, W * 0.24, W * 0.76), row.y + row.er + 12, W < 700 ? 10 : 11.5);
     }
   }
 
@@ -9584,6 +9707,10 @@
       return (cruiseSt && cruiseSt.cp) ? cruiseHudLines(cruiseSt) : null;
     },
     hudBoxes: function () { return hudDrawn.slice(); },
+    exoTaps: function () {
+      return exoScr.map(function (e) { return { j: e.j, x: e.x, y: e.y, r: e.r }; });
+    },
+    selExo: function () { return selExo; },
     /* ---- wave 4, builder B ---- */
     cruisePose: function (tSec) {
       if (!cruiseSt) return null;
