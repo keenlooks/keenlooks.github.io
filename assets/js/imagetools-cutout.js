@@ -738,11 +738,11 @@
 
   /* ONE plain fetch per file, read through a ReadableStream so the progress is
      real. Deliberately no Range requests: GitHub Pages/Fastly mishandle a
-     ranged request for a gzipped asset. `expect` is the file's real byte count
-     and is used as the denominator, because with Content-Encoding in play the
-     Content-Length header counts compressed bytes while the stream delivers
-     decompressed ones. */
-  function fetchBuf(url, expect, onBytes) {
+     ranged request for a gzipped asset. Bytes are reported as they arrive and
+     counted against SEG_TOTAL, which is built from the real file sizes: with
+     Content-Encoding in play the Content-Length header counts compressed bytes
+     while the stream delivers decompressed ones. */
+  function fetchBuf(url, onBytes) {
     return fetch(url).then(function (res) {
       if (!res.ok) throw new Error('HTTP ' + res.status + ' for ' + url);
       if (!res.body || typeof res.body.getReader !== 'function') {
@@ -865,7 +865,7 @@
       if (onProgress) onProgress(done, SEG_TOTAL);
       for (var i = 0; i < need.length; i++) {
         var k = need[i];
-        weightCache[k] = await fetchBuf(segUrl(SEG_FILES[k]), SEG_BYTES[k], bump);
+        weightCache[k] = await fetchBuf(segUrl(SEG_FILES[k]), bump);
       }
       if (onProgress) onProgress(SEG_TOTAL, SEG_TOTAL);
     }
@@ -1140,6 +1140,7 @@
   var elRad = id('it-cut-radius'), elRadV = id('it-cut-radius-val');
   var elFeather = id('it-cut-feather'), elFeatherV = id('it-cut-feather-val');
   var elApply = id('it-cut-apply'), elCancel = id('it-cut-cancel'), elClose = id('it-cut-close');
+  var elRetry = id('it-cut-retry');
   var elVerify = id('it-cut-verify'), elStart = id('it-cut-start');
   var openBtn = id('it-cutout');
 
@@ -1255,11 +1256,21 @@
     var h = Math.max(1, Math.round(srcCanvas.height * s));
     if (PW === w && PH === h && baseData) return;
     PW = w; PH = h;
+    /* The pristine copy is read back off a one-shot canvas rather than off pv.
+       pv is a draw target on every frame, and reading it back is what makes the
+       browser warn that the surface would be faster with willReadFrequently
+       (and take it off the GPU to oblige). Same pattern as the guide plane. */
+    var tmp = document.createElement('canvas');
+    tmp.width = PW; tmp.height = PH;
+    var tx = tmp.getContext('2d', { willReadFrequently: true });
+    tx.imageSmoothingQuality = 'high';
+    tx.drawImage(srcCanvas, 0, 0, PW, PH);
+    baseData = tx.getImageData(0, 0, PW, PH);
     pv.width = PW; pv.height = PH;
     pvx.imageSmoothingQuality = 'high';
     pvx.clearRect(0, 0, PW, PH);
-    pvx.drawImage(srcCanvas, 0, 0, PW, PH);
-    baseData = pvx.getImageData(0, 0, PW, PH);
+    pvx.drawImage(tmp, 0, 0);
+    tmp.width = 0; tmp.height = 0;
   }
 
   /* ---- the mask pipeline (shared by the preview and by Apply) ----------- */
@@ -1419,7 +1430,9 @@
       }
     }
     if (drawing) paintStroke(drawing, 0.5);
-    if (hover) {
+    /* No ring where the brush cannot take a stroke, so the cursor never offers
+       paint the photo would not receive. */
+    if (hover && (drawing || reachesImage(hover))) {
       ctx.beginPath();
       ctx.arc(hover.x, hover.y, radiusPx(), 0, 6.2832);
       ctx.strokeStyle = brush ? accent() : 'rgba(150,150,150,0.9)';
@@ -1566,7 +1579,12 @@
         lastStrokeMs = Math.round(performance.now() - strokeT0); strokeT0 = 0;
       }
     } catch (e) {
-      if (my === segSeq) setStatus('The cutter could not update that. Try another stroke.');
+      /* A stroke that fails leaves the previous cut standing, so another stroke
+         is a real suggestion. A failed FIRST cut leaves nothing to brush on. */
+      if (my === segSeq) {
+        if (auto) failStart('The cutter could not read this photo.');
+        else setStatus('The cutter could not update that. Try another stroke.');
+      }
     } finally {
       if (my === segSeq) { busy = false; updateButtons(); pumpSegment(); }
     }
@@ -1631,6 +1649,20 @@
   function toImage(p) {
     return { x: clamp((p.x - imgX) / imgW, 0, 1), y: clamp((p.y - imgY) / imgH, 0, 1) };
   }
+
+  /* Does the brush circle at this stage point reach the photo? The image is
+     letterboxed into the stage, so a whole stroke can be painted beside it;
+     every point of it then clamps onto the border and prompts the model where
+     nothing was brushed, which for a Keep stroke drags the background into the
+     cut. The test is on the CIRCLE, not on its centre, for the same reason the
+     swath test is: the circle is what the user aims with, so paint that plainly
+     covers the edge of the photo still counts. */
+  function reachesImage(p) {
+    var dx = p.x - clamp(p.x, imgX, imgX + imgW);
+    var dy = p.y - clamp(p.y, imgY, imgY + imgH);
+    var r = radiusPx();
+    return dx * dx + dy * dy <= r * r;
+  }
   function endStroke(e) {
     if (!drawing || drawing.pid !== e.pointerId) return;
     var st = drawing;
@@ -1648,9 +1680,10 @@
 
   if (cv) {
     cv.addEventListener('pointerdown', function (e) {
-      if (!srcCanvas || !engineReady || e.button === 2) return;
+      if (!srcCanvas || !engineReady || startFailed || e.button === 2) return;
       lastTouch = performance.now();
       var p = localPt(e);
+      if (!reachesImage(p)) { hover = p; render(); return; }
       drawing = { label: brush, r: radiusPx() / Math.max(1, imgW), pts: [toImage(p)], pid: e.pointerId };
       hover = p;
       try { cv.setPointerCapture(e.pointerId); } catch (er) {}
@@ -1681,7 +1714,19 @@
   if (elStart) elStart.addEventListener('click', startOver);
   if (elDots) elDots.addEventListener('change', render);
   if (elRad) elRad.addEventListener('input', function () { elRadV.textContent = elRad.value + ' px'; render(); });
-  if (elFeather) elFeather.addEventListener('input', function () { elFeatherV.textContent = elFeather.value; refreshPreview(); });
+  /* Feathering the preview means a guided-filter pass over the whole photo,
+     which is well over a frame of work, while a slider drag emits an input
+     event every few pixels. Filtering each one in turn would queue up passes
+     for values the slider has already gone past, so the value is coalesced:
+     the number beside the slider follows the drag immediately and the filter
+     runs on what the slider settled on. */
+  var featherTimer = 0;
+  function queueFeather() {
+    if (featherTimer) clearTimeout(featherTimer);
+    featherTimer = setTimeout(function () { featherTimer = 0; refreshPreview(); }, 120);
+  }
+  if (elFeather) elFeather.addEventListener('input', function () { elFeatherV.textContent = elFeather.value; queueFeather(); });
+  if (elRetry) elRetry.addEventListener('click', retryStart);
   if (elCancel) elCancel.addEventListener('click', function () { closeWorkspace(true); });
   if (elClose) elClose.addEventListener('click', function () { closeWorkspace(true); });
   if (elApply) elApply.addEventListener('click', apply);
@@ -1711,12 +1756,20 @@
       if (!opened) return;                       /* closed while the bake ran */
       ox.clearRect(0, 0, W, H);
       ox.putImageData(dat, 0, 0);
-      S.applyEdit(out, 'Background cut out.');
+      /* A cut this small bakes an image that is transparent almost everywhere.
+         It is a real result and Undo takes it back, but reporting it as a
+         plain success would leave someone looking at an empty checkerboard
+         with nothing to explain it. */
+      var msg = (lastArea >= 0 && lastArea < WEAK_SMALL)
+        ? 'Background cut out, but almost nothing was kept. Undo takes it back.'
+        : 'Background cut out.';
+      S.applyEdit(out, msg);
       /* JPEG has no alpha channel, so a cutout would silently come back with
-         a black or white background on export. */
+         a black or white background on export. The switch is recorded against
+         this history step, so taking the cutout back takes the format with it. */
       if (S.getFormat && S.getFormat() === 'jpeg' && S.setFormat) {
-        S.setFormat('png');
-        if (S.setStatus) S.setStatus('Background cut out. ' + COPY.jpeg);
+        S.setFormat('png', true);
+        if (S.setStatus) S.setStatus(msg + ' ' + COPY.jpeg);
       }
       closeWorkspace(false);
     } catch (e) {
@@ -1740,6 +1793,9 @@
     opened = false;
     segSeq++; paintSeq++;
     if (verifyTimer) { clearInterval(verifyTimer); verifyTimer = 0; }
+    if (featherTimer) { clearTimeout(featherTimer); featherTimer = 0; }
+    startFailed = false;
+    if (elRetry) elRetry.hidden = true;
     root.hidden = true;
     root.setAttribute('aria-hidden', 'true');
     document.body.classList.remove('it-cut-open');
@@ -1754,11 +1810,12 @@
     busy = false;
     if (elCancel) elCancel.disabled = false;     /* re-arm for the next open */
     if (elClose) elClose.disabled = false;
-    /* The sessions and the image embedding go on close, as pinned. The
-       engine implementation should hold its downloaded weights in a
-       module-level cache so re-opening re-initializes rather than
-       re-downloads, and `encodedFor` (the Image Studio edit counter) is what
-       lets it skip re-encoding an image that has not changed. */
+    /* The sessions and the image embedding go on close, as pinned, so the next
+       open always pays the encoder pass again; the downloaded weights stay in
+       the engine's module-level cache, so it re-initializes rather than
+       re-downloads. `encodedFor` (the Image Studio edit counter) is reset with
+       them: inside one open it is what lets a retry after a failed first cut
+       skip an encode that already succeeded. */
     if (engine && engine.dispose) engine.dispose();
     engine = null; engineReady = false; encodedFor = -1;
     if (lastFocus && lastFocus.focus) { try { lastFocus.focus(); } catch (e) {} }
@@ -1775,7 +1832,8 @@
     strokes = []; snaps = []; promptCache = null; logits = null; logitsFor = -1; drawing = null; hover = null;
     logitsW = LOW; logitsH = LOW; lastArea = -1;
     guideCache = { src: null, cw: 0, ch: 0, plane: null };
-    brush = 1; busy = false; verifyRunning = false;
+    brush = 1; busy = false; verifyRunning = false; startFailed = false;
+    if (elRetry) elRetry.hidden = true;
     lastTouch = performance.now();
     root.hidden = false;
     root.setAttribute('aria-hidden', 'false');
@@ -1798,45 +1856,87 @@
        engine that closeWorkspace had already thrown away, and the NEXT open
        would skip loading and then encode against sessions that do not exist. */
     var eng = engine;
-    function stale() { return !opened || engine !== eng; }
-    /* If the workspace was closed mid-load, the load still finishes and builds
-       its sessions; they have to be released or that memory is stranded. */
-    function bail() {
-      if (eng && eng.dispose) { try { eng.dispose(); } catch (e) {} }
-      return true;
-    }
+    var stale = staleFor(eng);
     try {
       if (!engineReady) {
         await eng.load(function (done, total) {
           if (stale()) return;
           if (total > 1) setStatus('Loading the cutter… ' + Math.round(done / 1048576) + ' of ' + Math.round(total / 1048576) + ' MB');
         });
-        if (stale()) return bail() && undefined;
+        if (stale()) return bailEngine(eng) && undefined;
         engineReady = true;
       }
+    } catch (e) {
+      if (stale()) { bailEngine(eng); return; }
+      failStart('The cutter could not start.');
+      return;
+    }
+    await firstCut(eng, stale);
+  }
+
+  function staleFor(eng) {
+    return function () { return !opened || engine !== eng; };
+  }
+  /* If the workspace was closed mid-load, the load still finishes and builds
+     its sessions; they have to be released or that memory is stranded. */
+  function bailEngine(eng) {
+    if (eng && eng.dispose) { try { eng.dispose(); } catch (e) {} }
+    return true;
+  }
+
+  /* Read the photo and take the automatic cut. Split out of openWorkspace
+     because this is exactly what the retry runs again: the weights are already
+     loaded by then, so a second attempt costs the encoder pass at most and
+     nothing has to be torn down. */
+  async function firstCut(eng, stale) {
+    try {
       /* Inference normally runs in a worker; when the browser would not give
          us one, the page freezes for the encoder pass, and the status says so
          rather than looking hung. */
       var inline = eng.proxied && eng.proxied() === 'inline';
-      var edit = S.editCount ? S.editCount() : 0;
+      var S = window.ImageStudio;
+      var edit = S && S.editCount ? S.editCount() : 0;
       if (encodedFor !== edit) {
         setStatus(COPY.reading + (inline ? ' ' + COPY.inline : ''));
         await afterPaint();
-        if (stale()) return bail() && undefined;
+        if (stale()) return bailEngine(eng) && undefined;
         await eng.encode(srcCanvas);
-        if (stale()) return bail() && undefined;
+        if (stale()) return bailEngine(eng) && undefined;
         encodedFor = edit;
       }
       setStatus('Finding the subject…');
       await afterPaint();
-      if (stale()) return bail() && undefined;
+      if (stale()) return bailEngine(eng) && undefined;
       await segment(true);
-      if (stale()) return bail() && undefined;
+      if (stale()) return bailEngine(eng) && undefined;
+      if (startFailed) return;                  /* segment already said what failed */
       scheduleVerify(eng, stale);
     } catch (e) {
-      if (stale()) { bail(); return; }
-      setStatus('The cutter could not start.');
+      if (stale()) { bailEngine(eng); return; }
+      failStart('The cutter could not start.');
     }
+  }
+
+  /* The first cut can fail: the encoder pass can throw and so can the decoder.
+     Every brush stroke refines an existing mask, so until one lands there is
+     nothing a stroke can do, and a status inviting strokes would be a dead end
+     that only closing and reopening escapes. The failure is named instead, the
+     brush is held off, and the button runs the attempt again. */
+  var startFailed = false;
+  function failStart(msg) {
+    startFailed = true;
+    drawing = null;
+    setStatus(msg + ' Try again, or close this and pick another photo.');
+    if (elRetry) elRetry.hidden = false;
+    updateButtons();
+    render();
+  }
+  async function retryStart() {
+    if (!startFailed || !opened || !engine || !engineReady || busy) return;
+    startFailed = false;
+    if (elRetry) elRetry.hidden = true;
+    var eng = engine;
+    await firstCut(eng, staleFor(eng));
   }
 
   /* The model check costs a whole extra encoder pass, about ten seconds, and
@@ -1923,6 +2023,11 @@
     if (!opened) return;
     sizeCanvas();
     buildPreview();
+    /* Resizing the canvas clears it, and refreshPreview has nothing to draw
+       until a cut exists, so the photo has to be put back here. A phone
+       collapsing its URL bar during the first cut fires exactly this, and
+       without the repaint the stage sat empty for the rest of the encode. */
+    render();
     refreshPreview();
   });
 
@@ -1961,12 +2066,14 @@
     /* test hooks: the browser suite drives the UI through real input and
        reads state back through these (the pattern __c4 / __voy use). */
     __test: {
-      /* "ready" means every stroke drawn has been folded in, not merely that
-         the engine is idle: the pump runs one segmentation per stroke. */
+      /* "ready" means every stroke drawn has been folded in and the preview is
+         showing it, not merely that the engine is idle: the pump runs one
+         segmentation per stroke, and a feather change is coalesced. */
       ready: function () {
         return opened && engineReady && !!logits && !busy && painting === 0
-          && logitsFor === strokes.length;
+          && !featherTimer && logitsFor === strokes.length;
       },
+      failed: function () { return startFailed; },
       strokeCount: function () { return strokes.length; },
       undoDepth: function () { return strokes.length; },
       snapCount: function () { return snaps.length; },

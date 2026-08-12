@@ -175,6 +175,9 @@ description: "Remove a background without uploading the photo anywhere: brush wh
 
     <div class="it-cut__actions">
       <button id="it-cut-apply" class="it-btn it-btn--accent" type="button" disabled>Apply cutout</button>
+      <!-- Only shown when the first cut failed: every brush stroke refines an
+           existing mask, so without one there is nothing to brush on. -->
+      <button id="it-cut-retry" class="it-btn" type="button" hidden>Try again</button>
       <button id="it-cut-cancel" class="it-btn" type="button">Cancel</button>
     </div>
   </div>
@@ -422,6 +425,7 @@ html[data-theme="light"] .it-cut__verify--warn { color: inherit; }
   border-top: 1px solid rgba(127,127,127,0.28);
 }
 .it-cut__actions .it-btn { padding: 0.55em 1.1em; }
+.it-cut__actions .it-btn[hidden] { display: none !important; }
 html[data-theme="light"] .it-cut { background: rgba(232,234,238,0.8); }
 html[data-theme="light"] .it-cut__panel { background: #ffffff; color: #262626; border-color: rgba(0,0,0,0.14); }
 html[data-theme="light"] .it-cut__check input { accent-color: #34568a; }

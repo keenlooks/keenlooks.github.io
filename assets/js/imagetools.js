@@ -25,17 +25,34 @@
      reset, undo, or an applyEdit from another module). The cutout tool keys
      its cached image embedding on it, so any edit invalidates that cache. */
   var editSeq = 0;
+  /* A module that edits the image can also have to change the export format as
+     part of that edit (the cutout switches JPEG to PNG, since JPEG cannot hold
+     transparency). It records the switch against the history step it just
+     added, so taking that step back takes the format with it and leaves a
+     manual choice alone. */
+  var fmtSwitch = null;              /* { depth: history.length at that step, from: 'jpeg' } */
 
   /* ---------- undo ---------- */
   function snapshot() { var c = document.createElement('canvas'); c.width = work.width; c.height = work.height; c.getContext('2d').drawImage(work, 0, 0); return c; }
-  function pushHistory() { history.push(snapshot()); if (history.length > 25) history.shift(); var u = id('it-undo'); if (u) u.disabled = false; }
+  function pushHistory() {
+    history.push(snapshot());
+    /* the oldest step drops off the cap, and the recorded format switch moves
+       down with it (or goes, if it was the one that fell off) */
+    if (history.length > 25) { history.shift(); if (fmtSwitch && --fmtSwitch.depth <= 0) fmtSwitch = null; }
+    var u = id('it-undo'); if (u) u.disabled = false;
+  }
   function restore(c) { work.width = c.width; work.height = c.height; wctx.setTransform(1, 0, 0, 1, 0, 0); wctx.clearRect(0, 0, c.width, c.height); wctx.drawImage(c, 0, 0); editSeq++; }
   function undo() {
     if (!history.length) return;
+    if (fmtSwitch && fmtSwitch.depth === history.length) {
+      if (elFmt) { elFmt.value = fmtSwitch.from; syncModeUI(); }
+      fmtSwitch = null;
+    }
     restore(history.pop());
     fineAngle = 0;
     var u = id('it-undo'); if (u) u.disabled = history.length === 0;
     cropRect = null; setCropping(false); render(); updateInfo();
+    var st = id('it-status'); if (st) st.textContent = 'Took back the last change.';
   }
 
   /* ---------- free rotation ---------- */
@@ -102,7 +119,7 @@
       orig.width = work.width; orig.height = work.height;
       orig.getContext('2d').drawImage(work, 0, 0);
       URL.revokeObjectURL(url);
-      loaded = true; cropRect = null; cropping = false; fineAngle = 0; history = []; editSeq++;
+      loaded = true; cropRect = null; cropping = false; fineAngle = 0; history = []; fmtSwitch = null; editSeq++;
       var u = id('it-undo'); if (u) u.disabled = true;
       var cb = id('it-cutout'); if (cb) cb.disabled = false;
       var rh = id('it-rot-hint'); if (rh) rh.textContent = '· drag the dot above the image to rotate';
@@ -291,7 +308,9 @@
   }
   if (elQual) elQual.addEventListener('input', function () { elQualV.textContent = (+elQual.value).toFixed(2); });
   if (elTarget) elTarget.addEventListener('input', function () { elTargetV.textContent = (+elTarget.value) + ' KB'; });
-  if (elFmt) elFmt.addEventListener('change', syncModeUI);
+  /* picking a format by hand is the user's own choice, so Undo leaves it alone
+     from here on (setFormat sets the value directly and does not fire this) */
+  if (elFmt) elFmt.addEventListener('change', function () { fmtSwitch = null; syncModeUI(); });
   if (elMode) elMode.addEventListener('change', syncModeUI);
 
   function exportSource() {
@@ -433,7 +452,14 @@
       return true;
     },
     getFormat: function () { return elFmt ? elFmt.value : ''; },
-    setFormat: function (v) { if (elFmt) { elFmt.value = v; syncModeUI(); if (loaded) updateInfo(); } },
+    /* `revertOnUndo` ties the change to the history step that was just pushed,
+       so Undo puts the old format back along with the pixels. */
+    setFormat: function (v, revertOnUndo) {
+      if (!elFmt) return;
+      var was = elFmt.value;
+      elFmt.value = v; syncModeUI(); if (loaded) updateInfo();
+      if (revertOnUndo && was !== v) fmtSwitch = { depth: history.length, from: was };
+    },
     setStatus: function (msg) { var st = id('it-status'); if (st) st.textContent = msg; }
   };
 
