@@ -308,16 +308,32 @@
     var xs = [c0x, c1x, c2x, c3x], ys = [c0y, c1y, c2y, c3y];
     var x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
     var y0 = Math.min.apply(null, ys), y1 = Math.max.apply(null, ys);
-    return { text: String(item.str), x0: x0 / Wpx, y0: y0 / Hpx, x1: x1 / Wpx, y1: y1 / Hpx, fontSize: fontHeight / Hpx };
+    return {
+      text: String(item.str),
+      x0: x0 / Wpx, y0: y0 / Hpx, x1: x1 / Wpx, y1: y1 / Hpx,
+      fontSize: fontHeight / Hpx,
+      // the same font height normalized by the page WIDTH: x and y are normalized against
+      // different page dimensions, so a horizontal gap can only be compared against a
+      // horizontally-normalized font size (see PURE.groupLines)
+      fontSizeX: fontHeight / Wpx
+    };
   };
 
   // group normalized tokens ({text,x0,y0,x1,y1,fontSize}, y down) into reading-order
-  // LINES: cluster by vertical center (tolerance scaled to the taller token's own
-  // height, so small and large text both cluster sensibly), sort each line's tokens
+  // LINES: cluster by vertical center (tolerance scaled to the taller token's own FONT
+  // SIZE, so small and large text both cluster sensibly), sort each line's tokens
   // left-to-right, and join them inferring a space wherever the x-gap between adjacent
   // tokens is bigger than a small fraction of the local font size — pdf.js's own runs
   // already include internal spaces, but per-word OCR tokens don't, so this is what
   // puts the spaces back between them.
+  // Two normalization traps this has to dodge: (1) the clustering tolerance comes from
+  // the font size, NOT the box height — a pdf.js box is axis-aligned, so a 90° rotated
+  // stamp's "height" is really the text's WIDTH, and a tolerance taken from that would
+  // swallow a dozen body lines; a box far taller than its own font size is rotated text
+  // and gets a line of its own. (2) the space threshold uses `fontSizeX` (font size over
+  // page WIDTH) where the producer supplies it, because the x-gap it is compared against
+  // is width-normalized too — mixing the two makes the threshold aspect-dependent
+  // (too eager on portrait pages, too lax on landscape ones).
   PURE.groupLines = function (tokens) {
     var toks = (tokens || []).filter(function (t) {
       return t && t.text && String(t.text).trim() && isFinite(t.x0) && isFinite(t.y0) && isFinite(t.x1) && isFinite(t.y1);
@@ -327,20 +343,25 @@
     var lines = [];
     toks.forEach(function (t) {
       var cy = (t.y0 + t.y1) / 2, h = Math.max(1e-6, t.y1 - t.y0);
+      var fs = Math.max(1e-6, t.fontSize || h);
+      var solo = h > fs * 2.5;   // rotated text: its box height is the text's own length
       var line = null;
-      for (var i = lines.length - 1; i >= 0; i--) {
+      if (!solo) for (var i = lines.length - 1; i >= 0; i--) {
         var L = lines[i];
-        var tol = Math.max(L.h, h) * 0.55;
+        if (L.solo) continue;
+        var tol = Math.max(L.fs, fs) * 0.55;
         if (Math.abs(cy - L.cy) <= tol) { line = L; break; }
         if (L.cy < cy - tol * 3) break;   // clearly above any plausible match — stop scanning
       }
-      if (!line) { line = { cy: cy, h: h, y0: t.y0, y1: t.y1, toks: [] }; lines.push(line); }
+      if (!line) { line = { cy: cy, h: h, fs: fs, solo: solo, y0: t.y0, y1: t.y1, toks: [] }; lines.push(line); }
       line.toks.push(t);
       line.cy = (line.cy * (line.toks.length - 1) + cy) / line.toks.length;   // running average
       line.h = Math.max(line.h, h);
+      line.fs = Math.max(line.fs, fs);
       line.y0 = Math.min(line.y0, t.y0); line.y1 = Math.max(line.y1, t.y1);
     });
     lines.sort(function (a, b) { return a.cy - b.cy; });
+    function gapUnit(t) { return isFinite(t.fontSizeX) ? t.fontSizeX : (t.fontSize || 0); }
     return lines.map(function (L) {
       L.toks.sort(function (a, b) { return a.x0 - b.x0; });
       var text = '', prev = null;
@@ -348,7 +369,7 @@
         var s = String(t.text);
         if (prev) {
           var gap = t.x0 - prev.x1;
-          var thresh = Math.max(prev.fontSize || 0, t.fontSize || 0) * 0.18;
+          var thresh = Math.max(gapUnit(prev), gapUnit(t)) * 0.18;
           if (gap > thresh) text += ' ';
         }
         text += s;
@@ -442,17 +463,24 @@
   // drop running headers/footers (PURE.findRunningLines) and any edge line that is
   // ONLY a page number, from every page's grouped lines. Returns a NEW array of arrays
   // (one per page) — the input is not mutated.
+  // The page-number branch carries the SAME physical edge-band guard the running-line
+  // detector uses, and only applies to a document with more than one page: on a short
+  // page the first/last line BY INDEX can sit in the middle of the page, and a bare
+  // number there is far more likely to be content (an invoice total, a chart label, a
+  // year) than pagination.
   PURE.stripHeadersFooters = function (pagesLines, opts) {
     opts = opts || {};
     var edgeN = opts.edgeLines || 2;
+    var edgeBand = opts.edgeBand == null ? 0.15 : opts.edgeBand;
     var running = PURE.findRunningLines(pagesLines, opts);
     var dropRefs = [];
     running.forEach(function (r) { r.lines.forEach(function (L) { dropRefs.push(L); }); });
+    var paginated = (pagesLines || []).length > 1;
     return (pagesLines || []).map(function (lines) {
       var n = lines.length;
       return lines.filter(function (L, i) {
-        var isEdge = i < edgeN || i >= n - edgeN;
-        if (isEdge && PURE.isPageNumberLine(L.text)) return false;
+        var isEdge = (i < edgeN || i >= n - edgeN) && (L.cy <= edgeBand || L.cy >= 1 - edgeBand);
+        if (paginated && isEdge && PURE.isPageNumberLine(L.text)) return false;
         if (dropRefs.indexOf(L) !== -1) return false;
         return true;
       });
@@ -504,8 +532,13 @@
   PURE.assembleBlocks = function (pagesLines, opts) {
     opts = opts || {};
     var m = PURE.textMetrics(pagesLines);
-    var medGap = opts.medGap != null ? opts.medGap : m.medGap;
     var medFont = opts.medFont != null ? opts.medFont : m.medFont;
+    // a token's box is a full font-height tall, so any line whose leading is no bigger
+    // than its own box contributes a gap of exactly 0 — with tight leading (or mixed
+    // font sizes) the median can land on 0, and then EVERY positive gap would read as a
+    // paragraph break. Floor it against the body font size so the comparison stays a
+    // comparison.
+    var medGap = opts.medGap != null ? opts.medGap : Math.max(m.medGap, medFont * 0.25);
     var blocks = [], cur = null, prevLine = null, prevPage = -1;
 
     function startBlock(kind, page) { cur = { kind: kind, lines: [], pages: [page] }; blocks.push(cur); }
@@ -552,6 +585,10 @@
   // document page numbers so a "selected pages" subset still shows the right numbers).
   // A page that contributed no lines at all (blank, or no text layer) gets no marker —
   // there is no content boundary to mark, and that omission is itself informative.
+  // Only a block's FIRST page is announced: a paragraph hyphenated across a page break
+  // belongs to the page it starts on, and announcing the later page in front of it would
+  // put the marker before text that came from the earlier page. The later page gets its
+  // marker from the next block that actually starts on it.
   PURE.blocksToText = function (blocks, opts) {
     opts = opts || {};
     var labels = opts.pageLabels;
@@ -559,9 +596,8 @@
     var announced = {}, out = [];
     (blocks || []).forEach(function (b) {
       if (opts.pageMarkers) {
-        b.pages.forEach(function (p) {
-          if (!announced[p]) { announced[p] = true; out.push('--- page ' + label(p) + ' ---'); }
-        });
+        var p0 = b.pages[0];
+        if (p0 != null && !announced[p0]) { announced[p0] = true; out.push('--- page ' + label(p0) + ' ---'); }
       }
       out.push(b.kind === 'bullets' ? b.lines.join('\n') : b.lines[0]);
     });
@@ -2266,6 +2302,7 @@
     pageEffRotation: pageEffRotation,
     effPointSize: effPointSize,
     canvasToBytes: canvasToBytes,
+    textBoxFrac: textBoxFrac,
     getFormFields: getFormFields,
     pdfjsPage: function (pg) { return docs[pg.docIndex].js.getPage(pg.pageIndex + 1); },
     drawMarks: drawMarks,

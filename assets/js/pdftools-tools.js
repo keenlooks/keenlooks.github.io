@@ -536,63 +536,119 @@
         ctNote = $('pt-ct-note'), ctProgress = $('pt-ct-progress'),
         ctCopy = $('pt-ct-copy'), ctDownload = $('pt-ct-download');
     var ctLastBlocks = null, ctLastLabels = null, ctLastText = '', ctLastName = 'document-clean.txt', ctBusy = false;
+    // one extraction at a time: every write back into the dialog is guarded on the run
+    // token AND on the dialog still being open, so a run the user walked away from can
+    // never repaint a later one's result (the four close paths are the Close button, the
+    // backdrop, Escape, and a reopen).
+    var ctSeq = 0, CT_ABORT = {};
+    function ctLive(seq) { return seq === ctSeq && !ctDialog.hidden; }
 
     // same precedence as "Download selected" (a valid typed range wins, else the
     // thumbnail selection) — but unlike that button, which disables itself when both
     // are empty, this one falls all the way back to the WHOLE document, since "nothing
     // selected" is the ordinary state right after loading a file and Copy-clean-text
-    // should still do something useful.
-    function ctScopeIdx() {
+    // should still do something useful. A range that could not be read falls back the
+    // same way, and says so in the note rather than quietly widening the scope.
+    function ctScope() {
       var st = PT.rangeState();
-      if (st.idx && st.idx.length) return st.idx;
+      var bad = !st.empty && !st.idx;
+      if (st.idx && st.idx.length) return { idx: st.idx, source: 'range', badRange: false };
       var sel = PT.selectedIdx();
-      if (sel.length) return sel;
-      return allIdx();
+      if (sel.length) return { idx: sel, source: 'sel', badRange: bad };
+      return { idx: allIdx(), source: 'all', badRange: bad };
     }
-    function ctScopeLabel(idxs) {
-      var total = PT.pages().length;
-      var st = PT.rangeState();
-      if (st.idx && st.idx.length) return idxs.length + ' page' + (idxs.length === 1 ? '' : 's') + ' (the typed range)';
-      if (PT.selectedIdx().length) return idxs.length + ' selected page' + (idxs.length === 1 ? '' : 's');
-      return 'all ' + total + ' page' + (total === 1 ? '' : 's');
+    function ctScopeLabel(sc) {
+      var n = sc.idx.length;
+      if (sc.source === 'range') return n + ' page' + (n === 1 ? '' : 's') + ' (the typed range)';
+      if (sc.source === 'sel') return n + ' selected page' + (n === 1 ? '' : 's');
+      return 'all ' + n + ' page' + (n === 1 ? '' : 's');
     }
 
     // OCR words ({text,x0,y0,x1,y1}) -> the same token shape pdf.js items produce, so
-    // both feed the same grouping/paragraph pipeline
-    function ocrWordsToTokens(words) {
+    // both feed the same grouping/paragraph pipeline. `sz` is the page size the words are
+    // normalized against, needed for the width-normalized font size the space-inference
+    // test uses.
+    function ocrWordsToTokens(words, sz) {
+      var aspect = (sz && sz.w > 0 && sz.h > 0) ? sz.h / sz.w : 1;
       return (words || []).map(function (w) {
-        return { text: w.text, x0: w.x0, y0: w.y0, x1: w.x1, y1: w.y1, fontSize: Math.max(1e-4, w.y1 - w.y0) };
+        var fs = Math.max(1e-4, w.y1 - w.y0);
+        return { text: w.text, x0: w.x0, y0: w.y0, x1: w.x1, y1: w.y1, fontSize: fs, fontSizeX: fs * aspect };
       });
     }
 
-    // tokens for one page. A page we ourselves rasterized (pg.raster, e.g. a rotated
-    // page flattened for a watermark/page-number/OCR, or one with committed redaction
-    // boxes at DOWNLOAD time) no longer has a live text layer worth reading from the
-    // ORIGINAL source page — that could resurrect content a redaction hid, or text in a
-    // frame that no longer matches the raster's — so a raster page contributes only its
-    // own pg.ocrWords (if "Make searchable" has been run on it), same as a real scan.
-    // A live (non-raster) page reads pdf.js's text content AND merges in any pg.ocrWords
-    // (OCR run on an already-upright page stays live), then filters BOTH by pg.redacts —
-    // redaction is only a visual paint until download, so the live text layer still has
-    // the original text underneath a committed box.
+    // text the user typed with the editor's Text tool -> tokens, one per line. buildPdf
+    // draws these into the export and the thumbnails show them, so leaving them out of
+    // the extraction would silently drop the user's own notes. `eff` is the effective
+    // page size the anchors are stored against, `back` undoes any page rotation, `base`
+    // is the upright size the tokens end up normalized against.
+    function textTokens(texts, eff, back, base) {
+      var out = [];
+      (texts || []).forEach(function (t) {
+        var lineH = (t.size || 14) * 1.2;
+        String(t.text || '').split('\n').forEach(function (line, i) {
+          if (!line.trim()) return;
+          var b = PT.textBoxFrac({ text: line, size: t.size, font: t.font }, eff.w, eff.h);
+          var r = PURE.rotateRects([{ x: t.x, y: t.y + i * lineH / eff.h, w: b.w, h: b.h }], back)[0];
+          out.push({
+            text: line, x0: r.x, y0: r.y, x1: r.x + r.w, y1: r.y + r.h,
+            fontSize: lineH / base.h, fontSizeX: lineH / base.w
+          });
+        });
+      });
+      return out;
+    }
+
+    // tokens for one page, all normalized into the page's UPRIGHT frame: turning a page
+    // in the grid does not rewrite its text, and reading it in the turned frame would
+    // hand pdf.js's whole-line runs to the grouper as tall narrow boxes that collapse
+    // into one reversed paragraph. Everything stored in the effective (turned) frame —
+    // redaction boxes, OCR words, text boxes — is turned back by the same amount so it
+    // still lines up.
+    // A page we ourselves rasterized (pg.raster, e.g. a rotated page flattened for a
+    // watermark/page-number/OCR, or one with committed redaction boxes at DOWNLOAD time)
+    // no longer has a live text layer worth reading from the ORIGINAL source page — that
+    // could resurrect content a redaction hid, or text in a frame that no longer matches
+    // the raster's — so a raster page contributes only its own pg.ocrWords (if "Make
+    // searchable" has been run on it), same as a real scan.
+    // A live (non-raster) page reads pdf.js's text content, and falls back to pg.ocrWords
+    // ONLY where that came up empty: OCR run on a page that already had a text layer
+    // leaves both, and emitting both prints every word twice. Everything is then filtered
+    // by pg.redacts — redaction is only a visual paint until download, so the live text
+    // layer still has the original text underneath a committed box.
     function ctPageTokens(pg) {
-      if (pg.blank) return Promise.resolve({ tokens: [], scan: false, blank: true });
+      if (pg.blank) return Promise.resolve({ tokens: [], scan: false, redacted: false, blank: true });
+      var back = -(pg.rot || 0);
+      var redacts = PURE.rotateRects(pg.redacts, back);
+      var words = PURE.rotateWords(pg.ocrWords, back);
+      // "scan" and "all of it was redacted" are judgements about the PAGE's own text, so
+      // they ignore anything the user typed on top of it
+      function finish(pageToks, annoToks) {
+        var toks = PURE.filterRedactedTokens(pageToks.concat(annoToks), redacts);
+        return {
+          tokens: toks, blank: false,
+          scan: pageToks.length === 0,
+          redacted: pageToks.length > 0 && toks.length === 0
+        };
+      }
       if (pg.raster) {
-        var toks = PURE.filterRedactedTokens(ocrWordsToTokens(pg.ocrWords), pg.redacts);
-        return Promise.resolve({ tokens: toks, scan: toks.length === 0, blank: false });
+        return PT.effPointSize(pg).then(function (eff) {
+          var base = ((pg.rot || 0) % 180) !== 0 ? { w: eff.h, h: eff.w } : eff;
+          return finish(ocrWordsToTokens(words, base), textTokens(pg.texts, eff, back, base));
+        });
       }
       return Promise.all([PT.pdfjsPage(pg), PT.effPointSize(pg), PT.pageEffRotation(pg)]).then(function (r) {
-        var page = r[0], sz = r[1], rot = r[2];
+        var page = r[0], eff = r[1], rot = r[2];
+        var baseRot = (((rot - (pg.rot || 0)) % 360) + 360) % 360;
         return page.getTextContent().then(function (tc) {
-          var vp = page.getViewport({ scale: 1, rotation: rot });
+          var vp = page.getViewport({ scale: 1, rotation: baseRot });
+          var base = { w: vp.width, h: vp.height };
           var toks = [];
           (tc.items || []).forEach(function (it) {
-            var tok = PURE.itemToToken(vp.transform, it, sz.w, sz.h);
+            var tok = PURE.itemToToken(vp.transform, it, base.w, base.h);
             if (tok) toks.push(tok);
           });
-          toks = toks.concat(ocrWordsToTokens(pg.ocrWords));
-          toks = PURE.filterRedactedTokens(toks, pg.redacts);
-          return { tokens: toks, scan: toks.length === 0, blank: false };
+          if (!toks.length) toks = ocrWordsToTokens(words, base);
+          return finish(toks, textTokens(pg.texts, eff, back, base));
         });
       });
     }
@@ -600,36 +656,57 @@
     // chunked so the tab never freezes on a big document: PT.progress yields a frame
     // between pages, and the dialog's own progress line (visible — the shared
     // #pt-progress bar sits behind this modal's backdrop) mirrors the same ticks.
-    function ctExtract(idxs) {
+    // `seq` is the run token: the chain stops at the next page boundary once the run is
+    // superseded or the dialog is closed, so the busy lock is released promptly.
+    function ctExtract(idxs, seq) {
+      var pgs = idxs.map(function (i) { return PT.pages()[i]; });
       var pagesTokens = new Array(idxs.length);
-      var scanCount = 0, blankCount = 0;
+      var scanCount = 0, blankCount = 0, redactedCount = 0;
       var chain = Promise.resolve();
       idxs.forEach(function (pi, k) {
         chain = chain.then(function () {
+          if (!ctLive(seq)) throw CT_ABORT;
           if (ctProgress) ctProgress.textContent = 'Reading page ' + (k + 1) + ' of ' + idxs.length + '…';
           return PT.progress(k, idxs.length);
         }).then(function () {
-          return ctPageTokens(PT.pages()[pi]).then(function (r) {
+          // the busy lock keeps the grid and undo out of the way, but never read a page
+          // that is no longer the one this run set out to read
+          if (PT.pages()[pi] !== pgs[k]) throw new Error('the document changed while the text was being read');
+          return ctPageTokens(pgs[k]).then(function (r) {
             pagesTokens[k] = r.tokens;
-            if (r.blank) blankCount++; else if (r.scan) scanCount++;
+            if (r.blank) blankCount++; else if (r.redacted) redactedCount++; else if (r.scan) scanCount++;
           });
         });
       });
       return chain.then(function () { return PT.progress(idxs.length, idxs.length); }).then(function () {
         var labels = idxs.map(function (i) { return i + 1; });
         var res = PURE.tokensToCleanText(pagesTokens, { pageMarkers: false, pageLabels: labels });
-        return { blocks: res.blocks, labels: labels, scanCount: scanCount, blankCount: blankCount };
+        return {
+          blocks: res.blocks, labels: labels,
+          scanCount: scanCount, blankCount: blankCount, redactedCount: redactedCount
+        };
       });
     }
 
-    function ctScanNote(scanCount, blankCount) {
+    // never point a page at "Make searchable" when OCR could not possibly help: a page
+    // whose text is entirely under redaction boxes had a text layer, and running OCR on
+    // it would only read the black boxes we paint before recognition.
+    function ctScanNote(r, badRange, source) {
       var bits = [];
-      if (scanCount) {
-        bits.push(scanCount + ' page' + (scanCount === 1 ? '' : 's') + ' look' + (scanCount === 1 ? 's' : '') +
-          ' like ' + (scanCount === 1 ? 'a scan' : 'scans') + ' with no text layer. Run Make searchable first to include ' +
-          (scanCount === 1 ? 'it' : 'them') + '.');
+      if (badRange) {
+        bits.push('The typed page range could not be read, so ' +
+          (source === 'sel' ? 'the pages selected in the grid were used.' : 'the whole document was used.'));
       }
-      if (blankCount) bits.push(blankCount + ' blank page' + (blankCount === 1 ? '' : 's') + ' contributed nothing.');
+      if (r.scanCount) {
+        bits.push(r.scanCount + ' page' + (r.scanCount === 1 ? '' : 's') + ' look' + (r.scanCount === 1 ? 's' : '') +
+          ' like ' + (r.scanCount === 1 ? 'a scan' : 'scans') + ' with no text layer. Run Make searchable first to include ' +
+          (r.scanCount === 1 ? 'it' : 'them') + '.');
+      }
+      if (r.redactedCount) {
+        bits.push(r.redactedCount + ' page' + (r.redactedCount === 1 ? '' : 's') + ' had all of ' +
+          (r.redactedCount === 1 ? 'its' : 'their') + ' text under redaction boxes, so none of it was copied.');
+      }
+      if (r.blankCount) bits.push(r.blankCount + ' blank page' + (r.blankCount === 1 ? '' : 's') + ' contributed nothing.');
       return bits.join(' ');
     }
 
@@ -638,16 +715,20 @@
       return PURE.blocksToText(ctLastBlocks, { pageMarkers: !!(ctMarkers && ctMarkers.checked), pageLabels: ctLastLabels });
     }
 
+    // the "keep page markers" checkbox deliberately stays enabled while a run is going:
+    // openDialog focuses the dialog's first field, and disabling it under that focus call
+    // left focus stranded outside the dialog. Its change handler no-ops while ctBusy.
     function ctSetBusy(b) {
       ctBusy = b;
       if (ctCopy) ctCopy.disabled = b || !ctLastText;
       if (ctDownload) ctDownload.disabled = b || !ctLastText;
-      if (ctMarkers) ctMarkers.disabled = b;
     }
+    function ctSay(msg) { if (ctProgress) ctProgress.textContent = msg || ''; }
 
     function ctRun() {
-      var idxs = ctScopeIdx();
-      if (ctScopeEl) ctScopeEl.textContent = ctScopeLabel(idxs);
+      var seq = ++ctSeq;
+      var sc = ctScope(), idxs = sc.idx;
+      if (ctScopeEl) ctScopeEl.textContent = ctScopeLabel(sc);
       ctLastBlocks = null; ctLastLabels = null; ctLastText = '';
       if (ctNote) { ctNote.hidden = true; ctNote.textContent = ''; }
       if (!idxs.length) {
@@ -655,24 +736,30 @@
         ctSetBusy(false);
         return;
       }
+      // hold the shared busy lock for the whole chain: undo, delete, rotate and the other
+      // tools all gate on it, so nothing can re-index pages[] between two page reads
       ctSetBusy(true);
+      PT.setBusy(true);
       ctPreview.value = '';
-      if (ctProgress) ctProgress.textContent = 'Reading…';
-      ctExtract(idxs).then(function (r) {
+      ctSay('Reading…');
+      ctExtract(idxs, seq).then(function (r) {
+        if (!ctLive(seq)) return;
         ctLastBlocks = r.blocks; ctLastLabels = r.labels;
         ctLastText = ctRenderText();
         ctPreview.value = ctLastText || '(No extractable text was found.)';
         var docs = PT.docs();
         var live = PT.liveDocIndices(idxs.map(function (i) { return PT.pages()[i]; }));
         ctLastName = PURE.sanitizeBaseName(live.length ? docs[live[0]].name : '') + '-clean.txt';
-        var note = ctScanNote(r.scanCount, r.blankCount);
+        var note = ctScanNote(r, sc.badRange, sc.source);
         if (ctNote) { ctNote.textContent = note; ctNote.hidden = !note; }
       }).catch(function (e) {
+        if (e === CT_ABORT || !ctLive(seq)) return;
         ctPreview.value = '';
         if (ctNote) { ctNote.textContent = 'Could not extract text: ' + (e && e.message || e); ctNote.hidden = false; }
       }).then(function () {
-        if (ctProgress) ctProgress.textContent = '';
+        if (ctLive(seq)) ctSay('');
         ctSetBusy(false);
+        PT.setBusy(false);
       });
     }
 
@@ -687,10 +774,17 @@
       ctPreview.value = ctLastText || '(No extractable text was found.)';
     });
 
+    // the restore label is captured ONCE, at wire time: reading it at flash time meant a
+    // second click inside the window captured "Copied" and restored that forever
+    var ctCopyLabel = ctCopy ? ctCopy.textContent : 'Copy to clipboard', ctFlashTimer = null;
     function ctFlash(btn, label) {
-      var was = btn.textContent;
+      if (ctFlashTimer) clearTimeout(ctFlashTimer);
       btn.textContent = label;
-      setTimeout(function () { btn.textContent = was; btn.disabled = ctBusy || !ctLastText; }, 1200);
+      ctFlashTimer = setTimeout(function () {
+        ctFlashTimer = null;
+        btn.textContent = ctCopyLabel;
+        btn.disabled = ctBusy || !ctLastText;
+      }, 1200);
     }
     function ctFallbackCopy() {
       try {
@@ -700,17 +794,24 @@
         return ok;
       } catch (e) { return false; }
     }
+    // the page's own status line sits behind this modal's backdrop, so a copy that failed
+    // has to say so INSIDE the dialog (the progress line is right under the box and is
+    // aria-live); the status line keeps a record for after the dialog is closed
+    function ctCopyFailed() {
+      ctSay('Could not copy automatically. Select the text in the box and copy it manually.');
+      PT.setStatus('Couldn’t copy the text automatically. Select it in the box and copy it manually.', 'warn');
+    }
     if (ctCopy) ctCopy.addEventListener('click', function () {
       if (!ctLastText) return;
       /* clipboard API needs a secure context (https or localhost); fall back to the
          old select+execCommand trick everywhere else */
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(ctLastText).then(function () { ctFlash(ctCopy, 'Copied'); }, function () {
-          if (ctFallbackCopy()) ctFlash(ctCopy, 'Copied');
-          else PT.setStatus('Could not copy automatically. Select the text in the box and copy it manually.', 'warn');
+        navigator.clipboard.writeText(ctLastText).then(function () { ctSay(''); ctFlash(ctCopy, 'Copied'); }, function () {
+          if (ctFallbackCopy()) { ctSay(''); ctFlash(ctCopy, 'Copied'); }
+          else ctCopyFailed();
         });
-      } else if (ctFallbackCopy()) ctFlash(ctCopy, 'Copied');
-      else PT.setStatus('Could not copy automatically. Select the text in the box and copy it manually.', 'warn');
+      } else if (ctFallbackCopy()) { ctSay(''); ctFlash(ctCopy, 'Copied'); }
+      else ctCopyFailed();
     });
     if (ctDownload) ctDownload.addEventListener('click', function () {
       if (!ctLastText) return;

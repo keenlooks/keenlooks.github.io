@@ -3,7 +3,7 @@ layout: single
 title: "PDF Toolbench: merge, redact, sign, OCR & compress PDFs in your browser"
 permalink: /pdftools/
 author_profile: false
-excerpt: "Merge, split, reorder, redact, sign, fill, OCR, watermark, compress, and password-protect PDFs privately, in your browser."
+excerpt: "Merge, split, reorder, redact, sign, fill, OCR, copy clean text, watermark, compress, and password-protect PDFs privately, in your browser."
 description: "Free private PDF tools that run entirely in your browser: merge and split PDFs, reorder and rotate pages, fill forms, add signatures, redact so hidden text is truly removed, make scanned PDFs searchable with OCR, add watermarks and page numbers, export pages as images, compress, and password-protect with AES-256. Your files are never uploaded."
 ---
 
@@ -14,9 +14,10 @@ description: "Free private PDF tools that run entirely in your browser: merge an
   <p class="pt-intro">
     A PDF utility that runs entirely in your browser. Merge files, reorder, rotate, and delete pages,
     pull out a range, add text or a signature, fill in forms, redact a page so the hidden text is
-    actually gone, make a scanned PDF searchable with OCR, add watermarks or page numbers, export
-    pages as images, strip metadata, shrink the file, or lock it with a password. Everything runs
-    locally on your device, your PDFs are never uploaded, and Ctrl+Z undoes mistakes.
+    actually gone, make a scanned PDF searchable with OCR, copy the text out cleaned up for pasting
+    into an AI chat, add watermarks or page numbers, export pages as images, strip metadata, shrink
+    the file, or lock it with a password. Everything runs locally on your device, your PDFs are
+    never uploaded, and Ctrl+Z undoes mistakes.
   </p>
   <p class="pt-privacy">🔒 Everything runs locally in your browser. Your PDF is never uploaded and never leaves your device. (I use Google Analytics to see whether anyone visits this page, but it cannot see your files or anything you do with them.)</p>
   <p class="pt-privacy" style="margin-top:-0.55rem">A caveat: this is a personal side project and I have not tested it exhaustively. I make no guarantees; keep your originals and check the output before relying on it.</p>
@@ -119,8 +120,10 @@ description: "Free private PDF tools that run entirely in your browser: merge an
       in about the same spot on most pages, or a line that is just a page number, is dropped. Words
       broken across a line wrap are rejoined, and the rest is reflowed into paragraphs. It is a
       heuristic, not a layout engine, so complex layouts like tables and multi-column pages can come
-      out in the wrong order, and scanned pages need "Make searchable" first since there is no text to
-      read yet. Nothing is uploaded; it reads the text already open in your browser.</p>
+      out in the wrong order, right-to-left scripts like Arabic and Hebrew come out with the words
+      reversed, and scanned pages need "Make searchable" first since there is no text to read yet.
+      Text you added with the Text tool is included; values you typed into form fields are not.
+      Nothing is uploaded; it reads the text already open in your browser.</p>
     </details>
     <details>
       <summary>What happens to my files?</summary>
@@ -775,7 +778,7 @@ html[data-theme="light"] .pt-ed__arrow { color: #1f2430; }
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
   "author": { "@type": "Person", "name": "Keane Lucas", "url": "https://keanelucas.com" },
   "description": "Free private PDF tools that run entirely in the browser: merge and split PDFs, reorder and rotate pages, fill forms, add signatures, true redaction, OCR to make scanned PDFs searchable, watermarks, page numbers, export pages as images, compression, and AES-256 password protection. Files are never uploaded.",
-  "featureList": "Merge PDFs, split PDFs, reorder pages, rotate pages, delete pages, duplicate pages, insert blank pages, extract page ranges, fill PDF forms, sign PDFs, redact PDFs, OCR scanned PDFs, add watermarks, add page numbers, export pages as images, compress PDFs, password-protect PDFs, strip metadata, undo"
+  "featureList": "Merge PDFs, split PDFs, reorder pages, rotate pages, delete pages, duplicate pages, insert blank pages, extract page ranges, fill PDF forms, sign PDFs, redact PDFs, OCR scanned PDFs, copy clean text from a PDF, add watermarks, add page numbers, export pages as images, compress PDFs, password-protect PDFs, strip metadata, undo"
 }
 </script>
 
