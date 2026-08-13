@@ -3460,7 +3460,10 @@
   }
   function cardOpen() { return !!(cardEl && !cardEl.hidden); }
   function closeCard() {
-    if (cardEl) { cardEl.hidden = true; cardEl.innerHTML = ''; }
+    if (cardEl) {
+      cardEl.hidden = true; cardEl.innerHTML = '';
+      cardEl.classList.remove('voy-card--docked');
+    }
     document.body.classList.remove('voy-sheet-open');
     syncReturnChip();
     arriveInfo = null;   /* the arrival banner is for the moment of arrival */
@@ -3629,6 +3632,36 @@
     return head;
   }
 
+  /* ---- DX-1: the primary action row is a sticky footer inside the card ----
+     Every builder marks its main row `voy-actions--main` and leaves it in the
+     body where it reads well; this lifts that one row out to the end of the
+     card, where the CSS pins it to the visible bottom edge. It is still the
+     LAST child of the scroll container, so at the end of the scroll it comes
+     to rest in its own place and hides nothing.
+     The row is MOVED, not copied: there is exactly one of every button, so
+     nothing can go stale and no handler is bound twice. */
+  function dockCardActions() {
+    if (!cardEl) return;
+    cardEl.classList.remove('voy-card--docked');
+    var row = cardEl.querySelector('.voy-actions--main');
+    if (!row) return;
+    var dock = el('div', 'voy-card__dock');
+    dock.appendChild(row);
+    cardEl.appendChild(dock);
+    cardEl.classList.add('voy-card--docked');
+  }
+  /* Planning a trip reveals a long block whose Launch button lands far below
+     the fold, which is the same complaint one step later. Launch joins the
+     docked row and the button that opened the block steps out of it. */
+  var cardPostDock = null;              /* a builder's follow-up, run once docked */
+  function dockLaunch(trip, plan) {
+    var dock = cardEl ? cardEl.querySelector('.voy-card__dock .voy-actions') : null;
+    var btn = trip ? trip.querySelector('.voy-btn--launch') : null;
+    if (!dock || !btn) return;
+    if (plan) plan.hidden = true;
+    dock.appendChild(btn);
+  }
+
   function openCardFor(s, opts) {
     opts = opts || {};
     if (!cardEl) return;
@@ -3646,9 +3679,12 @@
     cardEl.innerHTML = '';
     resetPreviews();
     cardEl.hidden = false;
+    cardPostDock = null;
     if (s.kind === 'p') buildPlanetCard(s.idx);
     else if (s.kind === 'f') buildFarCard(s.idx, opts);
     else buildStarCard(s.idx, opts);
+    dockCardActions();
+    if (cardPostDock) { var post = cardPostDock; cardPostDock = null; post(); }
     cardEl.setAttribute('aria-label', 'About ' + bodyLabel(s));
     /* Start at the top of the new card. Clearing and refilling the node in one
        task never gives the browser a layout to clamp the old scrollTop
@@ -3695,7 +3731,7 @@
     var perTxt = py * 365.25 < 800 ? (Math.round(py * 365.25) + ' days') :
       ((py < 10 ? Math.round(py * 10) / 10 : Math.round(py)) + ' years');
     body.appendChild(el('p', 'voy-fact', 'It orbits the Sun every ' + perTxt + '.'));
-    var row = el('div', 'voy-actions');
+    var row = el('div', 'voy-actions voy-actions--main');
     /* every planet except the one the ship is parked at, and only while the
        ship IS at a planet (from a star the trip is an interstellar cruise) */
     if (key !== originKeyOf() && shipAt.kind === 'p') {
@@ -3900,7 +3936,7 @@
       body.appendChild(orbitNoteEl);
     }
 
-    var row = el('div', 'voy-actions');
+    var row = el('div', 'voy-actions voy-actions--main');
     var plan = el('button', 'voy-btn voy-btn--primary', 'Plan the trip');
     plan.type = 'button';
     var zoom = el('button', 'voy-btn', 'Zoom to it');
@@ -3917,12 +3953,17 @@
       trip.hidden = false;
       plan.disabled = true;
       updateTripLive(i);
+      dockLaunch(trip, plan);
       trip.scrollIntoView({ block: 'nearest' });
     });
     if (opts && opts.trip) {
       trip.hidden = false;
       plan.disabled = true;
       updateTripLive(i);
+      /* the row is only docked after the builder returns, so a card that
+         opens with the trip already showing hands the move over to
+         openCardFor rather than reaching for a dock that is not there yet */
+      cardPostDock = function () { dockLaunch(trip, plan); };
     }
     cardEl.appendChild(body);
   }
@@ -3950,12 +3991,14 @@
     return 'M';
   }
 
+  var bhFallBtn = null;                 /* built early, docked with the row */
   function farYears(y) {
     var s = PURE.fmtYears(y);
     return s.lastIndexOf('about ', 0) === 0 ? s : 'about ' + s;
   }
   function buildFarCard(i, opts) {
     var fr = farRec(i);
+    bhFallBtn = null;
     if (!fr) return;
     cardEl.appendChild(cardHead(fr.name, PURE.farWord(fr.cls)));
     var body = el('div', 'voy-card__body');
@@ -4047,27 +4090,29 @@
         'up and at a fixed size on screen: from out here the shadow itself would ' +
         'be far smaller than one pixel. The glow is drawn faint because the real ' +
         'one is faint, and the tilt of it is a choice, not a measurement.'));
-      var brow = el('div', 'voy-actions');
-      var fall = el('button', 'voy-btn voy-btn--primary', 'Fall in');
-      fall.type = 'button';
       var hereBh = atBh();
-      fall.disabled = !hereBh;
-      fall.addEventListener('click', function () { startBhFall(); });
-      brow.appendChild(fall);
-      body.appendChild(brow);
+      /* DX-1: "Fall in" is a primary action, so it rides the sticky row with
+         the others instead of sitting in a row of its own halfway up a card
+         nobody scrolls. */
+      bhFallBtn = el('button', 'voy-btn voy-btn--primary', 'Fall in');
+      bhFallBtn.type = 'button';
+      bhFallBtn.disabled = !hereBh;
+      bhFallBtn.addEventListener('click', function () { startBhFall(); });
       if (!hereBh) {
         body.appendChild(el('p', 'voy-note',
           'Fly your ship here first, and then you can fall in.'));
       }
     }
 
-    var row = el('div', 'voy-actions');
+    var row = el('div', 'voy-actions voy-actions--main');
     var plan = el('button', 'voy-btn voy-btn--primary', 'Plan the trip');
     plan.type = 'button';
     var zoom = el('button', 'voy-btn', 'Zoom to it');
     zoom.type = 'button';
     zoom.addEventListener('click', function () { flyToFar(i, false); });
+    if (bhFallBtn) row.appendChild(bhFallBtn);
     row.appendChild(plan); row.appendChild(zoom);
+    bhFallBtn = null;
     body.appendChild(row);
 
     var trip = buildFarTrip(i);
@@ -4076,9 +4121,14 @@
     plan.addEventListener('click', function () {
       trip.hidden = false;
       plan.disabled = true;
+      dockLaunch(trip, plan);
       trip.scrollIntoView({ block: 'nearest' });
     });
-    if (opts && opts.trip) { trip.hidden = false; plan.disabled = true; }
+    if (opts && opts.trip) {
+      trip.hidden = false;
+      plan.disabled = true;
+      cardPostDock = function () { dockLaunch(trip, plan); };
+    }
     cardEl.appendChild(body);
   }
 
@@ -4105,7 +4155,7 @@
       'Nobody can build this ship. The numbers are what relativity says the trip ' +
       'would cost if you could.'));
     var here = shipAt.kind === 'f' && shipAt.idx === i;
-    var launch = el('button', 'voy-btn voy-btn--primary',
+    var launch = el('button', 'voy-btn voy-btn--primary voy-btn--launch',
                     here ? 'You are already there' : 'Launch');
     launch.type = 'button';
     launch.disabled = here;
@@ -4221,7 +4271,7 @@
     var origin = el('p', 'voy-note', '');
     wrap.appendChild(origin);
 
-    var launch = el('button', 'voy-btn voy-btn--primary', 'Launch');
+    var launch = el('button', 'voy-btn voy-btn--primary voy-btn--launch', 'Launch');
     launch.type = 'button';
     launch.addEventListener('click', function () { startStarCruise(i); });
     wrap.appendChild(launch);
@@ -9687,6 +9737,7 @@
     frameDiscs.length = 0;               /* and the drawn-disc ledger (A1-9) */
     bodyLabs.length = 0;                 /* and the body-label ledger (A2-13) */
     parkTag = null;
+    bhTagBox = null;                     /* and DX-2's tag rect */
     capRect = null;                      /* and the honesty-plate rect (A1-4) */
     heroCov = 0;                         /* and the hero's overlay cover (E-1) */
     /* One frame, at most GL_MAX_BLITS orb blits: tell VoyageGL the frame
@@ -9815,6 +9866,12 @@
       drawTagline(now);
       return;
     }
+    /* LOOK-1c: the bulge haze sits BEHIND everything the world pass draws,
+       and it fades out with them when the plunge's baked sky (which carries
+       its own copy of the same haze) takes the frame over */
+    var bhHz2 = bhHazeA();
+    if (mode === 'bhfall' && bhSt) bhHz2 *= (1 - bhBack);
+    if (bhHz2 > 0.004) drawBhBulge(bhHz2);
     galPaintOn = gpaint > 0.004;
     if (ga > 0.004 || galPaintOn) drawGalaxy(ga, gpaint);
     starsVis = sa > 0.004;
@@ -10111,6 +10168,14 @@
         return;
       }
     }
+    /* DX-2: the "Fall in" tag is hit-tested before the mode's own gesture,
+       because in shipidle a plain tap leaves the orbit and would eat it */
+    if (bhTagHit(p)) {
+      downSt = { x: p.x, y: p.y, t: performance.now(), type: e.pointerType, fall: true };
+      capturePointer(e);
+      e.preventDefault();
+      return;
+    }
     if (mode === 'bhfall') {
       /* the same free look and the same tap-to-skip the cruise has */
       downSt = { x: p.x, y: p.y, t: performance.now(), type: e.pointerType, bh: true };
@@ -10197,7 +10262,7 @@
     /* hover (mouse, explore only) */
     if ((mode === 'explore' || mode === 'shipidle') && e.pointerType === 'mouse') {
       hover = pickBody(p, 14);
-      canvas.style.cursor = hover ? 'pointer' : 'default';
+      canvas.style.cursor = (hover || bhTagHit(p)) ? 'pointer' : 'default';
     }
     if (mode === 'porkchop' && L) {
       var overPlot = inPlot(p);
@@ -10246,7 +10311,8 @@
         /* BHF-5: the tap that ended the plunge must not carry on into the
            end card it just opened */
         if (!downSt.bh && bhEndGuarded()) { downSt = null; orbitDrag = null; return; }
-        if (downSt.bh) { skipBhFall(); }
+        if (downSt.fall) { startBhFall(); }
+        else if (downSt.bh) { skipBhFall(); }
         else if (downSt.cruise) { if (mode === 'syscruise') skipSysCruise(); else skipStarCruise(); }
         else if (downSt.idle) { exitShipIdle('quiet'); tapSelect(p, downSt.type); }
         else if (mode === 'explore') tapSelect(p, downSt.type);
@@ -11140,6 +11206,127 @@
   }
   var bhGlow = false;                   /* the brighten switch, off by default */
 
+  /* ==================================================================
+     LOOK-1c: the bulge, drawn as a soft haze.
+
+     The owner's verdict on the shipped parked scene was "a black spot with
+     some circles around it", and the frame deserved it: our catalogue is the
+     Sun's neighbourhood, so from the middle of the galaxy the sky it can draw
+     is empty. The real sky there is not empty, it is crowded with old bulge
+     and nuclear-cluster stars that nobody has catalogued for us one by one.
+
+     So this paints what the catalogue cannot: an unresolved warm haze,
+     brightest along the galactic plane and toward the centre, with NO
+     invented point stars in it. It follows the same rule the painted galaxy
+     already lives by (the shape is real, the picture is an illustration) and
+     the honesty panel says so in as many words. The same function paints the
+     equirect sky the plunge falls through, so the backdrop matches.
+
+     Geometry: intensity from the galactic latitude of each view direction
+     (the plane is real), plus a gentle concentration toward the hole, which
+     is real too: the star density rises into a cusp there, so a line of
+     sight through the middle passes through more of it.
+     ================================================================== */
+  var BH_HZ_W = 72, BH_HZ_H = 44;       /* the haze is a low-frequency field */
+  var BH_HZ_VMAX = 1.25;                /* the field's own ceiling, see below */
+  var bhHz = { cv: null, g: null, img: null, w: 0, h: 0 };
+  var BH_GNP = null;
+  function bhGnp() {
+    if (!BH_GNP) BH_GNP = A.equToEcl(PURE.galToEqu(0, 0, 1));
+    return BH_GNP;
+  }
+  /* 0..1 for a unit view direction. `cx,cy,cz` is the unit direction toward
+     the hole, or null when the eye is AT it (the bake), where there is no
+     "toward the centre" left to concentrate on. */
+  function bhHazeAt(dx, dy, dz, cx, cy, cz) {
+    var g = bhGnp();
+    var sb = dx * g[0] + dy * g[1] + dz * g[2];
+    if (sb < 0) sb = -sb;
+    var band = Math.exp(-(sb * sb) / 0.0484);          /* 0.22 rad scale */
+    var v = 0.30 + 0.70 * band;
+    if (cx !== null) {
+      var cd = dx * cx + dy * cy + dz * cz;
+      if (cd > 0) v += 0.26 * Math.pow(cd, 10);        /* the cusp, seen through */
+    }
+    return v > BH_HZ_VMAX ? BH_HZ_VMAX : v;
+  }
+  function bhHazeCanvas(w, h) {
+    if (!bhHz.cv) {
+      bhHz.cv = document.createElement('canvas');
+      bhHz.g = bhHz.cv.getContext('2d');
+    }
+    if (!bhHz.g) return null;
+    if (bhHz.cv.width !== w || bhHz.cv.height !== h) {
+      bhHz.cv.width = w; bhHz.cv.height = h;
+      bhHz.img = bhHz.g.createImageData(w, h);
+      bhHz.w = w; bhHz.h = h;
+    }
+    return bhHz.img ? bhHz.cv : null;
+  }
+  /* the warm of an old population, and a dark-sky ink for the branch where
+     the sky is not dark (SKY_DARK off) */
+  var BH_HZ_COL_D = [255, 196, 148], BH_HZ_COL_L = [214, 190, 168];
+  /* The field peaks above 1 where the plane and the cusp add up, so the
+     colour is divided by that ceiling and the alpha multiplied by it. Every
+     value below the ceiling paints exactly what it did before, and the
+     brightest patch no longer clips its red channel into a different hue
+     from the rest of the glow. */
+  function bhHazeFill(fn) {
+    var d = bhHz.img.data, i = 0, x, y, v, k;
+    var c = isLight() ? BH_HZ_COL_L : BH_HZ_COL_D;
+    for (y = 0; y < bhHz.h; y++) {
+      for (x = 0; x < bhHz.w; x++) {
+        v = fn((x + 0.5) / bhHz.w, (y + 0.5) / bhHz.h);
+        k = (v > 0 ? v : 0) / BH_HZ_VMAX;
+        d[i] = c[0] * k; d[i + 1] = c[1] * k; d[i + 2] = c[2] * k; d[i + 3] = 255;
+        i += 4;
+      }
+    }
+    bhHz.g.putImageData(bhHz.img, 0, 0);
+  }
+  /* how strongly the haze reads at this camera distance. It is the same
+     neighbourhood the cluster scene lives in, on a wider ramp: the bulge is
+     far bigger than the S-star cluster, so it fades out later. */
+  function bhHazeA() {
+    if (bhIdx < 0 || !BH()) return 0;
+    if (mode === 'porkchop') return 0;
+    var w = bhWorld(BHP);
+    var dx = cam.cx - w.x, dy = cam.cy - w.y, dz = cam.cz - w.z;
+    var dc = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (!(dc < camD * 4 + 2e4)) return 0;
+    return 1 - ramp(camD, 2.5e5, 1.4e6);
+  }
+  function drawBhBulge(alpha) {
+    if (!(alpha > 0.004)) return;
+    var cv = bhHazeCanvas(BH_HZ_W, BH_HZ_H);
+    if (!cv) return;
+    var w = bhWorld(BHP);
+    var hx = w.x - camPX, hy = w.y - camPY, hz = w.z - camPZ;
+    var hn = Math.sqrt(hx * hx + hy * hy + hz * hz);
+    var cx = hn > 0 ? hx / hn : null, cy = hn > 0 ? hy / hn : 0, cz = hn > 0 ? hz / hn : 0;
+    var f = fpxV > 0 ? fpxV : 1;
+    bhHazeFill(function (u, v) {
+      var a = (u * W - cam.ppx) / f, b = -(v * H - cam.ppy) / f;
+      var dx = fX + a * rX + b * uX;
+      var dy = fY + a * rY + b * uY;
+      var dz = fZ + a * rZ + b * uZ;
+      var n = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+      return bhHazeAt(dx / n, dy / n, dz / n, cx, cy, cz);
+    });
+    var sm = ctx.imageSmoothingEnabled, sq = ctx.imageSmoothingQuality;
+    ctx.imageSmoothingEnabled = true;
+    try { ctx.imageSmoothingQuality = 'high'; } catch (e) { /* older engines */ }
+    ctx.globalAlpha = clampN(alpha * 0.19 * BH_HZ_VMAX, 0, 1);
+    /* additive on a dark sky, plain paint on a light one: 'lighter' is
+       invisible over white, the same lesson the galaxy painting learned */
+    ctx.globalCompositeOperation = isLight() ? 'source-over' : 'lighter';
+    ctx.drawImage(cv, 0, 0, W, H);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+    ctx.imageSmoothingEnabled = sm;
+    try { ctx.imageSmoothingQuality = sq; } catch (e2) { /* older engines */ }
+  }
+
   /* ---- the S-star geometry, built once ---- */
   var SS_RING = 96;
   var ssN = 0;
@@ -11147,6 +11334,7 @@
   var ssRingS = null;                   /* screen x, y, camera depth */
   var ssRingOk = null;                  /* A1-1: does this ring project sanely */
   var ssPosS = null;                    /* per-star screen x, y, depth */
+  var ssRingNear = null;                /* LOOK-1b: sample near its pericenter */
   var SS_TMP = { x: 0, y: 0, z: 0 };
   var SS_V = [0, 0, 0];
   function ensureSs() {
@@ -11157,11 +11345,15 @@
     ssRingW = new Float64Array(ssN * SS_RING * 3);
     ssRingS = new Float64Array(ssN * SS_RING * 3);
     ssRingOk = new Uint8Array(ssN);
+    ssRingNear = new Uint8Array(ssN * SS_RING);
     ssPosS = new Float64Array(ssN * 3);
     var path = new Float64Array(SS_RING * 3);
     var w = bhWorld(BHP), k, q, o, d;
     for (k = 0; k < ssN; k++) {
       B.orbitPath(k, SS_RING, path);
+      /* the arc each orbit whips through nearest the hole, marked once here
+         so the draw can weight it without measuring anything per frame */
+      var lim = B.SSTARS[k].periAu * 2;
       for (q = 0; q < SS_RING; q++) {
         o = q * 3;
         B.toWorld(path[o], path[o + 1], path[o + 2], SS_V);
@@ -11169,6 +11361,9 @@
         ssRingW[d] = w.x + SS_V[0];
         ssRingW[d + 1] = w.y + SS_V[1];
         ssRingW[d + 2] = w.z + SS_V[2];
+        ssRingNear[k * SS_RING + q] =
+          Math.sqrt(path[o] * path[o] + path[o + 1] * path[o + 1] +
+                    path[o + 2] * path[o + 2]) < lim ? 1 : 0;
       }
     }
     return true;
@@ -11226,13 +11421,46 @@
     var g = bhSky.g;
     g.setTransform(1, 0, 0, 1, 0, 0);
     g.globalAlpha = 1;
-    g.fillStyle = isLight() ? '#e9edf3' : '#05070b';
+    /* the same empty-sky colour the page paints, so the lensed picture and
+       the sky around it are one sky: at #05070b the marker read as a dark
+       patch pasted on a brighter backdrop */
+    g.fillStyle = isLight() ? '#e9edf3' : bg();
     g.fillRect(0, 0, bhSky.cv.width, bhSky.cv.height);
+    /* LOOK-1c: the same bulge haze the parked scene paints, so the plunge
+       falls through the same sky, and so the marker's Einstein ring has real
+       light to bend: a ring made only of our sparse catalogue's stars came
+       out as a row of specks. The bake point IS the hole, so there is no
+       "toward the centre" term here, only the plane. */
+    bhSkyHaze(g);
     var w = bhWorld(BHP);
     bhSky.ex = w.x; bhSky.ey = w.y; bhSky.ez = w.z;
     bhSky.w = bhSky.cv.width; bhSky.h = bhSky.cv.height;
     bhSky.key = key; bhSky.done = false; bhSky.pending = true;
     bhSky.phase = 0; bhSky.i = 0; bhSky.grp = 0;
+  }
+  /* the equirect's own copy of the haze. Same field, painted through the
+     inverse of the pinned skyUv convention:
+       u = (atan2(y, x) + pi) / 2pi,  v = (pi/2 - asin(z)) / pi
+     so z = cos(v pi) and the xy radius is sin(v pi). */
+  var BH_SKY_HZ_A = 0.19 * BH_HZ_VMAX;
+  function bhSkyHaze(g) {
+    var cv = bhHazeCanvas(128, 64);
+    if (!cv) return;
+    bhHazeFill(function (u, v) {
+      var th = u * 6.283185307179586 - Math.PI;
+      var ph = v * Math.PI;
+      var s = Math.sin(ph);
+      return bhHazeAt(s * Math.cos(th), s * Math.sin(th), Math.cos(ph), null, 0, 0);
+    });
+    var sm = g.imageSmoothingEnabled;
+    g.imageSmoothingEnabled = true;
+    try { g.imageSmoothingQuality = 'high'; } catch (e) { /* older engines */ }
+    g.globalAlpha = BH_SKY_HZ_A;
+    g.globalCompositeOperation = isLight() ? 'source-over' : 'lighter';
+    g.drawImage(cv, 0, 0, bhSky.cv.width, bhSky.cv.height);
+    g.globalCompositeOperation = 'source-over';
+    g.globalAlpha = 1;
+    g.imageSmoothingEnabled = sm;
   }
   function bhSkyDot(g, B, dx, dy, dz, size) {
     B.skyUv(dx, dy, dz, SKY_UV);
@@ -11366,15 +11594,34 @@
      framing is a zoom, not a claim: what is drawn is still the sky bent by
      the real geodesics from 24 Schwarzschild radii out. */
   var BH_MARK_RS = 24, BH_MARK_FOV = 24;
-  /* the bake is a few hundred thousand pixels at three times the drawn size,
-     which is nothing on the GPU path and a real hitch on the CPU one, and
-     the marker is re-baked whenever the reader swings the camera. So it
-     supersamples only once we have seen the shader draw a frame. */
-  function bhMarkSs() { return (bhStat && bhStat.gl) ? 3 : 1; }
+  /* How big the bake is, which is not the same question as how big the
+     marker is drawn.
+     What the bake COSTS is its own area. What it BUYS is angular sampling,
+     and since the field of view is fixed, the samples per degree depend on
+     the bake alone. So LOOK-1a's doubling of the drawn size does not need a
+     bigger bake, and must not have one: a bake at four times the new drawn
+     size (820 px) cost 120 to 400 ms on a machine that runs the shader in
+     software, and the parked scene hitched every time the camera swung.
+     Capped at BH_MARK_MAX_PX the sky is sampled as finely as it shipped and
+     the browser's own filtering carries it to the drawn size, which reads
+     SMOOTHER at 1x rather than coarser.
+     The 2D fallback (about 160 ns per internal pixel, measured in BHF-2)
+     gets a much lower cap again, as it always did. */
+  var BH_MARK_CPU_PX = 128, BH_MARK_MAX_PX = 420, BH_DISK_PX = 62500;
+  function bhStampSp(px) {
+    return (bhStat && bhStat.gl) ? Math.min(Math.round(px * 4), BH_MARK_MAX_PX)
+                                 : Math.min(px, BH_MARK_CPU_PX);
+  }
   var bhStamp = { cv: null, g: null, lut: null, key: '', ok: false,
                   dx: 0, dy: 0, dz: 0 };
   var BH_F = [0, 0, 0], BH_R = [0, 0, 0], BH_U = [0, 0, 0], BH_H = [0, 0, 0];
-  function bhStampPx() { return Math.round(clampN(Math.min(W, H) * 0.125, 52, 116)); }
+  /* LOOK-1a: twice the screen size it shipped at. At 90 px the whole object
+     was a dim blob with a dotted rim, which is what "a black spot with some
+     circles" was about; at 180 the shadow reads as a black disc and the
+     Einstein ring around it has room to be a ring. The on-canvas plate and
+     the card already disclose that this size is drawn, not measured: from
+     the parking distance the real shadow is far under one pixel. */
+  function bhStampPx() { return Math.round(clampN(Math.min(W, H) * 0.25, 104, 232)); }
   /* an orthonormal frame whose forward is `d`, taking the page camera's own
      right and up as the reference so the bent sky is oriented like the rest
      of the frame */
@@ -11403,8 +11650,8 @@
     var B = BH();
     if (!B || !bhSky.done) return null;
     var px = bhStampPx();
-    var ss = bhMarkSs();
-    var key = px + '|' + ss + '|' + (isLight() ? 'l' : 'd') + '|' + bhSky.seq +
+    var sp = bhStampSp(px);
+    var key = px + '|' + sp + '|' + (isLight() ? 'l' : 'd') + '|' + bhSky.seq +
               '|' + (bhGlow ? 1 : 0);
     var n = Math.sqrt(dx * dx + dy * dy + dz * dz);
     if (!(n > 0)) return null;
@@ -11412,13 +11659,12 @@
     var same = bhStamp.ok && bhStamp.key === key &&
       (ux * bhStamp.dx + uy * bhStamp.dy + uz * bhStamp.dz) > 0.9998;
     if (same) return bhStamp.cv;
-    /* BHF-9: the marker is baked at BH_MARK_SS times its drawn size and
-       shrunk on the way out. The Einstein ring is the whole sky squeezed
-       into a thin arc, so at one sample per drawn pixel it came out as a
-       row of disconnected specks: aliasing, not starlight. Supersampling
-       integrates the compressed sky the way the real arc does, and it costs
-       one bake, not one frame. */
-    var sp = px * ss;
+    /* BHF-9: the marker is baked above its drawn size and shrunk on the way
+       out. The Einstein ring is the whole sky squeezed into a thin arc, so
+       at one sample per drawn pixel it came out as a row of disconnected
+       specks: aliasing, not starlight. Supersampling integrates the
+       compressed sky the way the real arc does, and it costs one bake, not
+       one frame. */
     if (!bhStamp.cv) bhStamp.cv = document.createElement('canvas');
     if (bhStamp.cv.width !== sp) {
       bhStamp.cv.width = sp; bhStamp.cv.height = sp; bhStamp.g = null;
@@ -11430,7 +11676,12 @@
     g.setTransform(1, 0, 0, 1, 0, 0);
     g.globalAlpha = 1;
     g.clearRect(0, 0, sp, sp);
-    bhStamp.lut = B.buildLut(BH_MARK_RS, 'static', 512, bhStamp.lut);
+    /* LOOK-1a: the rim is where the whole sky piles up, image after image,
+       into a vanishingly thin annulus, and how bright it comes out is purely
+       a question of how finely we sample it. 1,024 rays instead of 512, four
+       samples per drawn pixel instead of three: same geodesics, more of the
+       light they actually carry. This is one bake, not one frame. */
+    bhStamp.lut = B.buildLut(BH_MARK_RS, 'static', 1024, bhStamp.lut);
     var opts = { w: sp, h: sp, fwd: BH_F, right: BH_R, up: BH_U, hole: BH_F,
                  fovDeg: BH_MARK_FOV, quality: 1, maxPixels: sp * sp,
                  auto: false, budgetMs: 60, bg: bgRgb() };
@@ -11448,6 +11699,12 @@
       opts.hotPhase = bhHotPhase();
       opts.rInRs = 3;
       opts.rOutRs = 40;
+      /* the flow is a smooth low-frequency layer and it has no shader path,
+         so it is the one part of this bake that is pure CPU. Its own cap
+         keeps a bake affordable while the lens above it samples finely: the
+         BHF-1 feathering is in u-space, so it does not stair-step when the
+         browser scales this layer up. */
+      opts.maxPixels = Math.min(sp * sp, BH_DISK_PX);
       B.drawDisk(g, bhStamp.lut, opts);
       /* Feather the stamp into a disc. The lens fills a SQUARE, and its
          outer corners are just plain sky at the texture's own background,
@@ -11492,21 +11749,83 @@
     if (!(dc < camD * 4 + 2e4)) return 0;
     return 1 - ramp(camD, 4e4, 2.6e5);
   }
-  function ssRingStroke(k, behind, hz, a) {
+  /* LOOK-1b: the ellipses carried the whole scene at 0.34 alpha in flat grey,
+     which is where "some circles" came from. The ink is stronger, and the
+     stretch each star whips through nearest the hole is stronger again: that
+     is the part of the picture the measurement is really about, and it is
+     what makes the swarm read as orbits rather than as a wireframe.
+     The ink itself is a cool neutral on the dark sky, so the warm haze
+     behind it and the blue-white stars on it stay the two colours here. */
+  function ssInk() { return isLight() ? 'rgba(52,58,74,0.95)' : 'rgba(196,206,226,0.95)'; }
+  /* the marker's shadow, for the pass split below. Set once per frame by
+     drawSgrA; module level so the strokes allocate nothing. */
+  var ssCutX = 0, ssCutY = 0, ssCutR = 0;
+  /* split: 0 draw every sample, 1 only outside the shadow, 2 only inside it.
+     The near-side arcs that cross the marker are real (those parts of the
+     orbit ARE between the reader and the hole), but the marker is drawn far
+     larger than the hole would look from here, so at full strength they turn
+     the shadow into a wireframe ball. Inside it they are drawn faint: still
+     in front, no longer the loudest thing in the frame. */
+  function ssRingStroke(k, behind, hz, a, nearOnly, split) {
     if (!ssRingOk[k]) return;
-    var open = false, q, o;
+    var open = false, q, o, base = k * SS_RING, dx, dy, inD;
     ctx.beginPath();
     for (q = 0; q < SS_RING; q++) {
-      o = (k * SS_RING + q) * 3;
+      o = (base + q) * 3;
       var zc = ssRingS[o + 2];
-      if (isFinite(zc) && (behind ? zc >= hz : zc < hz)) {
+      var live = isFinite(zc) && (behind ? zc >= hz : zc < hz) &&
+                 (!nearOnly || ssRingNear[base + q]);
+      if (live && split && ssCutR > 0) {
+        dx = ssRingS[o] - ssCutX; dy = ssRingS[o + 1] - ssCutY;
+        inD = (dx * dx + dy * dy) < ssCutR * ssCutR;
+        if (split === 1 ? inD : !inD) live = false;
+      }
+      if (live) {
         if (!open) { ctx.moveTo(ssRingS[o], ssRingS[o + 1]); open = true; }
         else ctx.lineTo(ssRingS[o], ssRingS[o + 1]);
       } else open = false;
     }
-    ctx.globalAlpha = 0.34 * a;
+    ctx.globalAlpha = (split === 2 ? 0.14 : (nearOnly ? 0.66 : 0.36)) * a;
+    ctx.lineWidth = (nearOnly && split !== 2) ? 1.5 : 1;
     ctx.stroke();
+    ctx.lineWidth = 1;
     ctx.globalAlpha = 1;
+  }
+  /* One sprite, built once per theme, drawn at a size set by each star's own
+     K magnitude. These are the young massive stars of the S cluster, which
+     are blue-white, so that is what they are drawn as: the warm in this
+     frame belongs to the old bulge behind them, not to them. */
+  var ssGlow = { cv: null, key: '' };
+  var SS_GLOW_R = 40;
+  function ssGlowSprite() {
+    var key = isLight() ? 'l' : 'd';
+    if (ssGlow.cv && ssGlow.key === key) return ssGlow.cv;
+    if (!ssGlow.cv) ssGlow.cv = document.createElement('canvas');
+    var s = SS_GLOW_R * 2;
+    if (ssGlow.cv.width !== s) { ssGlow.cv.width = s; ssGlow.cv.height = s; }
+    var g = ssGlow.cv.getContext('2d');
+    if (!g) return null;
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.clearRect(0, 0, s, s);
+    var gr = g.createRadialGradient(SS_GLOW_R, SS_GLOW_R, 0,
+                                    SS_GLOW_R, SS_GLOW_R, SS_GLOW_R);
+    if (key === 'l') {
+      gr.addColorStop(0, 'rgba(24,26,32,1)');
+      gr.addColorStop(0.17, 'rgba(30,34,44,0.92)');
+      gr.addColorStop(0.30, 'rgba(48,56,76,0.42)');
+      gr.addColorStop(0.62, 'rgba(60,70,92,0.12)');
+      gr.addColorStop(1, 'rgba(60,70,92,0)');
+    } else {
+      gr.addColorStop(0, 'rgba(255,255,255,1)');
+      gr.addColorStop(0.17, 'rgba(240,246,255,0.95)');
+      gr.addColorStop(0.30, 'rgba(186,208,248,0.45)');
+      gr.addColorStop(0.62, 'rgba(140,176,238,0.13)');
+      gr.addColorStop(1, 'rgba(140,176,238,0)');
+    }
+    g.fillStyle = gr;
+    g.fillRect(0, 0, s, s);
+    ssGlow.key = key;
+    return ssGlow.cv;
   }
   function ssDot(k, behind, hz, a) {
     var o = k * 3, x = ssPosS[o], y = ssPosS[o + 1], z = ssPosS[o + 2];
@@ -11514,15 +11833,117 @@
     if (behind ? !(z >= hz) : (z >= hz)) return;
     var B = BH();
     var kmag = B.SSTARS[k].kmag;
-    var al = clampN(1.15 - (kmag - 13.9) * 0.10, 0.45, 1) * a;
-    ctx.globalAlpha = al;
-    ctx.fillStyle = isLight() ? 'rgba(38,38,38,0.95)' : 'rgba(232,236,244,0.95)';
-    ctx.beginPath();
-    ctx.arc(x, y, 2.6, 0, 6.2832);
-    ctx.fill();
+    /* S2 at K = 13.95 is the brightest of the fourteen, S55 at 17.5 the
+       faintest; the size and the strength both follow that one measured
+       number and nothing else */
+    var rel = clampN((17.6 - kmag) / 3.65, 0, 1);
+    var sp = ssGlowSprite();
+    var gr = (3.4 + 5.2 * rel) * 2;
+    if (sp) {
+      ctx.globalAlpha = clampN(0.55 + 0.45 * rel, 0.45, 1) * a;
+      ctx.drawImage(sp, x - gr, y - gr, gr * 2, gr * 2);
+    } else {
+      ctx.globalAlpha = clampN(0.55 + 0.45 * rel, 0.45, 1) * a;
+      ctx.fillStyle = isLight() ? 'rgba(38,38,38,0.95)' : 'rgba(232,236,244,0.95)';
+      ctx.beginPath();
+      ctx.arc(x, y, 2.6, 0, 6.2832);
+      ctx.fill();
+    }
     ctx.globalAlpha = 1;
     bhSceneDrawn++;
   }
+  /* ==================================================================
+     DX-2: "Fall in", at the marker.
+
+     The owner parked here and never found the way in: the verb lived only on
+     a card, below its fold. So the scene carries it too. A slim ring just
+     outside the lensed stamp and a small tag in the same ink as every other
+     body label, tappable, running the same action as the button.
+
+     It is suppressed while any cinematic runs and while the card is open
+     (the card's sticky row carries it there), and it goes through the same
+     ledgers as a label, so it never lands on an S-star name or on the HUD.
+     ================================================================== */
+  var bhTagBox = null;                  /* {x, y, w, h} this frame, or null */
+  var BH_TAG = 'Fall in';
+  function bhTagOn() {
+    return (mode === 'explore' || mode === 'shipidle') && atBh() && !cardOpen();
+  }
+  /* a label box that is clear of the HUD, the ledgers, and every overlay.
+     A tag is a CONTROL, so overlayFree is the test rather than labelFits'
+     30 % tolerance: a button half under the panel is a button you cannot
+     press. The cruise bar is a DOM element the label rules know nothing
+     about, so it joins the list here. */
+  function tagFits(x, y, w, h) {
+    if (!labelFits(x, y, w, h)) return false;
+    if (!overlayFree(x, y, w, h)) return false;
+    if (bodyLabClash(x, y, w, h)) return false;
+    if (elFpBar && !elFpBar.hidden && elFpBar.getBoundingClientRect &&
+        coverFrac(x, y, w, h, elFpBar.getBoundingClientRect()) > 0.001) return false;
+    return true;
+  }
+  function drawFallTag(hx, hy, mr, a) {
+    bhTagBox = null;
+    if (!bhTagOn() || !(a > 0.5) || !(mr > 4)) return;
+    if (!isFinite(hx) || !isFinite(hy)) return;
+    var rr = mr * 1.14;                 /* the ring, just outside the stamp */
+    ctx.save();
+    ctx.font = '12px ' + FONT;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    var tw = ctx.measureText(BH_TAG).width;
+    var padX = 7;
+    var bw = tw + padX * 2, bh = 22;
+    /* beside the ring first, then the other side, then under and over it */
+    var gap = 10, k, c, bx = 0, by = 0, ok = false;
+    var cands = [
+      [hx + rr + gap, hy - bh / 2],
+      [hx - rr - gap - bw, hy - bh / 2],
+      [hx - bw / 2, hy + rr + gap],
+      [hx - bw / 2, hy - rr - gap - bh]
+    ];
+    for (k = 0; k < cands.length; k++) {
+      c = cands[k];
+      if (tagFits(c[0], c[1], bw, bh)) { bx = c[0]; by = c[1]; ok = true; break; }
+    }
+    if (!ok) { ctx.restore(); return; }
+    /* the ring: lensed light already draws a bright arc here, so this is a
+       thin neutral circle and nothing more */
+    ctx.globalAlpha = a * 0.5;
+    ctx.strokeStyle = textColor(0.75);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(hx, hy, rr, 0, 6.2832);
+    ctx.stroke();
+    /* a leader from the ring to the tag, so the two read as one thing */
+    var mx = bx + bw / 2, my = by + bh / 2;
+    var vx = mx - hx, vy = my - hy, vn = Math.sqrt(vx * vx + vy * vy) || 1;
+    ctx.globalAlpha = a * 0.42;
+    ctx.beginPath();
+    ctx.moveTo(hx + vx / vn * rr, hy + vy / vn * rr);
+    ctx.lineTo(mx - vx / vn * (bw * 0.5 - 2), my - vy / vn * (bh * 0.5 - 2));
+    ctx.stroke();
+    /* the plate keeps the word readable over a bright arc or a star */
+    ctx.globalAlpha = a * 0.55;
+    ctx.fillStyle = isLight() ? 'rgba(255,255,255,0.72)' : 'rgba(10,11,14,0.72)';
+    roundRect(bx, by, bw, bh, 5);
+    ctx.fill();
+    ctx.globalAlpha = a * 0.55;
+    ctx.strokeStyle = textColor(0.45);
+    ctx.stroke();
+    ctx.globalAlpha = a * 0.95;
+    ctx.fillStyle = textColor(0.95);
+    ctx.fillText(BH_TAG, bx + padX, by + bh / 2 + 0.5);
+    ctx.restore();
+    ctx.globalAlpha = 1;
+    claimBodyLab(bx, by, bw, bh);
+    bhTagBox = { x: bx - 6, y: by - 6, w: bw + 12, h: bh + 12 };
+  }
+  function bhTagHit(p) {
+    var t = bhTagBox;
+    return !!(t && p.x >= t.x && p.x <= t.x + t.w && p.y >= t.y && p.y <= t.y + t.h);
+  }
+
   function drawSgrA(now, a) {
     var B = BH();
     bhScr.ok = false;
@@ -11571,9 +11992,14 @@
       ? ensureBhStamp(w.x - camPX, w.y - camPY, w.z - camPZ) : null;
     var mr = px * 0.5;
     var parked = !isRigMode() && !falling && atBh();
-    ctx.strokeStyle = 'rgba(127,127,127,0.9)';
+    /* the shadow the near-side arcs are dimmed over: the stamp's own dark
+       disc, which BH_MARK_FOV and the LUT put at bhMarkHole() of the stamp */
+    ssCutX = hx; ssCutY = hy;
+    ssCutR = (stamp && !falling) ? mr * bhMarkHole() * 1.06 : 0;
+    ctx.strokeStyle = ssInk();
     ctx.lineWidth = 1;
-    for (k = 0; k < ssN; k++) ssRingStroke(k, true, hz, a);
+    for (k = 0; k < ssN; k++) ssRingStroke(k, true, hz, a, false, 0);
+    for (k = 0; k < ssN; k++) ssRingStroke(k, true, hz, a, true, 0);
     for (k = 0; k < ssN; k++) ssDot(k, true, hz, a);
     if (parked) drawParkedShip(hx, hy, mr, now, a, -1);
     /* the marker keeps its own alpha: the cluster around it is fading on a
@@ -11590,14 +12016,19 @@
     }
     ctx.globalAlpha = 1;
     if (parked) drawParkedShip(hx, hy, mr, now, a, 1);
-    ctx.strokeStyle = 'rgba(127,127,127,0.9)';
+    ctx.strokeStyle = ssInk();
     ctx.lineWidth = 1;
-    for (k = 0; k < ssN; k++) ssRingStroke(k, false, hz, a);
+    for (k = 0; k < ssN; k++) ssRingStroke(k, false, hz, a, false, ssCutR > 0 ? 2 : 0);
+    for (k = 0; k < ssN; k++) ssRingStroke(k, false, hz, a, false, ssCutR > 0 ? 1 : 0);
+    for (k = 0; k < ssN; k++) ssRingStroke(k, false, hz, a, true, ssCutR > 0 ? 1 : 0);
     for (k = 0; k < ssN; k++) ssDot(k, false, hz, a);
     if (!falling) {
       bhScr.ok = true; bhScr.x = hx; bhScr.y = hy; bhScr.z = hz; bhScr.r = mr;
       claimDisc(hx, hy, mr * 0.5);
     }
+    /* DX-2: the way in, at the place it happens. Before the labels, so they
+       give way to it and not the other way round. */
+    drawFallTag(hx, hy, mr, a);
     /* names, on the same hygiene rules every other label obeys */
     if (a > 0.35) {
       ctx.font = '11px ' + FONT;
@@ -12410,6 +12841,12 @@
     startBhFall: function () { startBhFall(); },
     skipBhFall: function () { skipBhFall(); },
     setBhGlow: function (v) { setBhGlow(!!v); },
+    /* DX-2: the scene affordance, exactly as the pointer sees it */
+    bhTag: function () {
+      return bhTagBox ? { x: bhTagBox.x, y: bhTagBox.y, w: bhTagBox.w, h: bhTagBox.h,
+                          cx: bhTagBox.x + bhTagBox.w / 2,
+                          cy: bhTagBox.y + bhTagBox.h / 2, text: BH_TAG } : null;
+    },
     sstars: function () {
       var B = window.VoyageBH || null;
       var out = [], k;

@@ -142,6 +142,9 @@ description: "An interactive full-screen trip planner by Keane Lucas: real JPL p
         <p>
           The background sky here is our own star catalog. The real view from the galactic
           center would blaze with millions of bulge stars nobody has catalogued for us.
+          The soft glow standing in for them is an illustration, like the painted galaxy:
+          it is brightest along the real plane of the galaxy, but not one point of light
+          in it was measured.
         </p>
         <p>
           The two teams that weigh this black hole disagree by about seven percent. We use
@@ -578,6 +581,66 @@ html[data-theme="light"] .voy-card { background: rgba(255,255,255,0.97); border-
 .voy-chipbody p { margin: 0.15em 0; font-size: 0.85em; opacity: 0.8; line-height: 1.4; }
 .voy-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.2rem; }
 
+/* ---- DX-1: the card's actions never leave the screen ----
+   The owner opened Sagittarius A* and could not find the way to travel there
+   or to fall in. Measured on the shipped build: at 1440x900 and at 1280x820
+   EVERY action button on that card sat 270 to 380 px below the card's own
+   fold, and the only button in view was the close x. A fade cue at the bottom
+   edge is a hint, not an affordance: nobody scrolls a panel to look for a
+   verb they have no reason to believe is there.
+   So the primary row leaves the flow and becomes a sticky footer INSIDE the
+   card. The facts scroll UNDER it, the buttons stay put, and because the row
+   is still the LAST child of the scroll container it also has a natural
+   resting place at the very end, so nothing is permanently hidden beneath it
+   when you scroll to the bottom.
+   The plate is opaque, and the two colours are the card's own translucent
+   surface composited over the page's sky colour, so it reads as the same
+   surface rather than a panel stuck on top of it. */
+/* The card gives its own bottom padding to the row, so the plate is flush
+   with the card's bottom edge both while it floats and at the end of the
+   scroll. Never a negative bottom MARGIN here: sticky pins the margin box,
+   so a negative one would hang the plate below the scrollport and let the
+   card clip it. */
+.voy-card--docked { padding-bottom: 0; }
+.voy-card__dock {
+  position: sticky; bottom: 0; z-index: 2;
+  margin: 0.65rem -1rem 0; padding: 0.6rem 1rem 0.85rem;
+  background: #121212;
+  border-top: 1px solid rgba(127,127,127,0.22);
+}
+.voy-card__dock .voy-actions { margin-top: 0; }
+html[data-theme="light"] .voy-card__dock { background: #f8f8f8; }
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .voy-card__dock { background: #f8f8f8; }
+}
+/* the scroll cue moves with the row it used to sit on top of: same gradient,
+   same scroll timeline, now hung directly ABOVE the plate. It is absolutely
+   positioned, so like the negative margin it replaces it adds no height. */
+.voy-card--docked::after { display: none; }
+.voy-card__dock::before {
+  content: ''; display: block; pointer-events: none;
+  position: absolute; left: 0; right: 0; bottom: 100%; height: 1.55rem;
+  background: linear-gradient(to bottom, rgba(12,12,12,0), rgba(12,12,12,0.40));
+  opacity: 0;
+  animation-name: voy-scrollcue;
+  animation-duration: auto;
+  animation-timing-function: linear;
+  animation-fill-mode: both;
+  animation-timeline: scroll(nearest block);
+  animation-range: calc(100% - 2.5rem) 100%;
+}
+html[data-theme="light"] .voy-card__dock::before {
+  background: linear-gradient(to bottom, rgba(30,32,38,0), rgba(30,32,38,0.30));
+}
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .voy-card__dock::before {
+    background: linear-gradient(to bottom, rgba(30,32,38,0), rgba(30,32,38,0.30));
+  }
+}
+/* a button that has done its job (Plan the trip, once the trip is open) gets
+   out of the row rather than sitting there disabled next to Launch */
+.voy-btn[hidden] { display: none !important; }
+
 .voy-arrive {
   border: 1px solid rgba(200,164,92,0.5); border-radius: 8px;
   background: rgba(200,164,92,0.1); padding: 0.5rem 0.7rem;
@@ -752,6 +815,17 @@ html[data-theme="light"] #voy-fp-info:focus-visible { background: rgba(52,86,138
     max-height: 44vh; border-radius: 12px 12px 0 0;
     padding-bottom: 7.5rem;
   }
+  /* DX-1 on the sheet. The 7.5rem of padding here was clearance for the
+     corner buttons, and this page hides those while a sheet is open
+     (body.voy-sheet-open); the chat bar is hidden on phones on every
+     .life-app page. So the docked sheet gives that band back to the reader
+     and the row runs to the bottom edge, standing its buttons off with its
+     OWN padding. Keeping the card's padding-bottom at 0 is what makes the
+     sticky arithmetic trivial: the row's floating position and its resting
+     position at full scroll are the same place, so nothing is ever stranded
+     underneath it. */
+  .voy-card--docked { padding-bottom: 0; }
+  .voy-card__dock { padding-bottom: 1.6rem; }
   /* the corner buttons are raised to bottom: 4rem here and the chat bar runs
      the full width, so the panel stops higher than it does on desktop */
   .voy-panel { max-height: calc(100vh - 12.5rem); max-height: calc(100dvh - 12.5rem); }
