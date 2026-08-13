@@ -307,12 +307,14 @@
        says what the class IS and then the record's own note, and invents
        nothing else. */
     var FAR_LINE = {
-      bh: 'Sagittarius A*, the black hole at the center of the galaxy, about four ' +
-          "million times the Sun's mass. There is no picture of it here because a " +
-          'black hole has no surface to draw. Its position and distance are ' +
-          'measured. Everything else on this page about it is words. There is ' +
-          'not much to see here yet: no star, no surface. A closer look at this ' +
-          'place is coming.',
+      /* BHF-8: the mass belongs to the Sagittarius A* fact lines, which state
+         it once and say how it was weighed. Two mass clauses on one card,
+         rounded two different ways, read as a contradiction. */
+      bh: 'Sagittarius A*, the black hole at the center of the galaxy. Nothing ' +
+          'here is a picture of the hole itself, because a black hole has no ' +
+          'surface. What is drawn is the sky bent around it, and the dark circle ' +
+          'in the middle of that is where no light can reach your eye. Its ' +
+          'position and distance are measured.',
       globular: 'A globular cluster: a few hundred thousand old stars bound together, ' +
           "orbiting outside the galaxy's disc. Drawn as a swarm because that is what " +
           'it is.',
@@ -2617,8 +2619,8 @@
     var k = 1 - Math.exp(-d / ZOOM_TAU);
     if (Math.abs(rigTarget - rigD) > 1e-6) rigD += (rigTarget - rigD) * k;
     else rigD = rigTarget;
-    /* cruise and syscruise write cam.logD from the flight itself */
-    if (camAnim || mode === 'cruise' || mode === 'syscruise') {
+    /* cruise, syscruise and the plunge write cam.logD from the flight itself */
+    if (camAnim || mode === 'cruise' || mode === 'syscruise' || mode === 'bhfall') {
       zoomTarget = cam.logD;
       return;
     }
@@ -2681,6 +2683,15 @@
     if (!fr) return;
     centeredStar = -1;
     var pp = explorePP();
+    /* Sgr A* is the one far object with something to see up close: the
+       S-star cluster on its measured orbits. Frame that instead of the
+       marker's own neighbourhood. */
+    if (i === bhIdx && BH()) {
+      camGo({ cx: fr.x * LY_AU, cy: fr.y * LY_AU, cz: fr.z * LY_AU,
+              logD: Math.log(BH_VIEW_AU) / Math.LN10, ppx: pp.x, ppy: pp.y },
+            instant ? 0 : 1400);
+      return;
+    }
     var d = clampN(Math.max(2000, fr.dLy * 0.30) * LY_AU, 1e7, Math.pow(10, MAX_LOGD));
     camGo({ cx: fr.x * LY_AU, cy: fr.y * LY_AU, cz: fr.z * LY_AU,
             logD: Math.log(d) / Math.LN10, ppx: pp.x, ppy: pp.y },
@@ -3980,6 +3991,26 @@
       body.appendChild(av);
     }
 
+    /* the end of the plunge, in the place the arrival banner takes */
+    if (opts && opts.bhEnd && fr.cls === 'bh') {
+      var ev = el('div', 'voy-arrive voy-bhend');
+      ev.appendChild(el('p', 'voy-arrive__line',
+        'That was what would happen if you fell in. Nothing that crosses comes ' +
+        'back out, and no signal from inside ever reaches anyone outside.'));
+      ev.appendChild(el('p', 'voy-fact',
+        'This is as far as anyone can honestly draw. Your ship, of course, is ' +
+        'still parked safely outside.'));
+      var erow = el('div', 'voy-actions');
+      var again = el('button', 'voy-btn', 'Fall in again');
+      again.type = 'button';
+      again.addEventListener('click', function () { startBhFall(); });
+      var done = el('button', 'voy-btn', 'Close');
+      done.type = 'button';
+      done.addEventListener('click', function () { closeCard(); });
+      erow.appendChild(again); erow.appendChild(done);
+      ev.appendChild(erow);
+      body.appendChild(ev);
+    }
     body.appendChild(el('p', 'voy-fact', PURE.farClassLine(fr.cls)));
     /* the two halves of this sentence must round the SAME way: printing
        "about 300,000 light-years away; the light left it about 289,000
@@ -3992,6 +4023,43 @@
       PURE.farDistPhrase(fr.dLy, fr.approx) + ' away; ' +
       PURE.lightPhrase(dShow, thisYearFrac) + '.'));
     if (fr.note) body.appendChild(el('p', 'voy-note', fr.note));
+
+    /* ---- Sagittarius A*: the facts, and the fall ----
+       Every number here is the spec's, which is the GRAVITY Collaboration's
+       2022 mass and the Gillessen 2017 orbit table. The scale caveat is the
+       same one the star discs carry: the picture is real, the size is not. */
+    if (fr.cls === 'bh' && BH()) {
+      body.appendChild(el('p', 'voy-fact',
+        "About 4.3 million times the Sun's mass, weighed by the orbits of the " +
+        'stars around it.'));
+      body.appendChild(el('p', 'voy-fact',
+        "Its event horizon would sit inside Mercury's orbit: about 18 Suns wide."));
+      body.appendChild(el('p', 'voy-fact',
+        'The stars circling here are real, on their measured orbits. Where each ' +
+        'one sits right now is real too, our best fit to almost thirty years of ' +
+        'tracking. S2 rounds the hole every 16 years and passes it at 2.6 percent ' +
+        'of the speed of light.'));
+      body.appendChild(el('p', 'voy-fact',
+        'In 2018 a set of linked telescopes watched hot spots loop around it in ' +
+        'about 45 minutes, close to the last stable orbit.'));
+      body.appendChild(el('p', 'voy-note',
+        'The marker at the middle is the real bending of light, drawn from close ' +
+        'up and at a fixed size on screen: from out here the shadow itself would ' +
+        'be far smaller than one pixel. The glow is drawn faint because the real ' +
+        'one is faint, and the tilt of it is a choice, not a measurement.'));
+      var brow = el('div', 'voy-actions');
+      var fall = el('button', 'voy-btn voy-btn--primary', 'Fall in');
+      fall.type = 'button';
+      var hereBh = atBh();
+      fall.disabled = !hereBh;
+      fall.addEventListener('click', function () { startBhFall(); });
+      brow.appendChild(fall);
+      body.appendChild(brow);
+      if (!hereBh) {
+        body.appendChild(el('p', 'voy-note',
+          'Fly your ship here first, and then you can fall in.'));
+      }
+    }
 
     var row = el('div', 'voy-actions');
     var plan = el('button', 'voy-btn voy-btn--primary', 'Plan the trip');
@@ -5141,6 +5209,12 @@
      third of the frame whatever it is. */
   function idleFraming() {
     var want = Math.max(40, H * 0.17);
+    /* parked at Sgr A*: the scene here is the S-star cluster, which is
+       thousands of AU across. The star-radius law below would park the
+       camera 2 AU out, looking at nothing. */
+    if (shipAt.kind === 'f' && shipAt.idx === bhIdx && bhIdx >= 0 && BH()) {
+      return { standoff: BH_VIEW_AU, logD: Math.log(BH_VIEW_AU) / Math.LN10 };
+    }
     if (shipAt.kind === 'p') {
       var pr = PLANET_R[shipAt.idx] || 4;
       var dP = clampN(pr * 2.2 * 60 / want, 0.6, 40);
@@ -6401,7 +6475,11 @@
     }
     return Math.min(H * 0.78, Math.max(hudBottom + 18, floor));
   }
-  function drawCaption(now, maxW) {
+  /* cx is OPTIONAL and defaults to the screen centre, which is what every
+     caller before the plunge wanted (the cruise passes nothing and is
+     byte-identical). The plunge's captions are the longest on the page and
+     it hands in the strip the panel leaves. */
+  function drawCaption(now, maxW, cx) {
     if (!capCur) return;
     var t = now - capCur.t0;
     var a = clampN(t / 350, 0, 1) * (1 - ramp(t, capCur.ms - 400, capCur.ms));
@@ -6417,13 +6495,13 @@
     if (capCur.two) {
       ctx.font = '15px ' + FONT;
       if (ctx.measureText(capCur.text).width > maxW) {
-        hudLine([capCur.two[0]], '', 15, 10, maxW, y, col, undefined, sc);
-        hudLine([capCur.two[1]], '', 15, 10, maxW, y + 20, col, undefined, sc);
+        hudLine([capCur.two[0]], '', 15, 10, maxW, y, col, cx, sc);
+        hudLine([capCur.two[1]], '', 15, 10, maxW, y + 20, col, cx, sc);
         return;
       }
     }
     hudLine(capCur.alt, big ? '600 ' : '', big ? 19 : 15, big ? 12 : 10, maxW, y, col,
-            undefined, sc);
+            cx, sc);
   }
 
   function drawCruise(now) {
@@ -7799,6 +7877,25 @@
   /* A2-13: the body labels this frame really drew, so the parked ship's own
      tag can give way to them (it is the least important name on screen). */
   var bodyLabs = [];
+  /* BHF-6: the HUD is a label too, and it wins. The canvas HUD is drawn at
+     the END of the frame, after every body label, so a name that lands on it
+     is simply overprinted (S24 sat across "tap the sky to leave"). The
+     ledger the HUD fills is cleared at the top of each frame, so the test
+     also carries LAST frame's boxes: the HUD text is stable from frame to
+     frame, and one frame of lag is the difference between a rule that works
+     and a rule that never fires. */
+  var hudPrev = [];
+  function hudClash(x, y, w, h) {
+    var hh = h || 14, k, b, pad;
+    for (k = 0; k < hudDrawn.length + hudPrev.length; k++) {
+      b = (k < hudDrawn.length) ? hudDrawn[k] : hudPrev[k - hudDrawn.length];
+      if (!b || !(b.w > 0)) continue;
+      pad = (b.px || 13) * 0.72;
+      if (x < b.x1 + 3 && b.x0 - 3 < x + w &&
+          y < b.y + pad && b.y - pad < y + hh) return true;
+    }
+    return false;
+  }
   function claimBodyLab(x, y, w, h) {
     if (isFinite(x) && isFinite(y) && w > 0) bodyLabs.push({ x: x, y: y, w: w, h: h || 14 });
   }
@@ -7835,6 +7932,7 @@
     if (!isFinite(x) || !isFinite(y) || !(w > 0)) return false;
     var hh = h || 13;
     if (y < 40) return false;              /* the masthead's dead zone */
+    if (hudClash(x, y, w, hh)) return false;   /* BHF-6 */
     var vx = Math.min(x + w, W - 2) - Math.max(x, 2);
     var vy = Math.min(y + hh, H - 2) - Math.max(y, 2);
     if (!(vx > 0) || !(vy > 0)) return false;
@@ -9582,6 +9680,7 @@
        pass. It used to be cleared inside drawCruise, so any hudLine drawn
        outside that function grew it without bound and made hudBoxes()
        useless for the 390 px [8, W-8] assertion. */
+    hudPrev = hudDrawn;                  /* BHF-6: labels test against both */
     hudDrawn = [];
     hudOrbPx = 0;                        /* and the bright-orb ledger with it */
     hereLab.length = 0;                  /* and the marker-label ledger (E7) */
@@ -9678,12 +9777,39 @@
     /* the galaxy's own "you are here" hands over to drawHereMarkers on the
        OLD ramp, so the two still never double-print */
     curSa = saFar;
+    /* BHF-3: the plunge's baked sky is the BACKDROP, laid down before the
+       ordinary world passes rather than over them, and it crossfades in over
+       the first second instead of waiting for the shadow to grow. What it
+       replaces is the star tiers and the galaxy, which are the same sky
+       drawn a poorer way; what it does NOT replace, until the lens really
+       owns the frame, is the S-star cluster sweeping past, which is a set of
+       nearby bodies with real parallax and no business being a texture. */
+    var bhBack = 0;
+    if (mode === 'bhfall' && bhSt) {
+      bhBack = bhBackA();
+      if (bhBack > 0.004) drawBhLens(bhBack);
+      /* and once it does own the frame, the same rule the cockpit follows */
+      if (bhLensFull()) {
+        starsVis = false; starsPick = false;
+        scrOk.fill(0);
+        exoScr.length = 0;
+        farScr.length = 0; farVis = false;
+        bhScr.ok = false;
+        drawBhFall(now);
+        drawTagline(now);
+        return;
+      }
+      var bhK = 1 - bhBack;
+      saFar *= bhK; sa *= bhK; ga *= bhK; gpaint *= bhK; fa *= bhK;
+      curSa = saFar;
+    }
     var cockpit = (mode === 'cruise' && fpMode && !reduced && cruiseSt);
     if (cockpit) {
       starsVis = false; starsPick = false;
       scrOk.fill(0);        /* no stale screen positions survive the cockpit */
       exoScr.length = 0;
       farScr.length = 0; farVis = false;
+      bhScr.ok = false;
       drawCruise(now);
       drawScaleBar(D);
       drawTagline(now);
@@ -9715,12 +9841,16 @@
        on screen at any zoom (D4). */
     if (centeredStar >= 0 && mode !== 'porkchop') drawCenteredStar(D, now, sa);
     else { exoScr.length = 0; starOrbPx = 0; lastOrbBlend = 0; ringsOnScreen = false; }
+    /* the S-star cluster, whenever the camera is close enough to Sgr A* to
+       be looking at it. It owns no mode: it is a close-up like any other. */
+    drawSgrA(now, bhSceneA());
     syncOrbitNote();
     drawSelectionRings();
     drawParkTag();                       /* A2-13: after every body label */
     if (mode === 'cruise') drawCruise(now);
     else if (mode === 'syscruise') drawSysCruise(now);
     else if (mode === 'shipidle') drawShipIdle(now);
+    else if (mode === 'bhfall') drawBhFall(now);
     if (mode === 'porkchop') { sbRect = null; drawTimeline(); drawPorkchop(); }
     /* E4b: in Map view the timeline is drawn READ-ONLY with a live cursor.
        The drag returns after arrival; dragging it mid-flight used to cancel
@@ -9768,6 +9898,7 @@
     if (mode === 'cruise' && cruiseSt) cruiseStep(nowMs);
     if (mode === 'syscruise' && sysSt) sysStep(nowMs);
     if (mode === 'shipidle') idleStep(nowMs);
+    if (mode === 'bhfall' && bhSt) bhStep(nowMs);
     syncFlightStatus(nowMs);             /* A2-6: after the step, so the phase is this frame's */
     stepZoom(dt);
     if (mode !== lastMode) {
@@ -9791,6 +9922,7 @@
        background tier: the point cloud carries the view until it lands */
     if (!galBakeTried) { galBakeTried = true; startGalaxyBake(); }
     galPump(nowMs);
+    bhSkyPump();
   }
   var lastFrameT = 0, framesPainted = 0, lastMode = null;
   function start() { if (!raf) { lastT = 0; raf = requestAnimationFrame(loop); } }
@@ -9838,6 +9970,13 @@
       }
     }
     if (best) return best;
+    /* the Sgr A* marker, which is a close-up and not part of the far tier's
+       own glyph pass at these zooms */
+    if (bhScr.ok && bhIdx >= 0) {
+      dx = bhScr.x - p.x; dy = bhScr.y - p.y;
+      var br = Math.max(rad, bhScr.r * 0.6 + 6);
+      if (dx * dx + dy * dy < br * br) return { kind: 'f', idx: bhIdx };
+    }
     /* the far tier, before the stars because it draws over them: a marquee
        object is picked on its own glyph radius, which is bigger than a star
        point and is what the eye is aiming at */
@@ -9972,6 +10111,14 @@
         return;
       }
     }
+    if (mode === 'bhfall') {
+      /* the same free look and the same tap-to-skip the cruise has */
+      downSt = { x: p.x, y: p.y, t: performance.now(), type: e.pointerType, bh: true };
+      lookDrag = { x0: p.x, y0: p.y, yaw0: lookYaw, pitch0: lookPitch };
+      capturePointer(e);
+      e.preventDefault();
+      return;
+    }
     if (mode === 'cruise' || mode === 'syscruise') {
       /* free look. The tap that skips the cinematic is still a tap: the
          6 px threshold below is what separates them. */
@@ -10008,7 +10155,7 @@
         /* E6: pinch keeps its direct 1:1 mapping and writes BOTH the value
            and the target, so there is no glide fighting the fingers and no
            snap-back when they lift. */
-        if (pinchSt.rig) {
+        if (pinchSt.rig || mode === 'bhfall') {
           var wantR = rigD * (pinchSt.d / nd);
           rigD = clampN(wantR, RIG_D_MIN, RIG_D_MAX);
           rigTarget = rigD;
@@ -10032,6 +10179,7 @@
         /* a real drag takes the in-system camera over for good: the standing
            cinematic tilt must never fight the reader's own hand */
         if (sysSt) sysSt.userLook = true;
+        if (mode === 'bhfall') bhAutoHold = true;
       }
       return;
     }
@@ -10095,7 +10243,11 @@
       var dt2 = performance.now() - downSt.t;
       var moved = Math.abs(p.x - downSt.x) + Math.abs(p.y - downSt.y);
       if (dt2 < 350 && moved <= 6) {
-        if (downSt.cruise) { if (mode === 'syscruise') skipSysCruise(); else skipStarCruise(); }
+        /* BHF-5: the tap that ended the plunge must not carry on into the
+           end card it just opened */
+        if (!downSt.bh && bhEndGuarded()) { downSt = null; orbitDrag = null; return; }
+        if (downSt.bh) { skipBhFall(); }
+        else if (downSt.cruise) { if (mode === 'syscruise') skipSysCruise(); else skipStarCruise(); }
         else if (downSt.idle) { exitShipIdle('quiet'); tapSelect(p, downSt.type); }
         else if (mode === 'explore') tapSelect(p, downSt.type);
       }
@@ -10122,9 +10274,11 @@
     var dy = e.deltaY;
     if (e.deltaMode === 1) dy *= 16;         /* line-mode mice -> pixels */
     else if (e.deltaMode === 2) dy *= (H || 600);
-    if (isRigMode()) {
+    if (isRigMode() || mode === 'bhfall') {
       /* CL-09: the wheel is the rig distance here. cam.logD stays pinned as
-         the input to the LOD ramps and minLogD is not consulted at all. */
+         the input to the LOD ramps and minLogD is not consulted at all.
+         (In the plunge cam.logD is the fall's own radius, which the wheel
+         must never touch.) */
       var want = rigTarget * Math.exp(dy * 0.0016);
       rigTarget = clampN(want, RIG_D_MIN, RIG_D_MAX);
       noteRigOver(want);
@@ -10143,12 +10297,17 @@
      would leave the orbit with the arrival card still on screen.) */
   function escLadder() {
     if (mode === 'cruise') { skipStarCruise(); return; }
+    /* the plunge skips to its end card, which is then a card like any other
+       and closes on the next Escape */
+    if (mode === 'bhfall') { skipBhFall(); return; }
     /* E4b: the in-system cinematic SKIPS AND COMMITS, matching the star
        cruise. This deliberately flips the shipped rung, where Escape
        cancelled and left the ship where it started: once the flight is
        running, the trip has happened. The old cancel survives only for a
        launch that has not started. */
     if (mode === 'syscruise') { skipSysCruise(); return; }
+    /* BHF-5: the plunge's own end card gets a moment before Escape can shut it */
+    if (cardOpen() && bhEndGuarded()) return;
     if (cardOpen()) { closeCard(); return; }
     if (mode === 'shipidle') { exitShipIdle('esc'); return; }
     if (mode === 'porkchop') {
@@ -10202,9 +10361,11 @@
          cockpit in the star cruise, the map in the in-system one */
       if (mode === 'cruise' && !reduced) { setFpMode(!fpMode); e.preventDefault(); }
       else if (mode === 'syscruise') { setSysMapView(!sysMapView); e.preventDefault(); }
+      else if (mode === 'bhfall') { setFpMode(!fpMode); e.preventDefault(); }
       return;
     }
-    if (mode === 'cruise' || mode === 'syscruise') return;   /* everything else inert */
+    /* everything else is inert inside a cinematic */
+    if (mode === 'cruise' || mode === 'syscruise' || mode === 'bhfall') return;
     if (k === '+' || k === '=') {
       if (camAnim) { camAnim = null; zoomTarget = cam.logD; }
       zoomTarget = clampN(zoomTarget - 0.15, minLogD(), MAX_LOGD);
@@ -10650,7 +10811,7 @@
 
   /* ---------------- chase / cockpit toggle ---------------- */
   var elFpBar = id('voy-fp'), elFpChase = id('voy-fp-chase'), elFpCockpit = id('voy-fp-cockpit');
-  var elFpMap = id('voy-fp-map');
+  var elFpMap = id('voy-fp-map'), elGlow = id('voy-glow');
   var elTsRow = id('voy-ts-row'), elTs = id('voy-ts'), elTsOut = id('voy-ts-out');
   var FP_KEY = 'voy-fp';
   (function loadFp() {
@@ -10663,7 +10824,14 @@
     /* shipidle gets the bar for its replay button and its zoom seat, but the
        cockpit view is hidden there: there is no velocity to aberrate. */
     var inSys = mode === 'syscruise';
-    var show = (mode === 'cruise' || inSys || mode === 'shipidle') && !reduced && !!elFpBar;
+    var inBh = mode === 'bhfall';
+    /* BHF-7: reduced motion turns the plunge into a set of stills, and the
+       stills still have a seat to choose and a pace to set. Hiding the bar
+       meant a reader who asks for less motion could never reach the cockpit
+       view or the speed of the caption track at all. Every other cinematic
+       is genuinely skipped under the setting; this one is not. */
+    var show = (mode === 'cruise' || inSys || mode === 'shipidle' || inBh) &&
+               (!reduced || inBh) && !!elFpBar;
     if (elFpBar) {
       elFpBar.hidden = !show;
       /* park it right under the canvas HUD, which floats at H*0.16 */
@@ -10673,6 +10841,12 @@
        Lambert coast is 0.0001 c: there is no aberration to draw. */
     if (elFpCockpit) elFpCockpit.hidden = (mode === 'shipidle' || inSys);
     if (elFpMap) elFpMap.hidden = !inSys;
+    /* the brighten switch only exists where there is a flow to brighten */
+    if (elGlow) {
+      elGlow.hidden = !inBh;
+      elGlow.classList.toggle('voy-seg__btn--on', bhGlow);
+      elGlow.setAttribute('aria-pressed', bhGlow ? 'true' : 'false');
+    }
     if (elFpChase) {
       var chaseOn = inSys ? !sysMapView : !fpMode;
       elFpChase.classList.toggle('voy-seg__btn--on', chaseOn);
@@ -10688,7 +10862,7 @@
     }
     /* the slider is a cinematic control: it means nothing in the orbit idle,
        and reduced motion skips the cinematic entirely */
-    if (elTsRow) elTsRow.hidden = !(show && (mode === 'cruise' || inSys));
+    if (elTsRow) elTsRow.hidden = !(show && (mode === 'cruise' || inSys || inBh));
     syncTimeScaleUi();
   }
   function setSysMapView(on) {
@@ -10701,7 +10875,12 @@
   }
   /* ---- E2's time slider ---- */
   function curTotalMs() {
-    return (mode === 'syscruise') ? sysTotalMs(sysSt) : PURE.CRUISE_TOTAL_MS;
+    if (mode === 'syscruise') return sysTotalMs(sysSt);
+    if (mode === 'bhfall') {
+      var B = window.VoyageBH;
+      if (B && B.TOTAL_MS) return B.TOTAL_MS;
+    }
+    return PURE.CRUISE_TOTAL_MS;
   }
   function syncTimeScaleUi() {
     if (!elTs) return;
@@ -10717,7 +10896,9 @@
     syncTimeScaleUi();
   }
   function setFpMode(on) {
-    fpMode = !!on && !reduced;
+    /* BHF-7: the plunge's stills have both seats; every other cinematic the
+       setting skips outright */
+    fpMode = !!on && (!reduced || mode === 'bhfall');
     try { if (window.sessionStorage) sessionStorage.setItem(FP_KEY, fpMode ? '1' : '0'); } catch (e8) {}
     syncFpBar();
     transientStatus(fpMode
@@ -10880,6 +11061,1013 @@
     }
     setTimeout(again, 2500);
   })();
+
+  /* ==================================================================
+     Sagittarius A*: the parked scene, and the fall.
+
+     Two pieces share one library (voyage-bh.js) and one baked sky:
+
+       the PARKED SCENE   the fourteen S stars on their published orbits at
+                          their real positions for the page's date, around a
+                          compact marker that is the real geodesic lens. This
+                          is the ONE place on this page where where a body
+                          sits on its orbit is measured rather than
+                          illustrative, and the card says so.
+       bhfall             the plunge. The camera rides the ship's own radial
+                          free fall; the phase table, the lens, the flow and
+                          every number come from voyage-bh.js.
+
+     Nothing here invents a number. The marker is drawn at a fixed screen
+     size (the real shadow from the parked stand-off is far under a pixel)
+     and the card says so, exactly the way the star discs are handled. The
+     glow is faint by default because the real one is, and the brighten
+     switch says out loud that it is drama.
+     ================================================================== */
+  /* looked up at every use site, never captured: voyage-bh.js is a separate
+     tag and a page that loads without it must still work (CL rule) */
+  function BH() { return window.VoyageBH || null; }
+  var bhIdx = -1;
+  (function findBhRec() {
+    if (!SD || !SD.far) return;
+    for (var q = 0; q < SD.far.length; q++) {
+      if (SD.far[q] && SD.far[q].cls === 'bh') { bhIdx = q; break; }
+    }
+  })();
+  /* the stand-off the parked scene is framed from, in AU. The plunge's own
+     release radius (VoyageBH.SGRA.parkAu = 1,000 AU) is inside it, so
+     entering the fall dives from here to there over the first beat instead
+     of cutting. 4,000 AU puts S2's whole ellipse in frame. */
+  var BH_VIEW_AU = 4000;
+  var BH_FOV = 62;                      /* degrees, the lensed frame's own */
+  /* BHF-4: the lens takes a VERTICAL field of view, so on a phone held
+     upright a fixed 62 degrees left the frame only about 31 degrees WIDE,
+     and the photon-sphere and horizon beats were a black disc with slivers
+     of sky in the corners. The rule now is a floor on the width: a narrow
+     frame opens the vertical angle until it sees at least BH_FOV_MIN_W
+     across. A landscape frame is already wider than that and keeps the 62
+     degrees it always had. */
+  var BH_FOV_MIN_W = 50;
+  function bhFov() {
+    var aspect = (W > 0 && H > 0) ? W / H : 1.5;
+    var tv = Math.tan(BH_FOV * Math.PI / 360);
+    var want = Math.tan(BH_FOV_MIN_W * Math.PI / 360) / Math.max(0.2, aspect);
+    if (want > tv) tv = want;
+    return clampN(Math.atan(tv) * 360 / Math.PI, BH_FOV, 118);
+  }
+  function atBh() { return bhIdx >= 0 && shipAt.kind === 'f' && shipAt.idx === bhIdx; }
+  var BHP = { x: 0, y: 0, z: 0 };
+  function bhWorld(out) {
+    var o = out || BHP, fr = farRec(bhIdx);
+    if (fr) { o.x = fr.x * LY_AU; o.y = fr.y * LY_AU; o.z = fr.z * LY_AU; }
+    else { o.x = 0; o.y = 0; o.z = 0; }
+    return o;
+  }
+  function bgRgb() { return isLight() ? [243, 245, 248] : [5, 6, 9]; }
+  /* the flow's axis. Nobody has measured the spin axis; what the imaging
+     models that survive the EHT constraints prefer is a LOW inclination,
+     and the 2018 flare loops sit near face-on too, so the disc is drawn
+     nearly face-on as seen from Earth. The card says the tilt is a choice. */
+  var BH_N = [0, 0, 1];
+  function bhDiskNormal() {
+    var B = BH(), f = (B && B.FRAME) ? B.FRAME.l : null;
+    if (f) { BH_N[0] = f[0]; BH_N[1] = f[1]; BH_N[2] = f[2]; }
+    return BH_N;
+  }
+  /* the hot spot advances at its TRUE period (about 45 minutes), so it
+     barely moves during a cinematic. That is the honest choice. */
+  function bhHotPhase() {
+    return reduced ? 0 : (performance.now() / 1000) * 6.2831853 / 2700;
+  }
+  var bhGlow = false;                   /* the brighten switch, off by default */
+
+  /* ---- the S-star geometry, built once ---- */
+  var SS_RING = 96;
+  var ssN = 0;
+  var ssRingW = null;                   /* world AU, 3 per ring sample */
+  var ssRingS = null;                   /* screen x, y, camera depth */
+  var ssRingOk = null;                  /* A1-1: does this ring project sanely */
+  var ssPosS = null;                    /* per-star screen x, y, depth */
+  var SS_TMP = { x: 0, y: 0, z: 0 };
+  var SS_V = [0, 0, 0];
+  function ensureSs() {
+    var B = BH();
+    if (ssRingW) return true;
+    if (!B || bhIdx < 0 || !B.SSTARS || !B.SSTARS.length) return false;
+    ssN = B.SSTARS.length;
+    ssRingW = new Float64Array(ssN * SS_RING * 3);
+    ssRingS = new Float64Array(ssN * SS_RING * 3);
+    ssRingOk = new Uint8Array(ssN);
+    ssPosS = new Float64Array(ssN * 3);
+    var path = new Float64Array(SS_RING * 3);
+    var w = bhWorld(BHP), k, q, o, d;
+    for (k = 0; k < ssN; k++) {
+      B.orbitPath(k, SS_RING, path);
+      for (q = 0; q < SS_RING; q++) {
+        o = q * 3;
+        B.toWorld(path[o], path[o + 1], path[o + 2], SS_V);
+        d = (k * SS_RING + q) * 3;
+        ssRingW[d] = w.x + SS_V[0];
+        ssRingW[d + 1] = w.y + SS_V[1];
+        ssRingW[d + 2] = w.z + SS_V[2];
+      }
+    }
+    return true;
+  }
+
+  /* ==================================================================
+     The equirect sky, baked ONCE from the hole's own position.
+
+     The lens is a remap of a texture, so it needs one: this walks the same
+     galaxy cloud, background tier and named catalogue the map draws, in
+     chunks against a 6 ms budget so nothing stalls a frame. The honesty
+     panel says out loud what this can and cannot be: our catalogue is the
+     Sun's neighbourhood, and the real view from the centre would be a wall
+     of bulge stars nobody has catalogued for us.
+     ================================================================== */
+  var bhSky = { cv: null, g: null, w: 0, h: 0, done: false, pending: false,
+                key: '', seq: 0, phase: 0, i: 0, grp: 0, ex: 0, ey: 0, ez: 0 };
+  /* BHF-2: how big a star is painted into the equirect, in texture pixels.
+     One texel of a 2048-wide bake is about 0.18 degrees, which the lensed
+     frame magnifies to a couple of screen pixels, so a three-pixel dot in
+     here came out as a five-pixel blob out there and every star in the first
+     half of the plunge read as a smudge. These sizes keep a star a point. */
+  var BH_DOT = { bg: 1, band: [1, 1, 1], spike: [1, 1, 1], ss: 1 };
+  var BH_SKY_STEP = 2500;
+  var BH_SKY_BUDGET = 6;
+  var SKY_UV = [0, 0];
+  var bhStarCols = null;
+  function bhStarCol(b) {
+    if (!bhStarCols) {
+      bhStarCols = [];
+      for (var k = 0; k < 16; k++) {
+        var c = bucketRgb(k);
+        bhStarCols.push('rgb(' + c.r + ',' + c.g + ',' + c.b + ')');
+      }
+    }
+    return bhStarCols[clampN(b | 0, 0, 15)];
+  }
+  function bhSkyWant() { return (W <= 768 || H <= 620) ? 1024 : 2048; }
+  function bhSkyStart() {
+    var B = BH();
+    if (!B || bhIdx < 0) return;
+    var wpx = bhSkyWant();
+    var key = wpx + '|' + skyTheme();
+    if (bhSky.key === key && (bhSky.done || bhSky.pending)) return;
+    if (!bhSky.cv) bhSky.cv = document.createElement('canvas');
+    if (bhSky.cv.width !== wpx) {
+      bhSky.cv.width = wpx; bhSky.cv.height = wpx / 2;
+      bhSky.g = null;
+    }
+    if (!bhSky.g) {
+      try { bhSky.g = bhSky.cv.getContext('2d', { willReadFrequently: true }); }
+      catch (e) { bhSky.g = null; }
+    }
+    if (!bhSky.g) return;
+    var g = bhSky.g;
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.globalAlpha = 1;
+    g.fillStyle = isLight() ? '#e9edf3' : '#05070b';
+    g.fillRect(0, 0, bhSky.cv.width, bhSky.cv.height);
+    var w = bhWorld(BHP);
+    bhSky.ex = w.x; bhSky.ey = w.y; bhSky.ez = w.z;
+    bhSky.w = bhSky.cv.width; bhSky.h = bhSky.cv.height;
+    bhSky.key = key; bhSky.done = false; bhSky.pending = true;
+    bhSky.phase = 0; bhSky.i = 0; bhSky.grp = 0;
+  }
+  function bhSkyDot(g, B, dx, dy, dz, size) {
+    B.skyUv(dx, dy, dz, SKY_UV);
+    var x = SKY_UV[0] * bhSky.w, y = SKY_UV[1] * bhSky.h;
+    if (!isFinite(x) || !isFinite(y)) return;
+    /* BHF-2: a star goes down as EXACTLY one texel, on the texel grid. The
+       lens magnifies this texture by a factor of two or more, so anything
+       wider than a texel arrives as a blob, and a one-texel dot at a
+       fractional position spreads across two of them and arrives as one
+       too. Snapped, it magnifies into the smallest point the sky can
+       carry. Only the galaxy's diffuse cloud, which is not a point source,
+       is drawn wider. */
+    if (size <= 1.45) { g.fillRect(Math.floor(x), Math.floor(y), 1, 1); return; }
+    g.fillRect(x - size * 0.5, y - size * 0.5, size, size);
+  }
+  function bhSkyChunk() {
+    var g = bhSky.g, B = BH(), i, o3;
+    if (!g || !B) { bhSky.pending = false; return; }
+    var ex = bhSky.ex, ey = bhSky.ey, ez = bhSky.ez;
+    if (bhSky.phase === 0) {
+      var gc = galCloud || buildGalaxy();
+      var b = bhSky.grp;
+      if (!gc || b >= 3) { bhSky.phase = 1; bhSky.i = 0; bhSky.grp = 0; return; }
+      var s0 = gc.start[b], s1 = gc.end[b];
+      if (bhSky.i < s0) bhSky.i = s0;
+      /* one texel each here too: the map draws these cloud points at about
+         two screen pixels, and the lens magnifies this texture by more than
+         two, so a two-texel point arrives as a soft blob instead of the fine
+         dust the same cloud is everywhere else on the page. The alpha is
+         raised to keep the cloud's total light where it was. */
+      g.globalAlpha = clampN(GAL_ALPHA[b] * 1.5, 0, 1);
+      g.fillStyle = (isLight() ? GAL_TINT_L : GAL_TINT_D)[b];
+      var e0 = Math.min(s1, bhSky.i + BH_SKY_STEP);
+      for (i = bhSky.i; i < e0; i++) {
+        bhSkyDot(g, B, gc.x[i] - ex, gc.y[i] - ey, gc.z[i] - ez, 1);
+      }
+      bhSky.i = e0;
+      if (e0 >= s1) { bhSky.grp = b + 1; bhSky.i = 0; }
+      return;
+    }
+    if (bhSky.phase === 1) {
+      var b2 = bhSky.grp;
+      if (!BG || b2 >= 12) { bhSky.phase = 2; bhSky.i = 0; bhSky.grp = 0; return; }
+      var st = BG.starts[b2], lim = st + BG.cuts[bgLod][b2];
+      if (bhSky.i < st) bhSky.i = st;
+      g.globalAlpha = clampN(0.6 * BG_A[b2 % 3], 0, 1);
+      g.fillStyle = (isLight() ? BG.colL : BG.colD)[b2];
+      var e1 = Math.min(lim, bhSky.i + BH_SKY_STEP);
+      for (i = bhSky.i; i < e1; i++) {
+        o3 = i * 3;
+        bhSkyDot(g, B, BG.pos[o3] - ex, BG.pos[o3 + 1] - ey, BG.pos[o3 + 2] - ez, BH_DOT.bg);
+      }
+      bhSky.i = e1;
+      if (e1 >= lim) { bhSky.grp = b2 + 1; bhSky.i = 0; }
+      return;
+    }
+    if (bhSky.phase === 2) {
+      var gq = bhSky.grp;
+      if (!ptIdx || !ptStart || gq >= 48) { bhSky.phase = 3; bhSky.i = 0; bhSky.grp = 0; return; }
+      var a0 = ptStart[gq], a1 = ptStart[gq + 1];
+      if (bhSky.i < a0) bhSky.i = a0;
+      var band = (gq / 16) | 0;
+      g.globalAlpha = clampN(BAND_A[band], 0, 1);
+      g.fillStyle = bhStarCol(gq % 16);
+      var sz = BH_DOT.band[band] || BH_DOT.band[2];
+      var e2 = Math.min(a1, bhSky.i + BH_SKY_STEP);
+      for (i = bhSky.i; i < e2; i++) {
+        var si = ptIdx[i];
+        bhSkyDot(g, B, starX[si] - ex, starY[si] - ey, starZ[si] - ez, sz);
+      }
+      bhSky.i = e2;
+      if (e2 >= a1) { bhSky.grp = gq + 1; bhSky.i = 0; }
+      return;
+    }
+    if (bhSky.phase === 3) {
+      /* the brightest stars are drawn as sprites in the map and are skipped
+         by the point groups above, so they get their own pass here */
+      var bs = bhSky.grp;
+      if (bs >= 3) { bhSky.phase = 4; bhSky.i = 0; bhSky.grp = 0; return; }
+      var list = spikeLists[bs];
+      g.globalAlpha = 1;
+      for (i = 0; i < list.length; i++) {
+        var sj = list[i];
+        g.fillStyle = bhStarCol(starCellX[sj] >> 5);
+        bhSkyDot(g, B, starX[sj] - ex, starY[sj] - ey, starZ[sj] - ez, BH_DOT.spike[bs] || 1.4);
+      }
+      bhSky.grp = bs + 1;
+      return;
+    }
+    /* the S stars themselves, so they stay in the sky once the lens owns
+       the frame. Their world position is the hole plus the local offset,
+       which is the direction from the bake point already. */
+    if (ensureSs()) {
+      g.globalAlpha = 0.95;
+      g.fillStyle = isLight() ? 'rgb(70,74,84)' : 'rgb(236,240,248)';
+      for (i = 0; i < ssN; i++) {
+        B.starPos(i, viewJD, SS_TMP);
+        B.toWorld(SS_TMP.x, SS_TMP.y, SS_TMP.z, SS_V);
+        bhSkyDot(g, B, SS_V[0], SS_V[1], SS_V[2], BH_DOT.ss);
+      }
+    }
+    g.globalAlpha = 1;
+    bhSky.pending = false;
+  }
+  function bhSkyPump() {
+    if (!bhSky.pending) return;
+    var t0 = performance.now();
+    while (bhSky.pending && performance.now() - t0 < BH_SKY_BUDGET) bhSkyChunk();
+    if (!bhSky.pending) {
+      bhSky.done = true;
+      bhSky.seq++;
+      var B = BH();
+      if (B && B.invalidateSky) { try { B.invalidateSky(); } catch (e) { /* enhancement */ } }
+      gov.hold(GOV_HOLD_MS);
+    }
+  }
+
+  /* ==================================================================
+     The marker: a real lensed view, drawn at a fixed screen size.
+
+     At the parked stand-off the true shadow is far smaller than one pixel,
+     so a to-scale hole would be nothing at all. This is the same rule the
+     star discs follow: the picture is real (the sky bent by the real
+     geodesics, from 24 Schwarzschild radii out), the SIZE is not, and the
+     card says which is which.
+     ================================================================== */
+  /* BHF-9: the marker is the same real lensed view it always was, framed
+     tighter. At a 34 degree field the shadow was a third of the stamp and
+     the Einstein ring around it was one or two pixels of dotted starlight;
+     at 24 it is half of it, and the ring has room to read as a ring. The
+     framing is a zoom, not a claim: what is drawn is still the sky bent by
+     the real geodesics from 24 Schwarzschild radii out. */
+  var BH_MARK_RS = 24, BH_MARK_FOV = 24;
+  /* the bake is a few hundred thousand pixels at three times the drawn size,
+     which is nothing on the GPU path and a real hitch on the CPU one, and
+     the marker is re-baked whenever the reader swings the camera. So it
+     supersamples only once we have seen the shader draw a frame. */
+  function bhMarkSs() { return (bhStat && bhStat.gl) ? 3 : 1; }
+  var bhStamp = { cv: null, g: null, lut: null, key: '', ok: false,
+                  dx: 0, dy: 0, dz: 0 };
+  var BH_F = [0, 0, 0], BH_R = [0, 0, 0], BH_U = [0, 0, 0], BH_H = [0, 0, 0];
+  function bhStampPx() { return Math.round(clampN(Math.min(W, H) * 0.125, 52, 116)); }
+  /* an orthonormal frame whose forward is `d`, taking the page camera's own
+     right and up as the reference so the bent sky is oriented like the rest
+     of the frame */
+  function bhFrameFrom(dx, dy, dz, refRx, refRy, refRz, refUx, refUy, refUz) {
+    var n = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (!(n > 0)) return false;
+    BH_F[0] = dx / n; BH_F[1] = dy / n; BH_F[2] = dz / n;
+    var d1 = refRx * BH_F[0] + refRy * BH_F[1] + refRz * BH_F[2];
+    var rx = refRx - d1 * BH_F[0], ry = refRy - d1 * BH_F[1], rz = refRz - d1 * BH_F[2];
+    var rn = Math.sqrt(rx * rx + ry * ry + rz * rz);
+    if (!(rn > 1e-6)) {
+      rx = refUx; ry = refUy; rz = refUz;
+      d1 = rx * BH_F[0] + ry * BH_F[1] + rz * BH_F[2];
+      rx -= d1 * BH_F[0]; ry -= d1 * BH_F[1]; rz -= d1 * BH_F[2];
+      rn = Math.sqrt(rx * rx + ry * ry + rz * rz);
+      if (!(rn > 1e-6)) return false;
+    }
+    BH_R[0] = rx / rn; BH_R[1] = ry / rn; BH_R[2] = rz / rn;
+    /* up = right x forward, the page's own handedness */
+    BH_U[0] = BH_R[1] * BH_F[2] - BH_R[2] * BH_F[1];
+    BH_U[1] = BH_R[2] * BH_F[0] - BH_R[0] * BH_F[2];
+    BH_U[2] = BH_R[0] * BH_F[1] - BH_R[1] * BH_F[0];
+    return isFinite(BH_U[0]) && isFinite(BH_R[0]);
+  }
+  function ensureBhStamp(dx, dy, dz) {
+    var B = BH();
+    if (!B || !bhSky.done) return null;
+    var px = bhStampPx();
+    var ss = bhMarkSs();
+    var key = px + '|' + ss + '|' + (isLight() ? 'l' : 'd') + '|' + bhSky.seq +
+              '|' + (bhGlow ? 1 : 0);
+    var n = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (!(n > 0)) return null;
+    var ux = dx / n, uy = dy / n, uz = dz / n;
+    var same = bhStamp.ok && bhStamp.key === key &&
+      (ux * bhStamp.dx + uy * bhStamp.dy + uz * bhStamp.dz) > 0.9998;
+    if (same) return bhStamp.cv;
+    /* BHF-9: the marker is baked at BH_MARK_SS times its drawn size and
+       shrunk on the way out. The Einstein ring is the whole sky squeezed
+       into a thin arc, so at one sample per drawn pixel it came out as a
+       row of disconnected specks: aliasing, not starlight. Supersampling
+       integrates the compressed sky the way the real arc does, and it costs
+       one bake, not one frame. */
+    var sp = px * ss;
+    if (!bhStamp.cv) bhStamp.cv = document.createElement('canvas');
+    if (bhStamp.cv.width !== sp) {
+      bhStamp.cv.width = sp; bhStamp.cv.height = sp; bhStamp.g = null;
+    }
+    if (!bhStamp.g) bhStamp.g = bhStamp.cv.getContext('2d');
+    var g = bhStamp.g;
+    if (!g) return null;
+    if (!bhFrameFrom(ux, uy, uz, rX, rY, rZ, uX, uY, uZ)) return null;
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.globalAlpha = 1;
+    g.clearRect(0, 0, sp, sp);
+    bhStamp.lut = B.buildLut(BH_MARK_RS, 'static', 512, bhStamp.lut);
+    var opts = { w: sp, h: sp, fwd: BH_F, right: BH_R, up: BH_U, hole: BH_F,
+                 fovDeg: BH_MARK_FOV, quality: 1, maxPixels: sp * sp,
+                 auto: false, budgetMs: 60, bg: bgRgb() };
+    try {
+      var ms = B.drawLensed(g, bhStamp.lut, bhSky.cv, opts);
+      /* the marker is the first thing that draws through the lens, so it is
+         also where we learn whether the shader is live */
+      bhStat.gl = !!ms.gl;
+      opts.normal = bhDiskNormal();
+      opts.brighten = bhGlow ? 6 : 1;
+      /* quieter than the cinematic's: at 90 px across, the flow is a hint
+         around the shadow and not the subject */
+      opts.base = 0.075;
+      opts.hotspot = true;
+      opts.hotPhase = bhHotPhase();
+      opts.rInRs = 3;
+      opts.rOutRs = 40;
+      B.drawDisk(g, bhStamp.lut, opts);
+      /* Feather the stamp into a disc. The lens fills a SQUARE, and its
+         outer corners are just plain sky at the texture's own background,
+         which is a visible rectangle pasted on the page. Everything the
+         marker is about sits well inside 0.6 of the frame, so the outside
+         fades out and the marker reads as an object rather than a patch. */
+      var gr = g.createRadialGradient(sp / 2, sp / 2, sp * 0.30, sp / 2, sp / 2, sp * 0.5);
+      gr.addColorStop(0, 'rgba(0,0,0,1)');
+      gr.addColorStop(0.55, 'rgba(0,0,0,0.75)');
+      gr.addColorStop(1, 'rgba(0,0,0,0)');
+      g.globalCompositeOperation = 'destination-in';
+      g.fillStyle = gr;
+      g.fillRect(0, 0, sp, sp);
+      g.globalCompositeOperation = 'source-over';
+    } catch (e) { return null; }
+    bhStamp.key = key; bhStamp.ok = true;
+    bhStamp.dx = ux; bhStamp.dy = uy; bhStamp.dz = uz;
+    return bhStamp.cv;
+  }
+
+  /* ==================================================================
+     The parked scene.
+     ================================================================== */
+  var bhScr = { ok: false, x: 0, y: 0, z: 0, r: 0 };   /* the marker, for taps */
+  var bhSceneDrawn = 0;                 /* S stars painted this frame (test hook) */
+  /* how strongly the cluster reads at this camera distance. It fades out
+     well before the far tier fades in, so the two never fight. */
+  function bhSceneA() {
+    if (bhIdx < 0 || !BH()) return 0;
+    if (mode === 'porkchop') return 0;
+    /* during the fall the cluster keeps sweeping past, and then fades as the
+       lens takes the frame: from a few hundred Schwarzschild radii in, these
+       stars are a thousand times further away than the camera is from the
+       hole and they belong to the baked sky, not to the foreground */
+    if (mode === 'bhfall') {
+      if (!bhSt) return 0;
+      return clampN(1 - bhLensA(bhPose().rRs), 0, 1);
+    }
+    var w = bhWorld(BHP);
+    var dx = cam.cx - w.x, dy = cam.cy - w.y, dz = cam.cz - w.z;
+    var dc = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (!(dc < camD * 4 + 2e4)) return 0;
+    return 1 - ramp(camD, 4e4, 2.6e5);
+  }
+  function ssRingStroke(k, behind, hz, a) {
+    if (!ssRingOk[k]) return;
+    var open = false, q, o;
+    ctx.beginPath();
+    for (q = 0; q < SS_RING; q++) {
+      o = (k * SS_RING + q) * 3;
+      var zc = ssRingS[o + 2];
+      if (isFinite(zc) && (behind ? zc >= hz : zc < hz)) {
+        if (!open) { ctx.moveTo(ssRingS[o], ssRingS[o + 1]); open = true; }
+        else ctx.lineTo(ssRingS[o], ssRingS[o + 1]);
+      } else open = false;
+    }
+    ctx.globalAlpha = 0.34 * a;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+  function ssDot(k, behind, hz, a) {
+    var o = k * 3, x = ssPosS[o], y = ssPosS[o + 1], z = ssPosS[o + 2];
+    if (!isFinite(x) || !isFinite(y)) return;
+    if (behind ? !(z >= hz) : (z >= hz)) return;
+    var B = BH();
+    var kmag = B.SSTARS[k].kmag;
+    var al = clampN(1.15 - (kmag - 13.9) * 0.10, 0.45, 1) * a;
+    ctx.globalAlpha = al;
+    ctx.fillStyle = isLight() ? 'rgba(38,38,38,0.95)' : 'rgba(232,236,244,0.95)';
+    ctx.beginPath();
+    ctx.arc(x, y, 2.6, 0, 6.2832);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    bhSceneDrawn++;
+  }
+  function drawSgrA(now, a) {
+    var B = BH();
+    bhScr.ok = false;
+    bhSceneDrawn = 0;
+    if (!B || !(a > 0.01) || !ensureSs()) return;
+    /* the marker is a real lensed view, so it needs the sky. The bake is
+       chunked against its own budget and the marker falls back to a plain
+       dark disc until it lands. */
+    if (a > 0.2) bhSkyStart();
+    var w = bhWorld(BHP);
+    if (!projectPt(w.x, w.y, w.z, PRJ)) return;
+    var hx = PRJ.x, hy = PRJ.y, hz = PRJ.z;
+    if (!isFinite(hx) || !isFinite(hy)) return;
+    var k, q, o, d;
+    /* measure the whole cluster first, paint it second, so the marker can be
+       laid down between the half that is behind it and the half in front */
+    var cap = RING_MAX_SPAN * Math.max(W, H);
+    for (k = 0; k < ssN; k++) {
+      B.starPos(k, viewJD, SS_TMP);
+      B.toWorld(SS_TMP.x, SS_TMP.y, SS_TMP.z, SS_V);
+      o = k * 3;
+      if (projectPt(w.x + SS_V[0], w.y + SS_V[1], w.z + SS_V[2], PRJ)) {
+        ssPosS[o] = PRJ.x; ssPosS[o + 1] = PRJ.y; ssPosS[o + 2] = PRJ.z;
+      } else { ssPosS[o] = NaN; ssPosS[o + 1] = NaN; ssPosS[o + 2] = NaN; }
+      var ok = true, x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+      for (q = 0; q < SS_RING; q++) {
+        d = (k * SS_RING + q) * 3;
+        if (projectPt(ssRingW[d], ssRingW[d + 1], ssRingW[d + 2], PRJ)) {
+          ssRingS[d] = PRJ.x; ssRingS[d + 1] = PRJ.y; ssRingS[d + 2] = PRJ.z;
+          if (PRJ.x < x0) x0 = PRJ.x;
+          if (PRJ.x > x1) x1 = PRJ.x;
+          if (PRJ.y < y0) y0 = PRJ.y;
+          if (PRJ.y > y1) y1 = PRJ.y;
+        } else { ssRingS[d + 2] = NaN; ok = false; }
+      }
+      /* A1-1: a ring the camera sits inside has no readable ellipse left */
+      ssRingOk[k] = (ok && isFinite(x0) && (x1 - x0) <= cap && (y1 - y0) <= cap) ? 1 : 0;
+    }
+    var falling = mode === 'bhfall';
+    var px = bhStampPx();
+    /* BHF-3: the marker is drawn through the fall too, until the lens draws
+       a shadow at least as big. Cutting it at the start of the plunge left
+       the first seconds with no hole in them at all. */
+    var markA = falling ? bhMarkA(bhPose().rRs) : 1;
+    var stamp = (markA > 0.01)
+      ? ensureBhStamp(w.x - camPX, w.y - camPY, w.z - camPZ) : null;
+    var mr = px * 0.5;
+    var parked = !isRigMode() && !falling && atBh();
+    ctx.strokeStyle = 'rgba(127,127,127,0.9)';
+    ctx.lineWidth = 1;
+    for (k = 0; k < ssN; k++) ssRingStroke(k, true, hz, a);
+    for (k = 0; k < ssN; k++) ssDot(k, true, hz, a);
+    if (parked) drawParkedShip(hx, hy, mr, now, a, -1);
+    /* the marker keeps its own alpha: the cluster around it is fading on a
+       different schedule and the hole must not blink out with it */
+    ctx.globalAlpha = falling ? markA : a;
+    if (stamp) {
+      ctx.drawImage(stamp, hx - mr, hy - mr, px, px);
+    } else if (!falling) {
+      /* the sky is still baking: a plain dark disc, no invented rim */
+      ctx.fillStyle = isLight() ? 'rgba(20,22,28,0.9)' : 'rgba(3,4,6,0.95)';
+      ctx.beginPath();
+      ctx.arc(hx, hy, mr * 0.34, 0, 6.2832);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    if (parked) drawParkedShip(hx, hy, mr, now, a, 1);
+    ctx.strokeStyle = 'rgba(127,127,127,0.9)';
+    ctx.lineWidth = 1;
+    for (k = 0; k < ssN; k++) ssRingStroke(k, false, hz, a);
+    for (k = 0; k < ssN; k++) ssDot(k, false, hz, a);
+    if (!falling) {
+      bhScr.ok = true; bhScr.x = hx; bhScr.y = hy; bhScr.z = hz; bhScr.r = mr;
+      claimDisc(hx, hy, mr * 0.5);
+    }
+    /* names, on the same hygiene rules every other label obeys */
+    if (a > 0.35) {
+      ctx.font = '11px ' + FONT;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      for (k = 0; k < ssN; k++) {
+        o = k * 3;
+        var sx2 = ssPosS[o], sy2 = ssPosS[o + 1];
+        if (!isFinite(sx2) || !isFinite(sy2)) continue;
+        var nm = B.SSTARS[k].name;
+        var tw = ctx.measureText(nm).width;
+        var lx = sx2 + 6, ly = sy2;
+        if (lx + tw > W - 6) lx = sx2 - 6 - tw;
+        if (!labelFits(lx, ly - 7, tw, 14)) continue;
+        if (bodyLabClash(lx, ly - 7, tw, 14)) continue;
+        if (Math.hypot(sx2 - hx, sy2 - hy) < mr * 0.55) continue;
+        claimBodyLab(lx, ly - 7, tw, 14);
+        ctx.globalAlpha = a * 0.55;
+        ctx.strokeStyle = bg();
+        ctx.lineWidth = 3;
+        ctx.lineJoin = 'round';
+        ctx.strokeText(nm, lx, ly);
+        ctx.globalAlpha = a * 0.85;
+        ctx.fillStyle = textColor(0.9);
+        ctx.fillText(nm, lx, ly);
+      }
+      ctx.globalAlpha = 1;
+      ctx.textAlign = 'left';
+    }
+    /* the honesty plate, next to the close-up, the same way a selected
+       exoplanet carries its own */
+    if (a > 0.6 && !falling && !cardOpen()) {
+      captionPlate([
+        'These orbits and these positions are measured, not illustrative.',
+        'The marker is drawn far larger than the hole would look from here.'
+      ], clampN(hx, W * 0.24, W * 0.76), hy + mr + 14, W < 700 ? 10 : 11.5);
+    }
+  }
+
+  /* ==================================================================
+     bhfall: the plunge.
+     ================================================================== */
+  var bhSt = null;                      /* {t0, tPrev, ms, ux, uy, uz, r0, dive} */
+  var bhRet = null;                     /* the camera to come back to */
+  /* Inside the horizon the sky is confined to a cone around the way you came,
+     so a camera pinned on the direction of travel spends half a minute
+     looking at the dark and the caption's "the outside universe is still up
+     there" points at a rim in the corners of the frame. This eases the view
+     off the direction of motion during the interior beat so the outside
+     universe really is on screen. It is camera work, not a claim: the moment
+     the reader drags, their own look takes over and this holds where it is. */
+  var bhAuto = 0, bhAutoHold = false;
+  /* what the two renderers actually did last frame (test hook) */
+  var bhStat = { px: 0, gl: false, ms: 0, dpx: 0, dms: 0 };
+  /* BHF-5: how long the end card is deaf to the gesture that opened it */
+  var BH_END_GUARD_MS = 600;
+  var bhEndGuard = 0;
+  function bhEndGuarded() {
+    if (!bhEndGuard) return false;
+    if (performance.now() < bhEndGuard) return true;
+    bhEndGuard = 0;
+    return false;
+  }
+  var bhLutCur = null, bhLutRs = 0, bhLutN = 0;
+  var bhBasis = { fX: 0, fY: 0, fZ: 0, rX: 0, rY: 0, rZ: 0, uX: 0, uY: 0, uZ: 0 };
+  function bhLutSize() {
+    if (W <= 768 || cruiseLod >= 2) return 192;
+    return cruiseLod >= 1 ? 256 : 320;
+  }
+  function bhEnsureLut(rRs) {
+    var B = BH();
+    if (!B) return null;
+    var r = Math.max(0.02, rRs);
+    var n = bhLutSize();
+    if (bhLutCur && bhLutN === n && bhLutRs > 0 &&
+        Math.abs(Math.log(r / bhLutRs)) < 0.02) return bhLutCur;
+    bhLutCur = B.buildLut(r, 'raindrop', n, bhLutCur);
+    bhLutRs = r; bhLutN = n;
+    return bhLutCur;
+  }
+  /* How completely the lens owns the frame. This is the CLUSTER's fade and
+     the world pass's cutoff, and BHF-3 moved both of them inward: the
+     handover now happens where the lens is drawing a shadow the same size as
+     the marker it replaces (about 100 r_s), instead of at 250 r_s where the
+     real shadow was still a third of the marker and the hole visibly
+     shrank at the cut. The baked SKY is no longer on this ramp at all; it
+     crossfades in on the clock, in bhBackA. */
+  function bhLensA(rRs) { return 1 - ramp(rRs, 40, 900); }
+  function bhLensFull() {
+    if (!bhSt || !bhSky.done) return false;
+    var B = BH();
+    if (!B) return false;
+    return bhLensA(B.pose(bhSt.ms / 1000, timeScale).rRs) > 0.995;
+  }
+  /* BHF-3: the backdrop's own alpha. The first frames of the plunge used to
+     be a black screen with grey ellipses on it, because the lens waited for
+     the shadow to be worth drawing and the ordinary star tiers are nearly
+     off at this zoom. The baked sky is the honest picture of what is out
+     there from here, so it comes up right away, over about three quarters of
+     a second, and the star tiers fade out under it. */
+  var BH_FADE_HOLD = 120, BH_FADE_MS = 700;
+  function bhBackA() {
+    if (!bhSt || !bhSky.done) return 0;
+    var B = BH();
+    if (!B) return 0;
+    var t = (performance.now() - bhSt.t0 - BH_FADE_HOLD) / BH_FADE_MS;
+    if (reduced) t = 1;
+    var byR = bhLensA(bhPose().rRs);
+    return clampN(Math.max(byR, clampN(t, 0, 1)), 0, 1);
+  }
+  /* The fixed-size marker and the lens's true shadow, in screen pixels, so
+     the one can hand over to the other without a gap or a jump. */
+  var bhMarkHoleF = 0;
+  function bhMarkHole() {
+    var B = BH();
+    if (bhMarkHoleF > 0 || !B) return bhMarkHoleF || 0.35;
+    bhMarkHoleF = Math.tan(B.shadowAngle(BH_MARK_RS, 'static')) /
+                  Math.tan(BH_MARK_FOV * Math.PI / 360);
+    if (!(bhMarkHoleF > 0.05 && bhMarkHoleF < 1)) bhMarkHoleF = 0.35;
+    return bhMarkHoleF;
+  }
+  function bhShadowPx(rRs) {
+    var B = BH();
+    if (!B || !(rRs > 0)) return 0;
+    var sh = B.shadowAngle(rRs, 'raindrop');
+    if (!(sh > 0)) return 0;
+    if (sh > 1.4) sh = 1.4;
+    return Math.tan(sh) / Math.tan(bhFov() * Math.PI / 360) * (H / 2);
+  }
+  /* 1 while the marker is still the only hole worth drawing, 0 once the lens
+     draws one at least as big. They are concentric, so the crossfade is one
+     hole growing, never two. */
+  function bhMarkA(rRs) {
+    var mr = bhStampPx() * 0.5 * bhMarkHole();
+    if (!(mr > 0.5)) return 0;
+    return 1 - ramp(bhShadowPx(rRs) / mr, 0.55, 1.05);
+  }
+  /* reduced motion: per-phase stills. The clock still runs, so the captions
+     keep their beats, but the pose is pinned to the start of the beat and
+     nothing counts down on screen. */
+  function bhPose() {
+    var B = BH();
+    var t = (bhSt ? bhSt.ms : 0) / 1000;
+    if (!reduced) return B.pose(t, timeScale);
+    var name = B.pose(t, timeScale).phase;
+    var st = B.phaseStart(name);
+    return B.pose((st >= 0 ? st + 1 : 0) / 1000, timeScale);
+  }
+  function startBhFall() {
+    var B = BH();
+    if (!B || bhIdx < 0) { setStatus('That view is not available here.'); return; }
+    if (mode === 'bhfall') return;
+    if (!atBh()) {
+      setStatus('Fly your ship to Sagittarius A* first, then you can fall in.');
+      return;
+    }
+    var wasIdle = mode === 'shipidle';
+    exitShipIdle('quiet');
+    cancelStarCruise(true);
+    cancelSysCruise();
+    closeCard();
+    attract = false;
+    camAnim = null;
+    camBefore = null;
+    bhRet = camSnapshot();
+    bhRet.idle = wasIdle;
+    resetRig();
+    rigD = 1; rigTarget = 1;
+    lookYaw = 0; lookPitch = 0;
+    /* the radial line: from the hole out through where the reader already
+       is, so the fall carries on the way they were looking */
+    var w = bhWorld(BHP);
+    updateCamBasis();
+    var dx = camPX - w.x, dy = camPY - w.y, dz = camPZ - w.z;
+    var dn = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (!(dn > 1e-6)) { dx = 1; dy = 0; dz = 0; dn = 1; }
+    mode = 'bhfall';
+    bhSt = { t0: performance.now(), tPrev: 0, ms: 0,
+             ux: dx / dn, uy: dy / dn, uz: dz / dn,
+             r0: clampN(dn, B.SGRA.parkAu, 5e5), dive: reduced ? 0 : 1100 };
+    bhAuto = 0; bhAutoHold = false;
+    bhSkyStart();
+    bhEnsureLut(B.SGRA.parkRs);
+    resetCaptions(B.CAPTIONS);
+    capNext = 0; capCur = null;
+    centeredStar = -1;
+    orbPlanet = -1;
+    cruiseLod = 0; clN = 0; clHot = 0; clCool = 0; clHold = GOV_HOLD_MS;
+    bhStep(performance.now());
+    updatePanelMode();
+    syncFpBar();
+    syncReturnChip();
+    transientStatus('Falling toward Sagittarius A*. ' +
+      (coarsePointer ? 'Tap to skip to the end.' : 'Esc or tap to skip to the end.'));
+  }
+  function endBhFall(skipped) {
+    if (mode !== 'bhfall') return;
+    mode = 'explore';
+    bhSt = null;
+    cam.basis = null;
+    resetRig();
+    resetCaptions();
+    capCur = null;
+    if (bhRet) {
+      camApply({ yaw: bhRet.yaw, pitch: bhRet.pitch, logD: bhRet.logD,
+                 cx: bhRet.cx, cy: bhRet.cy, cz: bhRet.cz,
+                 ppx: bhRet.ppx, ppy: bhRet.ppy });
+    }
+    camAnim = null;
+    sel = { kind: 'f', idx: bhIdx };
+    selExo = -1;
+    updateTargetLine();
+    updatePanelMode();
+    syncFpBar();
+    if (bhRet && bhRet.idle && canEnterShipIdle()) enterShipIdle(900);
+    openCardFor({ kind: 'f', idx: bhIdx }, { bhEnd: true });
+    /* BHF-5: the end card arrives on an Escape (or a tap) that was aimed at
+       the cinematic, and a reflexive second press half a second later would
+       close the payoff before it was read. The card ignores the closing
+       gesture for a moment; every Escape after that closes it as usual. */
+    bhEndGuard = performance.now() + BH_END_GUARD_MS;
+    syncReturnChip();
+    setStatus(skipped
+      ? 'Back at your ship, still parked outside Sagittarius A*.'
+      : 'Back at your ship. It never left its parking orbit.');
+  }
+  function skipBhFall() {
+    if (mode !== 'bhfall') return;
+    endBhFall(true);
+  }
+  function bhStep(nowMs) {
+    var s = bhSt, B = BH();
+    if (!s || !B) return;
+    var dtReal = s.tPrev ? clampN(nowMs - s.tPrev, 0, 200) : 0;
+    s.tPrev = nowMs;
+    s.ms = (s.ms || 0) + dtReal * timeScale;
+    var p = bhPose();
+    var w = bhWorld(BHP);
+    var r = p.rAu;
+    if (s.dive > 0) {
+      var kk = clampN((nowMs - s.t0) / s.dive, 0, 1);
+      r = s.r0 + (p.rAu - s.r0) * easeInOutCubic(kk);
+      if (kk >= 1) s.dive = 0;
+    }
+    if (!(r >= 0)) r = 0;
+    var eye = Math.max(r, 1e-5);
+    cam.cx = w.x + s.ux * eye;
+    cam.cy = w.y + s.uy * eye;
+    cam.cz = w.z + s.uz * eye;
+    cam.logD = Math.log(eye) / Math.LN10;
+    zoomTarget = cam.logD;
+    cam.ppx = W / 2; cam.ppy = H * 0.5;
+    /* the look: down the radial line, plus the reader's own free look */
+    BH_H[0] = -s.ux; BH_H[1] = -s.uy; BH_H[2] = -s.uz;
+    var refUx = 0, refUy = 0, refUz = 1;
+    var dp = BH_H[0] * refUx + BH_H[1] * refUy + BH_H[2] * refUz;
+    if (Math.abs(dp) > 0.98) { refUx = 1; refUy = 0; refUz = 0; }
+    var ux2 = refUx - dp * BH_H[0], uy2 = refUy - dp * BH_H[1], uz2 = refUz - dp * BH_H[2];
+    var un = Math.sqrt(ux2 * ux2 + uy2 * uy2 + uz2 * uz2) || 1;
+    ux2 /= un; uy2 /= un; uz2 /= un;
+    /* right = forward x up, matching the page's own handedness */
+    var rx2 = BH_H[1] * uz2 - BH_H[2] * uy2;
+    var ry2 = BH_H[2] * ux2 - BH_H[0] * uz2;
+    var rz2 = BH_H[0] * uy2 - BH_H[1] * ux2;
+    var cy2 = Math.cos(lookYaw), sy2 = Math.sin(lookYaw);
+    var fx2 = BH_H[0] * cy2 + rx2 * sy2;
+    var fy2 = BH_H[1] * cy2 + ry2 * sy2;
+    var fz2 = BH_H[2] * cy2 + rz2 * sy2;
+    var nrx = -BH_H[0] * sy2 + rx2 * cy2;
+    var nry = -BH_H[1] * sy2 + ry2 * cy2;
+    var nrz = -BH_H[2] * sy2 + rz2 * cy2;
+    if (!bhAutoHold) {
+      var want = 0;
+      if (p.phase === 'interior') want = 0.92 * clampN(p.k / 0.5, 0, 1);
+      else if (p.phase === 'end') want = 0.92;
+      /* reduced motion gets the beat's framing outright: the still is the
+         point, and easing into it is the animation the setting asks about */
+      if (reduced) bhAuto = (p.phase === 'interior' || p.phase === 'end') ? 0.92 : 0;
+      else bhAuto += (want - bhAuto) * clampN(dtReal / 1000 * 1.6, 0, 1);
+    }
+    var pitch2 = clampN(lookPitch + bhAuto, -Math.PI * 0.49, Math.PI * 0.49);
+    var cp2 = Math.cos(pitch2), sp2 = Math.sin(pitch2);
+    var ffx = fx2 * cp2 + ux2 * sp2;
+    var ffy = fy2 * cp2 + uy2 * sp2;
+    var ffz = fz2 * cp2 + uz2 * sp2;
+    var nux = -fx2 * sp2 + ux2 * cp2;
+    var nuy = -fy2 * sp2 + uy2 * cp2;
+    var nuz = -fz2 * sp2 + uz2 * cp2;
+    bhBasis.fX = ffx; bhBasis.fY = ffy; bhBasis.fZ = ffz;
+    bhBasis.rX = nrx; bhBasis.rY = nry; bhBasis.rZ = nrz;
+    bhBasis.uX = nux; bhBasis.uY = nuy; bhBasis.uZ = nuz;
+    cam.basis = bhBasis;
+    BH_F[0] = ffx; BH_F[1] = ffy; BH_F[2] = ffz;
+    BH_R[0] = nrx; BH_R[1] = nry; BH_R[2] = nrz;
+    BH_U[0] = nux; BH_U[1] = nuy; BH_U[2] = nuz;
+    if (s.ms >= B.TOTAL_MS) endBhFall(false);
+  }
+  /* the two renderers' option objects, filled in place every frame: nothing
+     in a cinematic frame may allocate */
+  var BH_LOPT = { w: 0, h: 0, fwd: BH_F, right: BH_R, up: BH_U, hole: BH_H,
+                  fovDeg: BH_FOV, bg: null, budgetMs: 13, quality: 1,
+                  maxPixels: 120000 };
+  var BH_DOPT = { w: 0, h: 0, fwd: BH_F, right: BH_R, up: BH_U, hole: BH_H,
+                  fovDeg: BH_FOV, budgetMs: 11, quality: 0.5, maxPixels: 74000,
+                  normal: BH_N, brighten: 1, hotspot: true, hotPhase: 0,
+                  rInRs: 3, rOutRs: 40 };
+  /* the ship, drawn against the lensed sky. The camera is co-falling and
+     locally flat, so the hull renders exactly as it does anywhere else;
+     that is what makes the chase seat legitimate here. */
+  function drawBhShip(now) {
+    if (!SHIPS) return;
+    var mn = Math.min(W, H);
+    var sx2 = W * 0.5 - mn * 0.19, sy2 = H * 0.5 + mn * 0.12;
+    var px = clampN(mn * 0.10 / clampN(rigD, 0.6, 8), 16, 130);
+    var ang = Math.atan2(H * 0.5 - sy2, W * 0.5 - sx2);
+    if (!isFinite(ang)) ang = 0;
+    ctx.save();
+    ctx.translate(sx2, sy2);
+    ctx.rotate(ang);
+    SHIPS.drawShip(ctx, 0, 0, px, 0.32, {
+      key: shipKeyOf(accelIdx), hull: shipHullOf(shipIdx), thrust: 0,
+      t: reduced ? 0 : now / 1000, quality: cruiseLod >= 2 ? 0 : orbQuality(),
+      flip: 0, light: isLight(), lightDir: Math.PI - ang
+    });
+    ctx.restore();
+  }
+  /* Distances, at a precision anybody actually has. The mass this is all
+     derived from is known to about one percent, so an eight-digit kilometre
+     count would be a made-up claim: three significant figures is the most
+     this readout may show. */
+  function bhAuText(rAu) {
+    if (!(rAu > 0)) return '0 km';
+    if (rAu >= 100) return PURE.fmtInt(Math.round(rAu)) + ' AU';
+    if (rAu >= 0.5) return (Math.round(rAu * 10) / 10) + ' AU';
+    var km = rAu * A.AU_KM;
+    if (km >= 1e6) return (Math.round(km / 1e5) / 10) + ' million km';
+    if (km >= 1e4) return PURE.fmtInt(Math.round(km / 1000) * 1000) + ' km';
+    return PURE.fmtInt(Math.round(km)) + ' km';
+  }
+  function bhHudLines(p) {
+    var B = BH();
+    var rs = p.rRs;
+    var rsTxt;
+    if (rs >= 100) {
+      /* three significant figures, for the same reason bhAuText keeps to
+         three: everything here rests on a mass known to about a percent */
+      var e3 = Math.pow(10, Math.floor(Math.log(rs) / Math.LN10) - 2);
+      rsTxt = PURE.fmtInt(Math.round(rs / e3) * e3);
+    } else if (rs >= 10) rsTxt = String(Math.round(rs * 10) / 10);
+    else rsTxt = String(Math.round(rs * 100) / 100);
+    var au = bhAuText(p.rAu);
+    var l1, alt1;
+    if (p.phase === 'end') {
+      l1 = 'The end of the fall.';
+      alt1 = [l1];
+    } else if (p.inside) {
+      var tl = Math.max(0, Math.round(p.tauLeftSec * 10) / 10);
+      l1 = 'Proper time remaining: ' + tl.toFixed(1) + ' s';
+      alt1 = [l1, tl.toFixed(1) + ' s left on your clock', tl.toFixed(1) + ' s'];
+    } else {
+      l1 = rsTxt + ' Schwarzschild radii out · ' + au;
+      alt1 = [l1, rsTxt + ' r_s · ' + au, au];
+    }
+    var st;
+    if (p.phase === 'approach') st = 'Falling. Years of it, played in seconds.';
+    else if (p.phase === 'photon') st = 'Passing the photon sphere.';
+    else if (p.phase === 'plunge') st = 'Crossing the horizon.';
+    else if (p.phase === 'interior') {
+      st = p.trueRate ? 'Inside. The clock is running true, second for second.'
+                      : 'Inside. The clock is running at ' +
+                        (Math.round(timeScale * 100) / 100) + ' times true.';
+    } else st = 'Nothing comes back out.';
+    var alt2 = [st];
+    if (p.phase === 'interior' && !p.trueRate) alt2.push('Inside.');
+    else if (p.phase === 'approach') alt2.push('Falling. Years played in seconds.');
+    return { alt1: alt1, alt2: alt2, l1: l1, l2: st,
+             tau: p.tauLeftSec, rRs: p.rRs, total: B.TOTAL_MS };
+  }
+  /* The lensed sky and its flow, drawn as the frame's BACKDROP (BHF-3): the
+     ordinary world passes are laid over it while it crossfades in, so the
+     S-star cluster keeps its parallax and the reader never sits in front of
+     a black screen. */
+  function drawBhLens(alpha) {
+    var B = BH(), s = bhSt;
+    if (!B || !s) return;
+    var p = bhPose();
+    var lensA = clampN(alpha, 0, 1);
+    if (lensA > 0.004) {
+      var lut = bhEnsureLut(p.rRs);
+      if (lut) {
+        /* The two calls get SEPARATE option objects on purpose: they run at
+           different internal resolutions against different budgets, and one
+           shared object would silently hand the flow the lens's. */
+        var ol = BH_LOPT, od = BH_DOPT;
+        ol.w = od.w = W; ol.h = od.h = H;
+        ol.fovDeg = od.fovDeg = bhFov();
+        ol.bg = bgRgb();
+        /* BHF-2: ask for the frame's own resolution and let the library's
+           governor be the one that gives ground. On the GPU path this is
+           free; on the CPU fallback the governor walks it down from here
+           instead of crawling up from a blur. The device-pixel term keeps a
+           2x screen from being handed a half-resolution picture. */
+        ol.quality = clampN(dpr, 1, 2);      /* w and h are CSS pixels */
+        ol.maxPixels = clampN(Math.round(W * H * ol.quality * ol.quality),
+                              60000, 2600000);
+        od.maxPixels = clampN(Math.round(W * H * 0.07), 20000, 74000);
+        od.normal = bhDiskNormal();
+        od.brighten = bhGlow ? 6 : 1;
+        od.hotPhase = bhHotPhase();
+        ctx.globalAlpha = clampN(lensA, 0, 1);
+        try {
+          var ls = B.drawLensed(ctx, lut, bhSky.cv, ol);
+          bhStat.px = ls.px; bhStat.gl = !!ls.gl; bhStat.ms = ls.ms;
+          var ds = B.drawDisk(ctx, lut, od);
+          bhStat.dpx = ds.px; bhStat.dms = ds.ms;
+        } catch (e) { /* never kill the frame */ }
+        ctx.globalAlpha = 1;
+      }
+    }
+  }
+  function drawBhFall(now) {
+    var B = BH(), s = bhSt;
+    if (!B || !s) return;
+    var p = bhPose();
+    var lensA = bhSky.done ? bhBackA() : 0;
+    if (!fpMode) drawBhShip(now);
+    /* the last beat fades out: there is nothing honest left to draw */
+    if (p.phase === 'end') {
+      var f = clampN(p.k * 1.25, 0, 1);
+      ctx.fillStyle = 'rgba(' + (isLight() ? '243,245,248,' : '14,16,20,') + f.toFixed(3) + ')';
+      ctx.fillRect(0, 0, W, H);
+    }
+    var hudY = hudBandY();
+    var lines = bhHudLines(p);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    /* the lensed sky is a bright wall of stars behind these lines wherever
+       the band lands, and there is no orb for hudScrim to notice, so the
+       plate is driven by the lens itself */
+    var hs = clampN(Math.max(hudPlateA(), 0.28 + 0.34 * lensA), 0.28, 0.72);
+    var hb = hudStrip(hudY - 13, hudY + 53, blockW(lines.alt1, '600 ', 15));
+    hudLine(lines.alt1, '600 ', 15, 10, hb.maxW, hudY, textColor(0.92), hb.cx, hs);
+    hudLine(lines.alt2, '', 13, 9.5, hb.maxW, hudY + 21, textColor(0.75), hb.cx, hs);
+    hudLine([coarsePointer ? 'Drag to look around. Tap to skip.'
+                           : 'Drag to look around. Esc or tap to skip.'], '', 12, 9.5,
+            hb.maxW, hudY + 42, textColor(hs > 0.02 ? 0.72 : 0.5), hb.cx, hs);
+    /* the caption track, verbatim from voyage-bh.js, on the scaled clock */
+    while (capNext < capTrack.length && s.ms >= capTrack[capNext].t) {
+      capShow(capTrack[capNext], 2, now);
+      capNext++;
+    }
+    /* these are the longest captions on the page, so they get the strip the
+       panel and the card leave, moved by the least that clears them */
+    var cy0 = capBandY();
+    var cb = hudStrip(cy0 - 14, cy0 + 26, capCur ? blockW(capCur.alt, '', 15) : 0);
+    drawCaption(now, cb.maxW, cb.cx);
+    ctx.textAlign = 'left';
+  }
+  function setBhGlow(on) {
+    bhGlow = !!on;
+    bhStamp.ok = false;                 /* the marker is baked: redraw it */
+    if (elGlow) {
+      elGlow.classList.toggle('voy-seg__btn--on', bhGlow);
+      elGlow.setAttribute('aria-pressed', bhGlow ? 'true' : 'false');
+    }
+    transientStatus(bhGlow
+      ? 'Glow brightened for drama. The real Sagittarius A* is far fainter than this.'
+      : 'Glow back to faint, which is the honest one.');
+  }
+  if (elGlow) elGlow.addEventListener('click', function () { setBhGlow(!bhGlow); });
 
   /* ---------------- test hooks ---------------- */
   var hooks = {
@@ -11141,6 +12329,12 @@
         if (s && isFinite(s.bytes)) n += s.bytes;
       }
       if (ART && ART.texCacheSize) n += ART.texCacheSize() * 512 * 256 * 4 * 2;
+      /* the baked equirect sky (and the copy voyage-bh.js keeps of its
+         pixels, which is the same size again) plus the marker stamp */
+      if (bhSky.cv && bhSky.cv.width) {
+        n += bhSky.cv.width * bhSky.cv.height * 4 * (bhSky.done ? 2 : 1);
+      }
+      if (bhStamp.cv && bhStamp.cv.width) n += bhStamp.cv.width * bhStamp.cv.height * 4;
       return n;
     },
     project: function (name) {
@@ -11176,7 +12370,57 @@
       return { n: NFAR, alpha: farAlpha(camD), vis: farVis, drawn: out };
     },
     farIndex: function (name) { return farIndexByName(name); },
-    maxLogD: function () { return MAX_LOGD; }
+    maxLogD: function () { return MAX_LOGD; },
+    /* ---- Sagittarius A* ---- */
+    bh: function () {
+      var B = window.VoyageBH || null;
+      var p = (mode === 'bhfall' && bhSt && B) ? bhPose() : null;
+      return {
+        lib: !!B, idx: bhIdx, parked: atBh(),
+        mode: mode, falling: mode === 'bhfall',
+        ms: bhSt ? bhSt.ms : 0,
+        total: B ? B.TOTAL_MS : 0,
+        phase: p ? p.phase : null,
+        rRs: p ? p.rRs : 0,
+        rAu: p ? p.rAu : 0,
+        tauLeft: p ? p.tauLeftSec : 0,
+        inside: p ? !!p.inside : false,
+        trueRate: p ? !!p.trueRate : false,
+        lensA: p ? bhLensA(p.rRs) : 0,
+        sky: { done: bhSky.done, pending: bhSky.pending, w: bhSky.w, h: bhSky.h },
+        stamp: bhStamp.ok ? bhStampPx() : 0,
+        marker: bhScr.ok ? { x: bhScr.x, y: bhScr.y, r: bhScr.r } : null,
+        scene: bhSceneA(), stars: bhSceneDrawn, glow: bhGlow,
+        view: fpMode ? 'cockpit' : 'chase',
+        back: bhSt ? bhBackA() : 0,
+        markA: (bhSt && p) ? bhMarkA(p.rRs) : 0,
+        shadowPx: p ? bhShadowPx(p.rRs) : 0,
+        fov: bhFov(),
+        lens: { px: bhStat.px, gl: bhStat.gl, ms: bhStat.ms,
+                dpx: bhStat.dpx, dms: bhStat.dms,
+                canvasPx: canvas.width * canvas.height }
+      };
+    },
+    bhLut: function () {
+      var l = bhLutCur;
+      if (!l || !l.valid) return null;
+      return { rRs: l.rRs, mode: l.mode, n: l.n, shadowRad: l.shadowRad,
+               firstLive: l.firstLive, ms: l.ms, beta: l.beta };
+    },
+    startBhFall: function () { startBhFall(); },
+    skipBhFall: function () { skipBhFall(); },
+    setBhGlow: function (v) { setBhGlow(!!v); },
+    sstars: function () {
+      var B = window.VoyageBH || null;
+      var out = [], k;
+      if (!B || !ssPosS) return out;
+      for (k = 0; k < ssN; k++) {
+        out.push({ name: B.SSTARS[k].name,
+                   x: ssPosS[k * 3], y: ssPosS[k * 3 + 1], z: ssPosS[k * 3 + 2],
+                   ring: !!(ssRingOk && ssRingOk[k]) });
+      }
+      return out;
+    }
   };
   function rectOf(elm) {
     if (!elm || elm.hidden) return null;

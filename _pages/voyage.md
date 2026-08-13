@@ -114,9 +114,38 @@ description: "An interactive full-screen trip planner by Keane Lucas: real JPL p
         <p>
           Those far objects are drawn as markers, never as discs. A globular cluster is a
           swarm because that is what it is, the Magellanic Clouds are soft patches whose
-          shape is an impression, and the black hole at the center of the galaxy has no
-          picture at all, because it has no surface to draw. None of them carry a
-          temperature, a size or a color here, because nobody measured one.
+          shape is an impression, and the black hole at the center of the galaxy is drawn
+          as the sky bent around it, because it has no surface of its own. None of them
+          carry a temperature, a size or a color here, because nobody measured one.
+        </p>
+        <p>
+          Up close at Sagittarius A*, the stars circling it are on their published orbits
+          and at their measured positions for today, which is the one place on this page
+          where where a body sits on its orbit is a measurement rather than an
+          illustration. The bending of light around it is computed from the real geodesics
+          for a non-spinning hole of that mass, but the marker is drawn at a fixed size on
+          screen: from the parking distance the shadow itself would be far smaller than
+          one pixel. Some more of the honest small print for that place:
+        </p>
+        <p>
+          The glow around the real Sgr A* is famously faint; it shines at less than one
+          hundred-millionth of what a black hole its size could. We draw it faint. The
+          brighten switch is for drama and says so.
+        </p>
+        <p>
+          The famous orange ring photo is radio light, not what eyes would see.
+        </p>
+        <p>
+          Nobody knows how fast it spins; the two best methods disagree. We draw the
+          non-spinning case.
+        </p>
+        <p>
+          The background sky here is our own star catalog. The real view from the galactic
+          center would blaze with millions of bulge stars nobody has catalogued for us.
+        </p>
+        <p>
+          The two teams that weigh this black hole disagree by about seven percent. We use
+          the newer interferometer number.
         </p>
         <p>
           The background star tier is a separate file of up to 100,000 stars, about
@@ -150,6 +179,8 @@ description: "An interactive full-screen trip planner by Keane Lucas: real JPL p
       <button id="voy-fp-chase" class="voy-seg__btn voy-seg__btn--on" type="button" aria-pressed="true">Chase</button>
       <button id="voy-fp-cockpit" class="voy-seg__btn" type="button" aria-pressed="false">Cockpit</button>
       <button id="voy-fp-map" class="voy-seg__btn" type="button" aria-pressed="false" hidden>Map</button>
+      <button id="voy-glow" class="voy-seg__btn" type="button" aria-pressed="false"
+              title="Brighten the glow (drama, not measurement)" hidden>Glow</button>
       <button id="voy-fp-info" class="voy-seg__btn" type="button" style="flex:0 0 34px"
               aria-label="Replay what is happening" title="Replay what is happening">&#9432;</button>
     </div>
@@ -557,6 +588,13 @@ html[data-theme="light"] .voy-arrive { border-color: rgba(160,124,44,0.5); backg
   html:not([data-theme="dark"]) .voy-arrive { border-color: rgba(160,124,44,0.5); background: rgba(160,124,44,0.08); }
 }
 .voy-arrive__line { margin: 0; font-weight: 600; font-size: 0.95em; }
+/* the end of the plunge takes the arrival banner's shape, in the neutral ink
+   of the page rather than the gold of an arrival: nothing was reached */
+.voy-bhend { border-color: rgba(255,255,255,0.22); background: rgba(255,255,255,0.05); }
+html[data-theme="light"] .voy-bhend { border-color: rgba(0,0,0,0.20); background: rgba(0,0,0,0.04); }
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .voy-bhend { border-color: rgba(0,0,0,0.20); background: rgba(0,0,0,0.04); }
+}
 
 .voy-trip { display: flex; flex-direction: column; gap: 0.55rem; margin-top: 0.3rem; }
 .voy-trip[hidden] { display: none !important; }
@@ -762,4 +800,5 @@ html[data-theme="light"] #voy-fp-info:focus-visible { background: rgba(52,86,138
 <script defer src="{{ '/assets/js/voyage-gl.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/voyage-galaxy.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/voyage-ships.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
+<script defer src="{{ '/assets/js/voyage-bh.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/voyage.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
