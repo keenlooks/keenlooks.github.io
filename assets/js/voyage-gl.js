@@ -53,6 +53,30 @@
      what a white-light photograph of the Sun shows at this apparent size. */
   var FSUP = 0.038;
   var FCELL = 0.300;
+  /* ---- surface contrast and exposure, matched to the 2D art ----
+     voyage-art.js is the single source of truth for how a star looks, and
+     the pair has to be pixel-comparable: a visitor on a machine without GL
+     must see the same star. The 2D pass paints the photosphere at its own
+     full tone with a gentle granulation on top (plus/minus 6.5 percent) and
+     a shallow intergranular lane (5 percent), then lays a wide hot-core
+     glow over it, so its disc reads as something emitting light. Rendered
+     per fragment the same scene was a marble: the cell network carried
+     roughly four times the 2D's lane depth, the disc was held 20 percent
+     below its own tone to leave headroom, and the core glow was carried at
+     a third of the 2D's. These constants are that difference, and they are
+     the whole of it: the pinned fBm / domain-warp structure and the
+     per-class activity gates below are untouched.
+       CELL_D  the depth of the granulation network's downflow lanes
+       CELL_S  cell-to-cell brightness variation (the two noise bands in the
+               same expression come down with it)
+       EXPO_*  disc exposure, hot end to active end (was 0.94 / 0.80)
+       SHOULDER where the highlight roll-off starts (hue-preserving)
+       CORE_*  the hot-core ramp, the 2D gradient's stops exactly */
+  var CELL_D = 0.21;
+  var CELL_S = 0.34;
+  var EXPO_LO = 1.00, EXPO_HI = 0.985;
+  var SHOULDER = 0.93;
+  var CORE_A0 = 0.30, CORE_A1 = 0.14, CORE_A2 = 0.05;
   var SPOT_MAX = 5;            /* VoyageArt.SPOT_MAX                        */
   var FLARE_SLOTS = 6;         /* VoyageArt.FLARE_SLOTS                     */
   var TWO_PI = Math.PI * 2;
@@ -426,10 +450,14 @@
        network changes the surface's texture and not its exposure. The
        supergranulation does not paint brightness of its own: it MODULATES
        the granule contrast, strong over a supergranule and quiet in its
-       network, which is what stops the low band reading as cloud. */
+       network, which is what stops the low band reading as cloud.
+       The four amplitudes are CELL_D / CELL_S and the two noise bands, all
+       carried down together to the 2D strip's contrast: the network is
+       still the same network, drawn as gently as the art file draws it. */
     '    float supF = gSup - 0.5;',
-    '    float conv = (((cellCore - 0.60) * (0.48 + 1.6 * supF) + cellSide * 0.42) * cellAct',
-    '                + (supF * 0.16 + (g - 0.5) * 0.24) * act) * cellK;',
+    '    float conv = (((cellCore - 0.60) * ' + CELL_D.toFixed(4) + ' * (1.0 + 3.33 * supF)',
+    '                + cellSide * ' + CELL_S.toFixed(4) + ') * cellAct',
+    '                + (supF * 0.13 + (g - 0.5) * 0.194) * act) * cellK;',
     /* Colour follows temperature, not a tint slider: the ramp stops are
        kelvinToRgb at the star's own temperature plus and minus the activity
        row's contrast, computed once in VoyageArt. A K star therefore roils
@@ -444,14 +472,15 @@
        red supergiant, which is a difference nobody can see. */
     '    vec3 coolStop = mix(uGranCool, uCool, 0.55);',
     '    vec3 tint = (tw >= 0.0) ? mix(uHot, uGranHot, tw) : mix(uHot, coolStop, -tw);',
-    /* Exposure. The palette's hot tone is near the top of the range, so
-       painting the disc at full strength clips the red channel first and the
-       chroma the class is judged on drains out of exactly the middle of the
-       disc. The activity row runs the same way the temperature does, so the
-       cool, strongly convecting stars are also the ones that keep the most
-       headroom, which is both what they need and, per unit of surface, what
-       they actually radiate. */
-    '    col = tint * (1.0 + conv * 0.66) * mix(0.94, 0.80, act);',
+    /* Exposure. The 2D pass paints the photosphere at the palette's own hot
+       tone, full strength, and that is what makes its disc read as light
+       rather than as a lit surface; holding a fifth of the range back here
+       was most of the difference between the two renderers. The chroma the
+       old headroom protected is protected instead by the roll-off below,
+       which scales all three channels together and so cannot drain the
+       colour out of the middle of the disc. */
+    '    col = tint * (1.0 + conv * 0.66) * mix(' + EXPO_LO.toFixed(3) + ', ' +
+                                                   EXPO_HI.toFixed(3) + ', act);',
     /* Faculae: bright magnetic elements that sit IN the lanes and light up
        toward the limb, where you look along the hot wall of the flux tube
        instead of down into it. That is why the network is a limb feature. */
@@ -516,7 +545,15 @@
     '            float a = clamp((umbK * 1.20 + penK * 0.88 + pore * 0.80) * amp, 0.0, 1.0);',
     '            if (a > spotA) {',
     '              spotA = a;',
-    '              spotC = mix(uPen * 0.58, uUmbra * 0.24, umbK);',
+    /* The 2D strip's own depth rule: a spot is painted in the penumbra and
+       umbra TEMPERATURES, darkened by min(0.42, spotAmp * profile * 1.6) and
+       no further, so a heavily spotted M dwarf keeps a lit surface under its
+       spots instead of punching holes in itself. Multiplying the umbra tone
+       by a fixed 0.24 here made a near-black core no sunspot has: an umbra
+       is about 0.7 of the photosphere's temperature, which is dim beside the
+       disc around it and still bright enough to read as glowing gas. */
+    '              float dep = min(0.42, S.w * 1.6 * ff);',
+    '              spotC = mix(uPen, uUmbra, umbK) * (1.0 - dep);',
     '            }',
     /* the facular ring sits just OUTSIDE the group, not over it */
     '            nearSpot = max(nearSpot, smoothstep(-0.55, -0.10, fe)',
@@ -536,17 +573,19 @@
     '    float s = clamp((d - 0.10) / 0.90, 0.0, 1.0);',
     '    col = mix(col, uLimb, clamp(ldProfile(s) * ldExp, 0.0, 1.0));',
     '',
-    /* the hot core. The 2D pass paints this at 0.30 over a texture that is
-       already washed out by its own blur; per fragment that much additive
-       light erases the granulation across the middle third of the disc, so
-       it is carried at a little over half strength here and the corona
-       (unchanged, VoyageArt's) does the rest of the glow. Its colour is
-       starLook's, the same value the 2D gradient uses, so the two renderers
-       brighten the middle of the disc with the same light. */
+    /* The hot core: the 2D gradient's own stops, at its own strength. It was
+       carried here at about a third of that on the argument that per
+       fragment it would erase the granulation, and with the old lane depth
+       it would have; at the art file's contrast it does what it does in the
+       art file, which is to spread the star's own light across the disc
+       instead of leaving it matte. Its colour is starLook's, the same value
+       the 2D gradient uses, so the two renderers brighten the middle of the
+       disc with the same light. */
     '    float hd = length(P - vec2(-0.12, -0.12)) / 0.92;',
     '    if (hd < 1.0) {',
-    '      float ha = (hd < 0.5) ? mix(0.12, 0.035, hd / 0.5)',
-    '                            : mix(0.035, 0.0, (hd - 0.5) / 0.5);',
+    '      float ha = (hd < 0.5) ? mix(' + CORE_A0.toFixed(3) + ', ' + CORE_A1.toFixed(3) + ', hd / 0.5)',
+    '               : ((hd < 0.85) ? mix(' + CORE_A1.toFixed(3) + ', ' + CORE_A2.toFixed(3) + ', (hd - 0.5) / 0.35)',
+    '                              : mix(' + CORE_A2.toFixed(3) + ', 0.0, (hd - 0.85) / 0.15));',
     /* a spot does not glow: the whole-disc brightening is masked out of it */
     '      col += uCore * (ha * bright * (1.0 - spotA * 0.85));',
     '    }',
@@ -555,10 +594,14 @@
        pins red at 1.0 first and lets green and blue keep climbing, which
        turns exactly the parts of the disc the eye rests on from the star's
        colour into cream. That desaturation was the whole reason a red
-       supergiant read as a beige ball. */
+       supergiant read as a beige ball. The knee sits high because the disc
+       is now exposed the way the 2D pass exposes it: the roll-off is there
+       to catch the hot core and the brightest granules, not to hold the
+       whole surface down. */
     '    float mx = max(col.r, max(col.g, col.b));',
-    '    if (mx > 0.84) {',
-    '      col *= (0.84 + (mx - 0.84) / (1.0 + (mx - 0.84) * 3.4)) / mx;',
+    '    if (mx > ' + SHOULDER.toFixed(3) + ') {',
+    '      col *= (' + SHOULDER.toFixed(3) + ' + (mx - ' + SHOULDER.toFixed(3) +
+                 ') / (1.0 + (mx - ' + SHOULDER.toFixed(3) + ') * 3.4)) / mx;',
     '    }',
     '  }',
     '',
@@ -1333,10 +1376,20 @@
     var gl = st.gl, T = st.target;
     var pr = st.present;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    /* Clear the WHOLE drawing buffer, not only the square about to be drawn.
+       blit() reads (0, 0, side, side) back out of this canvas with drawImage,
+       and a magnifying drawImage samples half a texel PAST the source rect,
+       so whatever a previous, larger present left just outside the edge came
+       back as a bright line down the right side and along the bottom of the
+       orb: the box that framed every close-up at deviceScaleFactor 2 (it took
+       a second body to show, because the first present has nothing stale
+       beyond its own square). Transparent black out there is a no-op instead.
+       One extra clear of a 1024 px buffer, at most twice a frame. */
+    gl.disable(gl.SCISSOR_TEST);
+    gl.clear(gl.COLOR_BUFFER_BIT);
     gl.viewport(0, T - side, side, side);
     gl.enable(gl.SCISSOR_TEST);
     gl.scissor(0, T - side, side, side);
-    gl.clear(gl.COLOR_BUFFER_BIT);
     gl.useProgram(pr.p);
     gl.bindBuffer(gl.ARRAY_BUFFER, st.quad);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
@@ -1587,6 +1640,13 @@
        carries `eyeball` because the spec pins the 16 entries */
     var typeName = look.type;
     if (!Object.prototype.hasOwnProperty.call(TYPE_ID, typeName)) return false;
+    /* Earth's land is not procedural any more: VoyageArt bakes it from a
+       real coastline mask, and the shader has no way to reach that mask
+       without being handed a texture. The page promises the eight solar
+       planets are likenesses of worlds we have pictures of, so Earth is the
+       one type that always renders through VoyageArt. Every other type is
+       generated identically by both, which is the point of the pair. */
+    if (typeName === 'earth') return false;
     /* rings need the 2D split around the blit, so they need those entry
        points to exist; without them Saturn stays entirely on VoyageArt */
     var rings = look.rings || null;

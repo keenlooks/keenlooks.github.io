@@ -280,52 +280,125 @@
     g.addColorStop(clamp(num(at, 0), 0, 1), color);
   }
 
-  /* ---------------- LRU texture cache ---------------- */
+  /* ---------------- LRU texture cache ----------------
+     Sized for the busiest thing the page draws: a seven-planet system at a
+     close-up framing is the star, its seven worlds and the two card preview
+     strips, which is ten distinct textures in ONE frame. At eight slots the
+     ninth body of a frame evicted the first, the tenth evicted the second,
+     and the next frame rebuilt those two and evicted two more, so every
+     frame paid for a pair of full noise bakes forever. Measured at
+     TRAPPIST-1 with the card open, which is where a visitor lands after
+     picking a system: 37 strips baked per second and a median frame of half
+     a second under a 4x CPU throttle. With the card shut the working set
+     fits in eight and nothing thrashes, which is why a frame-time reading
+     alone never separated the two cases. */
 
-  var TEX_MAX = 8;
+  var TEX_MAX = 12;
+  /* An upper bound that does not depend on the frame stamp below, so a
+     scene with more bodies than slots (or a page in reduced motion, where
+     the clock never moves and every entry looks current) still cannot grow
+     without limit. */
+  var TEX_HARD = 16;
   var texKeys = [];          /* most-recent last */
   var texMap = {};
 
+  /* ---- which frame is being drawn ----
+     Every entry point takes the page's clock, and the page passes ONE value
+     of t to every body it draws in a frame (voyage-gl.js already leans on
+     that for its per-frame blit budget). A change in t is therefore a frame
+     boundary, and an entry stamped with the current frame is one this frame
+     has already painted with: evicting it is what starts the thrash, since
+     it will be asked for again on the next frame. No wall clock is read
+     here; a page whose clock never moves simply keeps everything, bounded
+     by TEX_HARD. */
+  var frameSeq = 1, frameT = NaN;
+  function markFrame(t) {
+    if (t !== frameT) { frameT = t; frameSeq++; }
+  }
+
+  /* how many strips have been baked and how many dropped, for the perf
+     probes: a scene that is thrashing shows a build count that climbs every
+     frame, which is a fact rather than a frame-time guess */
+  var texBuilds = 0, texEvicts = 0;
+
+  function texEvict() {
+    while (texKeys.length > TEX_MAX) {
+      /* texKeys is oldest first, so this is the least recently used entry
+         that is not part of the frame being drawn */
+      var i = 0;
+      while (i < texKeys.length && texMap[texKeys[i]] &&
+             texMap[texKeys[i]].frame === frameSeq) i++;
+      if (i >= texKeys.length) {
+        if (texKeys.length <= TEX_HARD) return;
+        i = 0;                 /* over the ceiling: the oldest goes anyway */
+      }
+      var drop = texKeys.splice(i, 1)[0];
+      freeEntry(texMap[drop]);
+      delete texMap[drop];
+      texEvicts++;
+    }
+  }
+
   function texGet(key, build) {
+    var entry;
     if (Object.prototype.hasOwnProperty.call(texMap, key)) {
       var at = texKeys.indexOf(key);
       if (at >= 0) { texKeys.splice(at, 1); texKeys.push(key); }
-      return texMap[key];
+      entry = texMap[key];
+      entry.frame = frameSeq;
+      return entry;
     }
     var made = null;
+    texBuilds++;
     try { made = build(); } catch (e) { made = null; }
-    var entry = made || { tex: null, aux: null };
+    entry = made || { tex: null, aux: null };
+    entry.frame = frameSeq;
     texMap[key] = entry;
     texKeys.push(key);
-    while (texKeys.length > TEX_MAX) {
-      var drop = texKeys.shift();
-      var old = texMap[drop];
-      if (old) {
-        /* free the backing store on the way out */
-        if (old.tex) { try { old.tex.width = 0; old.tex.height = 0; } catch (e2) {} }
-        if (old.aux) { try { old.aux.width = 0; old.aux.height = 0; } catch (e3) {} }
-      }
-      delete texMap[drop];
-    }
+    texEvict();
     return entry;
   }
   function texCacheSize() { return texKeys.length; }
-  function clearTexCache() {
-    for (var i = 0; i < texKeys.length; i++) {
-      var e = texMap[texKeys[i]];
-      if (e) {
-        if (e.tex) { try { e.tex.width = 0; e.tex.height = 0; } catch (er) {} }
-        if (e.aux) { try { e.aux.width = 0; e.aux.height = 0; } catch (er2) {} }
-      }
-    }
-    texKeys.length = 0;
-    texMap = {};
+
+  /* ---- the hero slot ----
+     One planet at a time is drawn as the thing the page is about, hundreds
+     of pixels across, and at that size the 512 x 256 strip's own texels show
+     as soft square blocks. That body gets a 1024 x 512 strip. Exactly ONE
+     does: this slot REPLACES its occupant rather than growing the LRU, so
+     the texture budget moves by a single strip and not by eight, and a
+     failed build is remembered (entry.tex null) so the caller drops back to
+     the ordinary tier without trying to rebuild it every frame. */
+  var HI_R = 110;
+  var hiSlot = { key: null, entry: null };
+  function freeEntry(e) {
+    if (!e) return;
+    if (e.tex) { try { e.tex.width = 0; e.tex.height = 0; } catch (er) {} }
+    if (e.aux) { try { e.aux.width = 0; e.aux.height = 0; } catch (er2) {} }
+  }
+  function hiGet(key, build) {
+    if (hiSlot.key === key) return hiSlot.entry;
+    var made = null;
+    try { made = build(); } catch (e) { made = null; }
+    freeEntry(hiSlot.entry);
+    hiSlot.key = key;
+    hiSlot.entry = made || { tex: null, aux: null };
+    return hiSlot.entry;
   }
 
-  /* Texture sizes. quality 0 is the card-preview tier (half res). */
-  function texW(q) { return q ? 512 : 256; }
-  function texH(q) { return q ? 256 : 128; }
-  function slabCount(q) { return q ? 34 : 18; }
+  function clearTexCache() {
+    for (var i = 0; i < texKeys.length; i++) freeEntry(texMap[texKeys[i]]);
+    texKeys.length = 0;
+    texMap = {};
+    freeEntry(hiSlot.entry);
+    hiSlot.key = null;
+    hiSlot.entry = null;
+  }
+
+  /* Texture sizes. quality 0 is the card-preview tier (half res); 2 is the
+     hero tier above. */
+  function texW(q) { return q === 2 ? 1024 : (q ? 512 : 256); }
+  function texH(q) { return q === 2 ? 512 : (q ? 256 : 128); }
+  function slabCount(q) { return q === 2 ? 68 : (q ? 34 : 18); }
 
   /* ---------------- sphere mapping ----------------
      Paint a cylindrical strip onto a disc as vertical slabs. Longitude at a
@@ -385,6 +458,12 @@
      stops are the EXACT Lambert brightness sampled along the principal axis
      (n.s with n the sphere normal), so at full phase this is textbook limb
      darkening and at half phase the terminator lands on the disc center. */
+  /* The caller has already clipped to the disc, so this fills a RECT rather
+     than a second circle: two antialiased circle edges stacked on the same
+     pixels never sum back to full coverage, and the under-covered ring let
+     the opaque base fill show through as a bright hairline traced round the
+     limb (visible as a stroked circle wherever the planet crossed something
+     bright, which on Saturn was its own ring band). */
   function shadeSphere(ctx, cx, cy, r, lightDir, phase, maxDark, nightRgb) {
     var L = num(lightDir, Math.PI);
     var k = clamp(num(phase, 0.92), 0, 1);
@@ -407,7 +486,7 @@
       stop(g, tt, rgba(night, a * cap));
     }
     ctx.fillStyle = g;
-    if (circle(ctx, cx, cy, r)) ctx.fill();
+    ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
   }
 
   /* ==========================================================================
@@ -601,8 +680,23 @@
       hot: mixC(bc, [255, 255, 255], whiteMix),
       cool: mixC(bc, [92, 30, 14], hasT ? 0.42 : 0.26),
       glow: mixC(bc, [255, 255, 255], 0.25),
+      /* The corona's outer tail. A corona is optically thin plasma lit from
+         below, not photosphere, so it is much less saturated than the disc;
+         painting the tail in the full photospheric tint left a red
+         supergiant's outer glow turning olive where it met the blue-grey
+         sky, and it exaggerated every star's colour where the eye has the
+         least to compare it against. */
+      halo: mixC(bc, [255, 255, 255], 0.55),
       limb: mixC(bc, [70, 22, 10], hasT ? 0.55 : 0.42),
-      prom: mixC(bc, [255, 130, 80], hasT ? 0.55 : 0.25),
+      /* The chromosphere / prominence tint. The warm shift is the hydrogen
+         emission that makes the Sun's chromosphere red, and it rides the
+         SAME activity row the spots and the flares do: a star with a
+         radiative envelope has no solar-type chromosphere to paint, so an
+         A star like Sirius keeps its own blue-white and only G and cooler
+         reach the full warm mix. Every G, K and M star is unchanged (their
+         activity saturates at 1); it is the hot end that stops wearing a
+         tan ring it has no reason to have. */
+      prom: mixC(bc, [255, 130, 80], (hasT ? 0.55 : 0.25) * act),
       /* the convection ramp, anchored to `hot` the same way so the three
          stops are one continuous blackbody sweep and their mean is the base */
       tempAmp: dT,
@@ -738,7 +832,12 @@
     var hot = look.hot;
     var cool = look.cool;
     var hotR = hot[0], hotG = hot[1], hotB = hot[2];
-    var coolR = cool[0], coolG = cool[1], coolB = cool[2];
+    /* A spot is cooler gas, so it is painted in the umbra and penumbra
+       temperatures starLook already derives (the same two colours the GL
+       renderer is handed), never in a grey wash. */
+    var umb = look.umbra, pen = look.penumbra;
+    var umbR = umb[0], umbG = umb[1], umbB = umb[2];
+    var penR = pen[0], penG = pen[1], penB = pen[2];
 
     /* starspot placement comes from starLook, so the strip and any other
        renderer of this star put the spots in the same places */
@@ -782,27 +881,39 @@
         var g = smp(F_G, u, y);
         var lane = smp(F_L, u, y);
         var sup = smp(F_S, u, y);
-        /* +/- 8 percent granulation, plus dark intergranular lanes */
-        var b = 1 + (g - 0.5) * 0.16 + (sup - 0.5) * 0.07 - lane * lane * lane * 0.10;
+        /* Granulation, plus the darker lanes between the granules. Both are
+           deliberately gentle: a photosphere is a boiling surface seen
+           through its own glare, and at the contrast these carried before a
+           G star's disc read as weathered rock rather than as light. */
+        var b = 1 + (g - 0.5) * 0.13 + (sup - 0.5) * 0.05 - lane * lane * lane * 0.05;
 
-        var dark = 0;
+        /* The spot PROFILE, 0 outside and 1 in the core, umbra weighted over
+           a softer penumbra. It is kept separate from the darkening depth on
+           purpose: the old code applied a flat 55 percent colour shift the
+           instant the profile left zero, so every spot had a hard rim and
+           read as a crater. Everything below is continuous through 0. */
+        var prof = 0;
         for (si = 0; si < nSpots; si++) {
           var lim = spLim[si];
           var cosd = sinLat * spSin[si] + cosLat * spCos[si] * cosDl[si][x];
           if (cosd > lim) {
             var f = (cosd - lim) * spInv[si];
-            /* umbra core plus a softer penumbra */
-            var dd = spotAmp * (0.45 * smooth(f * 1.6) + 0.55 * smooth((f - 0.35) / 0.65));
-            if (dd > dark) dark = dd;
+            var dd = 0.45 * smooth(f * 1.6) + 0.55 * smooth((f - 0.35) / 0.65);
+            if (dd > prof) prof = dd;
           }
         }
 
         var r0 = hotR * b, g0 = hotG * b, b0 = hotB * b;
-        if (dark > 0) {
-          var m = 1 - dark;
-          r0 = r0 * m + (coolR * m - r0 * m) * 0.55;
-          g0 = g0 * m + (coolG * m - g0 * m) * 0.55;
-          b0 = b0 * m + (coolB * m - b0 * m) * 0.55;
+        if (prof > 0) {
+          /* the depth is capped so a heavily spotted M dwarf keeps a lit
+             surface under its spots rather than punching holes in itself */
+          var m = b * (1 - Math.min(0.42, spotAmp * prof * 1.6));
+          var tr = (penR + (umbR - penR) * prof) * m;
+          var tg = (penG + (umbG - penG) * prof) * m;
+          var tb = (penB + (umbB - penB) * prof) * m;
+          r0 += (tr - r0) * prof;
+          g0 += (tg - g0) * prof;
+          b0 += (tb - b0) * prof;
         }
         /* Uint8ClampedArray clamps and rounds on assignment: an extra clamp()
            here is three function calls per pixel for nothing */
@@ -963,10 +1074,13 @@
     ctx.globalCompositeOperation = 'lighter';
     var cg = rgrad(ctx, x, y, r * 0.72, x, y, r * (q ? 3.1 : 2.4));
     if (cg) {
+      var halo = look.halo || look.glow;
       stop(cg, 0, rgba(look.glow, 0.42 * bright));
       stop(cg, 0.24, rgba(look.glow, 0.17 * bright));
-      stop(cg, 0.62, rgba(look.rgb, 0.055 * bright));
-      stop(cg, 1, rgba(look.rgb, 0));
+      /* the tail runs out in the desaturated halo tone, so a warm corona
+         thinning into a cool sky never crosses through a green band */
+      stop(cg, 0.62, rgba(halo, 0.055 * bright));
+      stop(cg, 1, rgba(halo, 0));
       ctx.fillStyle = cg;
       if (circle(ctx, x, y, r * (q ? 3.1 : 2.4))) ctx.fill();
     }
@@ -1008,8 +1122,13 @@
     var hg = rgrad(ctx, x - r * 0.12, y - r * 0.12, 0, x, y, r * 0.92);
     if (hg) {
       var coreC = look.core || look.hot;
+      /* The middle stop carries most of this: a spike at the centre only
+         brightened a small patch, and the disc away from it stayed matte.
+         Spreading the same light across the disc is what makes it read as
+         something glowing rather than as a lit surface. */
       stop(hg, 0, rgba(coreC, clamp(0.30 * bright, 0, 1)));
-      stop(hg, 0.5, rgba(coreC, clamp(0.09 * bright, 0, 1)));
+      stop(hg, 0.5, rgba(coreC, clamp(0.14 * bright, 0, 1)));
+      stop(hg, 0.85, rgba(coreC, clamp(0.05 * bright, 0, 1)));
       stop(hg, 1, rgba(coreC, 0));
       ctx.fillStyle = hg;
       if (circle(ctx, x, y, r * 0.92)) ctx.fill();
@@ -1072,6 +1191,7 @@
     var x = num(cx, NaN), y = num(cy, NaN), r = num(rPx, NaN);
     if (!fin(x) || !fin(y) || !fin(r) || r <= 0 || alpha <= 0.004) return null;
     if (r > 4000) r = 4000;
+    markFrame(num(t, 0));
     return {
       p: (params && typeof params === 'object') ? params : starParams(null),
       q: o.quality === 0 ? 0 : 1,
@@ -1383,6 +1503,184 @@
 
   /* ---- planet texture strips ---- */
 
+  /* ---- Earth's coastlines ----
+     The eight solar planets are described on the page as likenesses of
+     worlds we have real pictures of, so Earth's land cannot be a noise
+     field: it has to be Earth. This is a 128 x 64 equirectangular land mask
+     built from the real outlines (a hand-authored coastline polygon set,
+     rasterised offline and packed one bit per cell, about 1 KB of base64).
+     Row 0 is the north pole edge, column 0 is longitude -180. It carries
+     the continents, Greenland, the big islands, the Mediterranean, Hudson
+     Bay and the Antarctic sheet; anything smaller than about 3 degrees is
+     below its resolution. That last part is why the smoothing and the coast
+     warp below exist: at a default framing the raw mask passes for a coast,
+     but on a hero-sized disc a 3 degree cell is a dozen pixels and every
+     shoreline was a staircase with square corners.
+
+     Nothing else about Earth changes: the ocean depth ramp, the cloud deck,
+     the polar caps and the shading are the same pipeline every other world
+     uses. */
+  var EARTH_MASK_B64 =
+      'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB/wAAAAAAAAAAAAAA' +
+      'AAAAB/+AAAAAAAAAAAAAAAAAAA//gAAAAAD/wAAAAAAAAAAf/wAAAAAH///8AAf///wAD/4AA/gAH////+AP////' +
+      'gAf4AA//8D//////B////hAD4AAOf/h//////wf///wOAIAADH/4//////8BgP/+D4AAAgD/8f////+AAAB////g' +
+      'AAYP/+P////+AAAAP///8AADf//H////+AAAAB///+AAAP//z////+AAAAAP///AAAH/45/////AAAAAD/8PAAAD' +
+      'x8G/////oAAAAA///gAAB4H+f////AAAAAAH//gAAAcAP/////hAAAAAB//4AAAAAAf////wAAAAAAP/8AAAA/gG' +
+      '////4AAAAAAA/iAAAAf/75///+AAAAAAAPwAAAAP/+fv///gAAAAAAB8AAAAH//z+P//gAAAAAAAPAAAAB//+fB/' +
+      '/gAAAAAAAA8AAAA///hgeD4AAAAAAAABwAAAP//8ADg+AAAAAAAAAEAAAD///gAwHAAAAAAAAAA3wAAf///AEBwA' +
+      'AAAAAAAAD/AAD///gAAIAAAAAAAAAA/8AAQf/4AAKAAAAAAAAAAP/AAAH/8AADAAAAAAAAAAH/8AAB/+AAAeAAAA' +
+      'AAAAAB//4AAP/gAAD//AAAAAAAAP//AAD/4AAAf/wAAAAAAAD//gAAf8AAAAAAAAAAAAAAf/4AAP/AAAAAOAAAAA' +
+      'AAAB/8AAD/3AAAAP4AAAAAAAAf/AAA/5wAAAH/AAAAAAAAH/gAAH8cAAAH/4AAAAAAAB/wAAB/CAAAD//AAAAAAA' +
+      'Af4AAAfwAAAA//wAAAAAAAH8AAAD4AAAAH/8AAAAAAAB+AAAA8AAAAB7/AAAAAAAA/AAAAAAAAAAAPwAAAAAAAPg' +
+      'AAAAAAAAAAA4BAAAAAADwAAAAAAAAAAAAA4AAAAAA4AAAAAAAAAAAAAYAAAAAAOAAAAAAAAAAAAAAAAAAAAHAAAA' +
+      'AAAAAAAAAAAAAAAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' +
+      'AAAAAAAAAAAAAAAPgAAAAAAAAAAAAAAAAAAAf+AAAAAAAf/8AAAAAAAAA//4AAH//////8AA4AAAAA//////////' +
+      '///8AP///////////////////wD/////////////////////////////////////////////////////////////' +
+      '/////////////////////////////////////////////w==';
+  var EARTH_FIELD = null;
+
+  /* base64 -> Uint8Array, written out rather than leaning on atob or Buffer
+     so the file behaves the same in a page, in a worker and under node */
+  var B64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  function b64Bytes(s) {
+    var str = String(s).replace(/[^A-Za-z0-9+/]/g, '');
+    var out = new Uint8Array((str.length * 3) >> 2);
+    var acc = 0, bits = 0, o = 0;
+    for (var i = 0; i < str.length; i++) {
+      var v = B64_CHARS.indexOf(str.charAt(i));
+      if (v < 0) continue;
+      acc = (acc << 6) | v;
+      bits += 6;
+      if (bits >= 8) {
+        bits -= 8;
+        out[o++] = (acc >> bits) & 255;
+      }
+    }
+    return out;
+  }
+
+  var EM_W = 128, EM_H = 64;
+  /* ---- the smoothed land field ----
+     The mask is binary, and the level set of a binary field read back
+     BILINEARLY is made of straight segments that hug the cell grid. At a
+     default framing the coast noise covers that; on a 770 px disc a mask
+     cell is a dozen pixels and every coastline came out as a staircase with
+     square treads (the deep-zoom finding).
+
+     So the mask is resampled ONCE, at load, through a Catmull-Rom kernel
+     into a grid twice as fine. That kernel reads a 4 x 4 neighbourhood, so
+     the contour bends the way the surrounding coast bends instead of
+     turning square corners, and unlike a blur it keeps a lone island's peak
+     where a 3 x 3 average would have sunk it below the waterline. Everything
+     downstream reads the smooth grid with smoothstep weights, which makes
+     the field C1 and leaves no seam at a cell boundary.
+
+     Cost: 32,768 cells built once (about a quarter of a millisecond), 128 KB
+     held for the life of the page, and the per-texel read stays four taps. */
+  var EMS = 2;
+  var ES_W = EM_W * EMS, ES_H = EM_H * EMS;
+  /* half-width of the land / sea crossover, in land-fraction units. The
+     field climbs from sea to land over about a mask cell, so 0.10 either
+     side of the waterline is a couple of texels of shoreline: enough to
+     anti-alias the edge at a hero framing, too little to read as a beach. */
+  var ECOAST_W = 0.10;
+
+  function crSpline(a, b, c, d, t) {
+    return 0.5 * (2 * b + (c - a) * t +
+                  (2 * a - 5 * b + 4 * c - d) * t * t +
+                  (3 * b - a - 3 * c + d) * t * t * t);
+  }
+  function emWrap(i) { i %= EM_W; return i < 0 ? i + EM_W : i; }
+
+  function earthField() {
+    if (EARTH_FIELD) return EARTH_FIELD;
+    var bits = b64Bytes(EARTH_MASK_B64);
+    var m = new Float32Array(EM_W * EM_H);
+    var k;
+    for (k = 0; k < EM_W * EM_H; k++) {
+      m[k] = (bits[k >> 3] & (1 << (7 - (k & 7)))) ? 1 : 0;
+    }
+    var s = new Float32Array(ES_W * ES_H);
+    var col = [0, 0, 0, 0];
+    var X, Y, jj;
+    for (Y = 0; Y < ES_H; Y++) {
+      var gy = (Y + 0.5) / EMS - 0.5;
+      var j0 = Math.floor(gy), ty = gy - j0;
+      for (X = 0; X < ES_W; X++) {
+        var gx = (X + 0.5) / EMS - 0.5;
+        var i0 = Math.floor(gx), tx = gx - i0;
+        var xm = emWrap(i0 - 1), x0 = emWrap(i0), x1 = emWrap(i0 + 1), x2 = emWrap(i0 + 2);
+        for (jj = 0; jj < 4; jj++) {
+          /* latitude clamps at the poles: the sheet does not wrap */
+          var yy = j0 - 1 + jj;
+          if (yy < 0) yy = 0; else if (yy > EM_H - 1) yy = EM_H - 1;
+          var b0 = yy * EM_W;
+          col[jj] = crSpline(m[b0 + xm], m[b0 + x0], m[b0 + x1], m[b0 + x2], tx);
+        }
+        s[Y * ES_W + X] = clamp(crSpline(col[0], col[1], col[2], col[3], ty), 0, 1);
+      }
+    }
+    /* ---- and one round of smoothing ----
+       Catmull-Rom softens the PROFILE across a coast but it cannot round a
+       corner: where the mask turns ninety degrees the contour turns ninety
+       degrees, and a warp only moves that corner somewhere else. A separable
+       1-2-1 blur, one soft cell wide (half a mask cell), is what actually
+       bends it, and at that width a feature the mask records as a single
+       cell still comes out above the waterline. The small gain afterwards
+       puts back the peak the blur took off the smallest islands; without it
+       the Caribbean and the Aegean sink. */
+    var t2 = new Float32Array(ES_W * ES_H);
+    var xx, yy, o;
+    for (yy = 0; yy < ES_H; yy++) {
+      o = yy * ES_W;
+      for (xx = 0; xx < ES_W; xx++) {
+        t2[o + xx] = 0.25 * s[o + ((xx + ES_W - 1) % ES_W)] +
+                     0.50 * s[o + xx] +
+                     0.25 * s[o + ((xx + 1) % ES_W)];
+      }
+    }
+    for (yy = 0; yy < ES_H; yy++) {
+      var ya = (yy > 0 ? yy - 1 : 0) * ES_W;
+      var yb = yy * ES_W;
+      var yc = (yy < ES_H - 1 ? yy + 1 : ES_H - 1) * ES_W;
+      for (xx = 0; xx < ES_W; xx++) {
+        s[yb + xx] = clamp((0.25 * t2[ya + xx] + 0.50 * t2[yb + xx] +
+                            0.25 * t2[yc + xx]) * 1.10, 0, 1);
+      }
+    }
+    EARTH_FIELD = s;
+    return s;
+  }
+
+  /* The grid row for a latitude, worked out once per texture row by the
+     caller: the strip is equal-area in latitude and the grid is
+     equirectangular, so the row index costs an asin and must not be paid per
+     texel. It stays UNROUNDED because the sampler is allowed to move it. */
+  function earthRow(sinLat) {
+    var latDeg = Math.asin(clamp(sinLat, -1, 1)) * 180 / Math.PI;
+    return { gy: (90 - latDeg) / 180 * ES_H - 0.5 };
+  }
+  /* Land fraction at a longitude fraction u (0 = -180), with an optional
+     offset dv in grid rows: see the coast warp in buildPlanetTex. */
+  function earthAt(m, row, u, dv) {
+    var gx = (u - Math.floor(u)) * ES_W - 0.5;
+    var i0 = Math.floor(gx);
+    var tx = smooth(gx - i0);
+    i0 = ((i0 % ES_W) + ES_W) % ES_W;
+    var i1 = (i0 + 1) % ES_W;
+    var gy = row.gy + (dv || 0);
+    var j0 = Math.floor(gy);
+    var ty = gy - j0;
+    if (j0 < 0) { j0 = 0; ty = 0; }
+    if (j0 > ES_H - 2) { j0 = ES_H - 2; ty = 1; }
+    ty = smooth(ty);
+    var a = j0 * ES_W, b = a + ES_W;
+    var t0 = m[a + i0] + (m[a + i1] - m[a + i0]) * tx;
+    var t1 = m[b + i0] + (m[b + i1] - m[b + i0]) * tx;
+    return t0 + (t1 - t0) * ty;
+  }
+
+
   function stampCraters(dat, TW, TH, rnd, count) {
     var c, y, x;
     for (c = 0; c < count; c++) {
@@ -1444,6 +1742,12 @@
                   type === 'neptune' || type === 'gas' || type === 'hotjup' ||
                   type === 'neptunian');
     var watery = (type === 'earth' || type === 'temperate');
+    /* Earth alone draws its land from the real coastline mask; a temperate
+       exoplanet keeps the procedural continents, because nobody has seen
+       its coastlines and inventing Earth's for it would be a lie. */
+    var isEarth = (type === 'earth');
+    var eMask = isEarth ? earthField() : null;
+    var eRow = null;
     var base = 8;                       /* continental / band noise period */
     var nF = 26;                        /* fine detail period */
     var i = 0, x, y;
@@ -1475,37 +1779,55 @@
     var tintB = tint ? tint[2] / 235 : 1;
     var sea0 = (type === 'temperate') ? 0.545 : 0.515;
 
-    /* Only the fields this type actually reads get built. */
+    /* Only the fields this type actually reads get built.
+       At the hero tier the strip is twice as wide and twice as tall, and the
+       noise grid is coarsened to match: the fields are far smoother than the
+       pixel grid either way, so the same grid resampled at finer pixels is
+       what removes the visible texel blocks, and the expensive part of the
+       build (evaluating the noise) costs exactly what it did at 1x. */
+    var fd = (q === 2) ? 2 : 1;
+    function fld(div, fx, fy, per, sd, oct, gain, isR) {
+      return field(TW, TH, div * fd, fx, fy, per, sd, oct, gain, isR);
+    }
     var F_A = null, F_B = null, F_P = null;
     if (banded) {
-      F_A = field(TW, TH, 3, 6, 3, 6, seed + 11, 2, 0.5, false);
-      F_B = field(TW, TH, 2, nF, 9, nF, seed + 41, 2, 0.55, false);
+      F_A = fld(3, 6, 3, 6, seed + 11, 2, 0.5, false);
+      F_B = fld(2, nF, 9, nF, seed + 41, 2, 0.55, false);
     } else if (type === 'venus') {
-      F_A = field(TW, TH, 2, 9, 5, 9, seed + 3, 2, 0.55, false);
-      F_B = field(TW, TH, 2, 22, 12, 22, seed + 9, 2, 0.5, false);
+      F_A = fld(2, 9, 5, 9, seed + 3, 2, 0.55, false);
+      F_B = fld(2, 22, 12, 22, seed + 9, 2, 0.5, false);
     } else if (watery) {
-      F_A = field(TW, TH, 2, base, base * 0.5, base, seed, 4, 0.52, false);
-      F_B = field(TW, TH, 2, nF, nF * 0.5, nF, seed + 61, 2, 0.5, false);
+      F_A = fld(2, base, base * 0.5, base, seed, 4, 0.52, false);
+      F_B = fld(2, nF, nF * 0.5, nF, seed + 61, 2, 0.5, false);
     } else if (type === 'mars') {
-      F_A = field(TW, TH, 2, base, base * 0.5, base, seed, 3, 0.55, false);
-      F_B = field(TW, TH, 2, nF, nF * 0.5, nF, seed + 23, 2, 0.5, false);
+      F_A = fld(2, base, base * 0.5, base, seed, 3, 0.55, false);
+      F_B = fld(2, nF, nF * 0.5, nF, seed + 23, 2, 0.5, false);
     } else if (type === 'ice') {
-      F_A = field(TW, TH, 2, 14, 8, 14, seed + 7, 2, 0.5, true);
-      F_B = field(TW, TH, 2, base, base * 0.5, base, seed + 2, 2, 0.5, false);
+      F_A = fld(2, 14, 8, 14, seed + 7, 2, 0.5, true);
+      F_B = fld(2, base, base * 0.5, base, seed + 2, 2, 0.5, false);
     } else if (type === 'lava') {
-      F_A = field(TW, TH, 2, 11, 6, 11, seed + 13, 3, 0.5, true);
-      F_B = field(TW, TH, 2, nF, nF * 0.5, nF, seed + 29, 2, 0.5, false);
+      F_A = fld(2, 11, 6, 11, seed + 13, 3, 0.5, true);
+      F_B = fld(2, nF, nF * 0.5, nF, seed + 29, 2, 0.5, false);
     } else {
-      F_A = field(TW, TH, 2, base, base * 0.5, base, seed, 3, 0.55, false);
-      F_B = field(TW, TH, 2, nF, nF * 0.5, nF, seed + 17, 2, 0.5, false);
+      F_A = fld(2, base, base * 0.5, base, seed, 3, 0.55, false);
+      F_B = fld(2, nF, nF * 0.5, nF, seed + 17, 2, 0.5, false);
     }
-    if (params.poles) F_P = field(TW, TH, 4, 18, 9, 18, seed + 91, 1, 0.5, false);
+    if (params.poles) F_P = fld(4, 18, 9, 18, seed + 91, 1, 0.5, false);
+    /* Earth's coast fray. The other two fields wander over 40 to 130 texels,
+       which moves a whole coastline about rather than breaking up the cell
+       scale the mask is drawn at; this one turns over in about ten, which is
+       roughly one mask cell, so a bay is a bay and not a corner. Its grid is
+       held at a constant 512 samples across (div rides the hero tier the way
+       every other field here does) so a 1024 strip frays exactly like a 512
+       one and the world does not change shape when you zoom in. */
+    var F_E = isEarth ? fld(1, 96, 48, 96, seed + 131, 2, 0.5, false) : null;
 
     for (y = 0; y < TH; y++) {
       var sinLat = 1 - 2 * (y + 0.5) / TH;
       var absL = Math.abs(sinLat);
       var latSq = sinLat * sinLat;
       var shearBias = 0.55 * Math.pow(absL, 1.5) * (sinLat >= 0 ? 1 : -1);
+      if (eMask) eRow = earthRow(sinLat);
       for (x = 0; x < TW; x++) {
         var u = (x + 0.5) / TW;
         var r, g, b;
@@ -1564,30 +1886,97 @@
           e = e * 0.82 + det * 0.18;
           var sea = sea0;
           var sub = 0;
-          if (eyeball) {
-            /* tidally locked: open water only around the substellar point
-               (longitude 0.5), ice everywhere else */
-            var dlon = u - 0.5; dlon -= Math.round(dlon);
-            sub = Math.sqrt(dlon * dlon * 3.4 + latSq * 0.85);
-            sea = 0.515 + smooth((sub - 0.16) / 0.34) * 0.42;
-          }
-          if (e < sea) {
-            var dep = smooth((sea - e) / 0.22);
-            r = p1r + (p0r - p1r) * dep;
-            g = p1g + (p0g - p1g) * dep;
-            b = p1b + (p0b - p1b) * dep;
-          } else {
-            var h = smooth((e - sea) / 0.30);
-            var hl = smooth((h - 0.30) / 0.55);
-            var lr = p2r + (p3r - p2r) * hl;
-            var lg = p2g + (p3g - p2g) * hl;
-            var lb = p2b + (p3b - p2b) * hl;
-            if (h > 0.72) {
-              var sn = smooth((h - 0.72) / 0.28) * 0.8;
-              lr += (p4r - lr) * sn; lg += (p4g - lg) * sn; lb += (p4b - lb) * sn;
+          if (eMask) {
+            /* land or sea comes from the mask; the noise only frays the
+               coast, so a 3 degree cell never shows as a stair-step */
+            /* The coast noise is stronger toward the poles. The only land
+               that far south is the Antarctic sheet, whose mask outline is a
+               long smooth curve with nothing to break it up, and a straight
+               polygon edge is the one thing that reads as drawn rather than
+               mapped. Nearer the equator the jitter stays small so islands
+               a couple of cells across survive it. */
+            var cj = 0.17 + 0.24 * smooth((absL - 0.72) / 0.20);
+            /* ---- the coast warp ----
+               The mask is drawn on a 2.8 degree grid and no interpolation
+               can invent detail that grid never had: left alone a coast
+               runs along cell edges and turns square corners, which at a
+               hero framing is a dozen pixels of staircase. Adding noise to
+               the THRESHOLD can only push the waterline about half a cell
+               before it starts inventing islands in open ocean, so what
+               moves instead is where the mask is READ. Displacing the
+               sampling point moves a coastline bodily: it can wander a cell
+               and a half without a single false island, because the field
+               it reads is the same field. Two scales, both well inside the
+               no-folding limit for their own wavelength: the fine field
+               turns over in about a cell and makes bays out of corners, the
+               detail field in about five and bends the whole coast. */
+            var wf = smp(F_E, u, y) - 0.5;
+            var wc = det - 0.5;
+            var wu = u + (wf * 1.2 + wc * 3.0) / ES_W;
+            var wv = (smp(F_E, u + 0.37, y) - 0.5) * 1.2 + (e - 0.5) * 3.0;
+            var coast = earthAt(eMask, eRow, wu, wv) + (e - 0.5) * cj +
+                        (det - 0.5) * 0.06 + (wf * 2) * 0.10;
+            /* The land fraction crosses over a band rather than switching.
+               A hero framing puts a texel under two screen pixels, and a
+               hard switch there is a jagged edge with no intermediate
+               colour anywhere on it; blending the two across a band that is
+               a couple of texels wide is the anti-aliasing. It costs a
+               second colour only on the texels that actually straddle a
+               coast. */
+            var landF = coast <= 0.5 - ECOAST_W ? 0
+                      : (coast >= 0.5 + ECOAST_W ? 1
+                      : smooth((coast - 0.5 + ECOAST_W) / (2 * ECOAST_W)));
+            var esr = 0, esg = 0, esb = 0;
+            if (landF < 1) {
+              var edep = smooth((0.5 - coast) / 0.34);
+              esr = p1r + (p0r - p1r) * edep;
+              esg = p1g + (p0g - p1g) * edep;
+              esb = p1b + (p0b - p1b) * edep;
             }
-            var lsh = 0.90 + det * 0.20;
-            r = lr * lsh; g = lg * lsh; b = lb * lsh;
+            if (landF > 0) {
+              /* The dry subtropics. The Sahara, Arabia, the Kalahari, the
+                 Australian interior and the American southwest all sit in
+                 the same two belts either side of the tropics, which is why
+                 one latitude rule puts sand where sand is. */
+              var dry = smooth((absL - 0.21) / 0.13) * (1 - smooth((absL - 0.50) / 0.17));
+              dry = clamp(dry * (0.40 + 0.90 * det), 0, 1);
+              var elr = p2r + (p3r - p2r) * dry;
+              var elg = p2g + (p3g - p2g) * dry;
+              var elb = p2b + (p3b - p2b) * dry;
+              var relief = 0.88 + 0.28 * e;
+              elr *= relief; elg *= relief; elb *= relief;
+              r = esr + (elr - esr) * landF;
+              g = esg + (elg - esg) * landF;
+              b = esb + (elb - esb) * landF;
+            } else {
+              r = esr; g = esg; b = esb;
+            }
+          } else {
+            if (eyeball) {
+              /* tidally locked: open water only around the substellar point
+                 (longitude 0.5), ice everywhere else */
+              var dlon = u - 0.5; dlon -= Math.round(dlon);
+              sub = Math.sqrt(dlon * dlon * 3.4 + latSq * 0.85);
+              sea = 0.515 + smooth((sub - 0.16) / 0.34) * 0.42;
+            }
+            if (e < sea) {
+              var dep = smooth((sea - e) / 0.22);
+              r = p1r + (p0r - p1r) * dep;
+              g = p1g + (p0g - p1g) * dep;
+              b = p1b + (p0b - p1b) * dep;
+            } else {
+              var h = smooth((e - sea) / 0.30);
+              var hl = smooth((h - 0.30) / 0.55);
+              var lr = p2r + (p3r - p2r) * hl;
+              var lg = p2g + (p3g - p2g) * hl;
+              var lb = p2b + (p3b - p2b) * hl;
+              if (h > 0.72) {
+                var sn = smooth((h - 0.72) / 0.28) * 0.8;
+                lr += (p4r - lr) * sn; lg += (p4g - lg) * sn; lb += (p4b - lb) * sn;
+              }
+              var lsh = 0.90 + det * 0.20;
+              r = lr * lsh; g = lg * lsh; b = lb * lsh;
+            }
           }
           if (eyeball) {
             var ice = smooth((sub - 0.30) / 0.26);
@@ -1694,8 +2083,9 @@
     var dat = img.data;
     var seed = ((params.seed | 0) ^ 0x2C1B3C6D) || 7;
     var per = 7;
-    var F_C = field(TW, TH, 2, per, per * 0.42, per, seed, 3, 0.55, false);
-    var F_D = field(TW, TH, 2, per * 3, per * 1.3, per * 3, seed + 5, 2, 0.5, false);
+    var cd = (q === 2) ? 2 : 1;                 /* hero tier: same noise grid */
+    var F_C = field(TW, TH, 2 * cd, per, per * 0.42, per, seed, 3, 0.55, false);
+    var F_D = field(TW, TH, 2 * cd, per * 3, per * 1.3, per * 3, seed + 5, 2, 0.5, false);
     var i = 0, x, y;
     for (y = 0; y < TH; y++) {
       var sinLat = 1 - 2 * (y + 0.5) / TH;
@@ -1719,7 +2109,7 @@
 
   function planetTexKey(p, q) {
     return 'P|' + p.type + '|' + (p.seed | 0) + '|' + (p.eyeball ? 1 : 0) +
-           '|' + (p.tint ? (p.tint[0] + '_' + p.tint[2]) : 'n') + '|' + (q ? 1 : 0);
+           '|' + (p.tint ? (p.tint[0] + '_' + p.tint[2]) : 'n') + '|' + (q | 0);
   }
 
   /* ---- rings ---- */
@@ -1835,6 +2225,158 @@
     ctx.lineWidth = 1;
   }
 
+  /* ---- the lit rim of an atmosphere ----
+     An air shell is lit, not self-luminous, so the ring it puts round the
+     limb belongs on the DAY side and has to die away toward the night one.
+     Two things about the old version were wrong enough to see:
+
+       - it was a full circle at a flat opacity, so a world drew a complete
+         bright outline of itself. On Saturn that outline ran straight across
+         the front ring band and read as a circle stroked on top of the rings;
+       - the brighter crescent was one `arc` stroke, so it had a squared-off
+         butt end (the notch photographed at the top of Saturn's limb) and two
+         hard radial edges.
+
+     Both terms are now painted as abutting wedges of an annulus filled by a
+     radial gradient: the gradient softens them across the limb, the per-wedge
+     alpha softens them around it, and because the composite mode is additive
+     the wedges' antialiased edges sum back to one continuous band with no
+     seams. The falloff is the SAME lit-side term the GL orb shader already
+     used, so the two renderers now put the same light in the same place.
+
+     One wedge is one FLAT alpha, though, so the seam is only invisible while
+     the step between neighbours is. At equal angular spacing it was not: the
+     crescent's taper runs out over a third of a radian, which was two wedges,
+     so the brightest arc on the disc ended in a step of 0.65 of its own
+     weight. On a hero-sized Earth that is a hard straight edge standing off
+     the limb, and the ones behind it read as a rectangle of haze (the
+     deep-zoom finding). So the wedges are cut at equal steps of WEIGHT rather
+     than of angle: they crowd where the falloff is steep and stretch where it
+     is flat, no step is worth more than about a level of colour, and no wedge
+     is allowed to be so wide that a ring's shadow across the glow loses its
+     shape. The count rides the drawn radius, so a small planet costs less
+     than it used to and only a close-up pays for the fine version.
+
+     `base` is the caller's overall fade; every wedge composes with it. */
+  var ATM_MAXW = 0.42;      /* rad, the widest a single wedge may be */
+  var atmD = [];            /* boundary scratch, reused: no per-frame garbage */
+
+  /* inverse of smooth() on [0, 1] */
+  function invSmooth(y) {
+    if (!(y > 0)) return 0;
+    if (y >= 1) return 1;
+    return 0.5 - Math.sin(Math.asin(clamp(1 - 2 * y, -1, 1)) / 3);
+  }
+  /* how many equal-weight steps this radius is worth */
+  function atmSegs(r, k, lo, hi) {
+    return clamp(Math.round(r * k), lo, hi) | 0;
+  }
+  /* the two terms' weight ladders, as dth for a uniform t in (0, 1] */
+  function rimInv(t) { return Math.acos(clamp(1 - 2 * t, -1, 1)); }
+  function cresInv(t) { return 0.90 + 0.35 * invSmooth(t); }
+  /* Boundaries in dth (0 outward), one per equal step of the term's angular
+     weight, subdivided again wherever a wedge would be wider than maxStep. */
+  function atmSteps(out, inv, half, M, maxStep) {
+    out.length = 0;
+    out.push(0);
+    var prev = 0, j, s, kk, span, d;
+    for (j = 1; j <= M; j++) {
+      d = inv(j / M);
+      if (d > half) d = half;
+      span = d - prev;
+      if (span > maxStep) {
+        kk = Math.ceil(span / maxStep);
+        for (s = 1; s < kk; s++) out.push(prev + span * s / kk);
+      }
+      if (d > prev) out.push(d);
+      prev = d;
+    }
+  }
+  function atmWedge(ctx, x, y, r0, r1, a0, a1) {
+    ctx.beginPath();
+    ctx.arc(x, y, r1, a0, a1);
+    ctx.arc(x, y, r0, a1, a0, true);
+    ctx.closePath();
+    ctx.fill();
+  }
+  /* How much ring lies over a point at screen radius `rho` (in planet radii)
+     and screen angle `th`. The ring plane is a circle squashed by sin(tilt),
+     so undoing the squash turns the screen point back into a radius in the
+     plane, and the band table says whether there is anything there.
+     A ringed planet with an un-attenuated limb glow draws a complete bright
+     circle of itself straight across its own ring band, which is the one
+     thing a photograph of Saturn never shows. */
+  function ringCover(rings, rho, th) {
+    if (!rings) return 0;
+    var tilt = clamp(num(rings.tilt, 0.4665), 0.02, Math.PI / 2 - 0.02);
+    var sq = Math.max(0.03, Math.sin(tilt));
+    var xr = rho * Math.cos(th), yr = rho * Math.sin(th) / sq;
+    var rr = Math.sqrt(xr * xr + yr * yr);
+    if (!fin(rr)) return 0;
+    return ringAlphaAt(rr);
+  }
+  function drawAtmosphere(ctx, x, y, r, atmC, L, base, rings) {
+    if (!atmC || !fin(r) || r <= 0) return;
+    var lit = fin(L) ? L : Math.PI;
+    var k = clamp(num(base, 1), 0, 1);
+    if (k <= 0.004) return;
+    var i, s, a0, a1, dth, w, d0, d1, mid;
+
+    /* the broad rim: 0.90 r to 1.12 r, peaking just outside the limb.
+       Its weight is 0.60 + 0.40 cos(dth), so equal steps of weight are equal
+       steps of cos and the boundaries are acos of a uniform ladder. */
+    var rimIn = r * 0.90, rimOut = r * 1.12;
+    var rg = rgrad(ctx, x, y, rimIn, x, y, rimOut);
+    if (rg) {
+      stop(rg, 0, rgba(atmC, 0));
+      stop(rg, 0.55, rgba(atmC, 0.18));
+      stop(rg, 1, rgba(atmC, 0));
+      ctx.fillStyle = rg;
+      atmSteps(atmD, rimInv, Math.PI, atmSegs(r, 0.06, 8, 24), ATM_MAXW);
+      for (s = -1; s <= 1; s += 2) {
+        for (i = 0; i + 1 < atmD.length; i++) {
+          d0 = atmD[i]; d1 = atmD[i + 1];
+          dth = (d0 + d1) * 0.5;
+          mid = lit + s * dth;
+          w = 0.20 + 0.80 * (0.5 + 0.5 * Math.cos(dth));
+          w *= 1 - 0.80 * ringCover(rings, 1.01, mid);
+          if (w <= 0.004) continue;
+          ctx.globalAlpha = k * w;
+          a0 = lit + s * d0; a1 = lit + s * d1;
+          atmWedge(ctx, x, y, rimIn, rimOut, Math.min(a0, a1), Math.max(a0, a1));
+        }
+      }
+    }
+
+    /* the brighter crescent on the lit limb, tapering to nothing by 1.25 rad.
+       Its weight is flat out to 0.90 rad and then runs down a smoothstep, so
+       the ladder is one wide wedge over the flat part and the inverse of that
+       smoothstep over the taper. */
+    var crIn = r * 0.945, crOut = r * 1.025;
+    var cg = rgrad(ctx, x, y, crIn, x, y, crOut);
+    if (cg) {
+      stop(cg, 0, rgba(atmC, 0));
+      stop(cg, 0.5, rgba(atmC, 0.30));
+      stop(cg, 1, rgba(atmC, 0));
+      ctx.fillStyle = cg;
+      atmSteps(atmD, cresInv, 1.25, atmSegs(r, 0.085, 8, 32), ATM_MAXW);
+      for (s = -1; s <= 1; s += 2) {
+        for (i = 0; i + 1 < atmD.length; i++) {
+          d0 = atmD[i]; d1 = atmD[i + 1];
+          dth = (d0 + d1) * 0.5;
+          mid = lit + s * dth;
+          w = 1 - smooth((dth - 0.90) / 0.35);
+          w *= 1 - 0.80 * ringCover(rings, 0.99, mid);
+          if (w <= 0.002) continue;
+          ctx.globalAlpha = k * w;
+          a0 = lit + s * d0; a1 = lit + s * d1;
+          atmWedge(ctx, x, y, crIn, crOut, Math.min(a0, a1), Math.max(a0, a1));
+        }
+      }
+    }
+    ctx.globalAlpha = k;
+  }
+
   /* ---- drawPlanet(ctx, cx, cy, rPx, params, t, opts) ----
      params comes from planetParams() or exoParams(). opts:
        quality:    1 (default) or 0 (card preview)
@@ -1863,6 +2405,7 @@
     if (!fin(x) || !fin(y) || !fin(r) || r <= 0 || alpha <= 0.004) return;
     if (r > 4000) r = 4000;
     var tt = num(t, 0);
+    markFrame(tt);
     var L = num(o.lightDir, Math.PI);
     var look = planetLook(params);
     var type = look.type;
@@ -1881,7 +2424,17 @@
     }
     if (!fin(spin)) spin = 0;
 
-    var entry = texGet(planetTexKey(params, q), function () { return buildPlanetTex(params, q); });
+    /* the hero tier: one close-up body at a time gets the 1024 x 512 strip,
+       and a build that fails falls straight back to the ordinary one */
+    var qt = (q && r >= HI_R) ? 2 : q;
+    var entry = null;
+    if (qt === 2) {
+      entry = hiGet(planetTexKey(params, 2), function () { return buildPlanetTex(params, 2); });
+      if (!entry || !entry.tex) { entry = null; qt = q; }
+    }
+    if (!entry) {
+      entry = texGet(planetTexKey(params, q), function () { return buildPlanetTex(params, q); });
+    }
     var prevOp = ctx.globalCompositeOperation;
     ctx.globalAlpha = alpha;
 
@@ -1891,18 +2444,21 @@
       drawRingHalf(ctx, x, y, r, rings, look.ringTint, -1, q);
     }
 
-    /* flat base under the texture: a missing strip still reads as a world */
-    ctx.fillStyle = rgba(pal[0], 1);
-    if (circle(ctx, x, y, r)) ctx.fill();
-
     ctx.save();
     if (circle(ctx, x, y, r)) {
       ctx.clip();
-      if (entry && entry.tex) drawSphere(ctx, x, y, r, entry.tex, spin, slabCount(q));
+      /* Flat base under the texture, so a missing strip still reads as a
+         world. It is a rect INSIDE the clip on purpose: filled as its own
+         circle it was a second antialiased edge on the same pixels as the
+         clip, and the sliver it left uncovered by everything drawn after it
+         traced a bright hairline round the limb. */
+      ctx.fillStyle = rgba(pal[0], 1);
+      ctx.fillRect(x - r - 1, y - r - 1, r * 2 + 2, r * 2 + 2);
+      if (entry && entry.tex) drawSphere(ctx, x, y, r, entry.tex, spin, slabCount(qt));
       /* cloud deck, scrolled a little faster than the ground */
       if (look.clouds && entry && entry.aux && entry.aux !== entry.glow) {
         drawSphere(ctx, x, y, r * 1.004, entry.aux,
-                   look.locked ? spin : spin * 1.18 + 0.7, slabCount(q));
+                   look.locked ? spin : spin * 1.18 + 0.7, slabCount(qt));
       }
       if (rings && q) drawRingShadow(ctx, x, y, r, rings, L);
       /* day / night */
@@ -1911,7 +2467,7 @@
       if (look.emissive && entry && entry.glow) {
         ctx.globalCompositeOperation = 'lighter';
         ctx.globalAlpha = alpha * 0.85;
-        drawSphere(ctx, x, y, r, entry.glow, spin, slabCount(q));
+        drawSphere(ctx, x, y, r, entry.glow, spin, slabCount(qt));
         ctx.globalAlpha = alpha;
         ctx.globalCompositeOperation = prevOp;
       }
@@ -1921,25 +2477,9 @@
 
     /* atmosphere: a rim ring plus a brighter crescent on the lit limb */
     if (atmos) {
-      var atmC = look.atmC;
       ctx.globalCompositeOperation = 'lighter';
-      var ag = rgrad(ctx, x, y, r * 0.90, x, y, r * 1.12);
-      if (ag) {
-        stop(ag, 0, rgba(atmC, 0));
-        stop(ag, 0.55, rgba(atmC, 0.18));
-        stop(ag, 1, rgba(atmC, 0));
-        ctx.fillStyle = ag;
-        if (circle(ctx, x, y, r * 1.12)) ctx.fill();
-      }
-      var a0 = L - 1.25, a1 = L + 1.25;
-      if (fin(a0) && fin(a1)) {
-        ctx.strokeStyle = rgba(atmC, 0.30);
-        ctx.lineWidth = Math.max(0.7, r * 0.035);
-        ctx.beginPath();
-        ctx.arc(x, y, r * 0.985, a0, a1);
-        ctx.stroke();
-        ctx.lineWidth = 1;
-      }
+      drawAtmosphere(ctx, x, y, r, look.atmC, L, alpha, rings);
+      ctx.globalAlpha = alpha;
       ctx.globalCompositeOperation = prevOp;
     }
 
@@ -2050,6 +2590,30 @@
     drawRingShadow: drawRingShadow,
     SOL_PARAMS: SOL_PARAMS,
     SPOT_MAX: SPOT_MAX,
+    /* test hook: the built strip for a body, so a probe can read the texture
+       itself rather than guess at it from a shaded, rotating disc. The strip
+       is cylindrical in longitude (column 0 is longitude -180) and equal-area
+       in latitude (row y is linear in sin(latitude)). */
+    /* test hook: the baked land fraction at a longitude and latitude in
+       degrees, 0 = sea and 1 = land, read off the smoothed land field */
+    __earthLand: function (lonDeg, latDeg) {
+      var m = earthField();
+      var lat = clamp(num(latDeg, 0), -90, 90);
+      var u = (num(lonDeg, 0) + 180) / 360;
+      return earthAt(m, earthRow(Math.sin(lat * Math.PI / 180)), u);
+    },
+    /* test hook: the strip cache's own account of itself */
+    __texStats: function () {
+      return { size: texKeys.length, max: TEX_MAX, hard: TEX_HARD,
+               builds: texBuilds, evicts: texEvicts };
+    },
+    __texOf: function (params, q) {
+      if (!params || typeof params !== 'object') return null;
+      var qq = (q === 0 || q === 2) ? q : 1;
+      var e = texGet(planetTexKey(params, qq),
+                     function () { return buildPlanetTex(params, qq); });
+      return e ? e.tex : null;
+    },
     __demo: __demo
   };
 

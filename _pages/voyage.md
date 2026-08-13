@@ -246,6 +246,124 @@ html[data-theme="light"] .voy-panel { background: rgba(255,255,255,0.97); border
   html:not([data-theme="dark"]) .voy-panel { background: rgba(255,255,255,0.97); border-color: rgba(0,0,0,0.12); box-shadow: 0 6px 24px rgba(0,0,0,0.15); }
 }
 
+/* ---- scroll cues for the two scrolling surfaces (the panel and the card) ----
+   Both are capped by a max-height and both scroll, and neither said so. On a
+   1280x720 laptop the panel holds about 1,230 px of content in a 540 px
+   window, the browser's overlay scrollbar fades itself out, and the controls
+   below the fold simply looked missing. Two cues, both pure CSS:
+     1. a thin scrollbar that stays drawn while the surface is scrollable, and
+     2. a soft fade over the bottom edge.
+   The fade is a sticky pseudo-element whose opacity is driven by a SCROLL
+   timeline, which is what lets one rule serve both surfaces: it is off when
+   the surface fits (a three-line card gets no veil over its buttons), it
+   rides the scroll while there is more below, and it fades out as you reach
+   the end. Its negative bottom margin means it adds no height. A browser
+   without scroll timelines drops the animation, the pseudo-element stays at
+   its base opacity of 0, and the scrollbar carries the cue on its own. */
+/* Chrome and Safari: styling ::-webkit-scrollbar opts the surface OUT of the
+   auto-hiding overlay scrollbar, which is the point. The overlay one is
+   invisible until you are already scrolling, so it cannot tell you there is
+   anything below. Only for fine pointers: on a phone the overlay scrollbar is
+   the platform norm and the fade carries the cue on its own. Engines without
+   the pseudo (Firefox) get the standard properties instead; setting those in
+   Chrome would put the overlay scrollbar back. */
+@media (pointer: fine) {
+  .voy-panel::-webkit-scrollbar, .voy-card::-webkit-scrollbar { width: 9px; }
+  .voy-panel::-webkit-scrollbar-track, .voy-card::-webkit-scrollbar-track { background: transparent; }
+  .voy-panel::-webkit-scrollbar-thumb, .voy-card::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.26); border-radius: 5px;
+  }
+  .voy-panel:hover::-webkit-scrollbar-thumb, .voy-card:hover::-webkit-scrollbar-thumb,
+  .voy-panel:focus-within::-webkit-scrollbar-thumb, .voy-card:focus-within::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.46);
+  }
+}
+@supports not selector(::-webkit-scrollbar) {
+  .voy-panel, .voy-card {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255,255,255,0.30) transparent;
+  }
+}
+@keyframes voy-scrollcue { from { opacity: 1; } to { opacity: 0; } }
+/* ---- E-2: the cue is a hint, not a shutter ----
+   At 1440x900 the panel scrolls by only about 20 px before Share link and Save
+   image sit squarely under the strip, and at the strength it started with they
+   measured 1.8:1 in dark and 1.5:1 in light. That does not read as "there is
+   more below", it reads as "these buttons are disabled". Two changes keep the
+   cue and give the text back:
+     - the band is 1.55rem instead of 2rem, and
+     - the peak is capped where a control under it still clears 4.5:1
+       (measured, every scroll position, both themes).
+   The light branch also stops fading to WHITE. A white veil on a white panel
+   pulls the ink up toward the plate, which is the one direction that destroys
+   contrast; a soft shadow dims both together and reads as the same affordance.
+   The scrollbar above carries the rest of the message either way. */
+.voy-panel::after, .voy-card::after {
+  content: ''; display: block; pointer-events: none;
+  position: sticky; bottom: 0; height: 1.55rem;
+  /* The negative TOP margin is load-bearing, and it must match the height: a
+     scroll container's scrollable area counts a descendant's border box, and a
+     negative BOTTOM margin does not take it back, so hanging the strip off the
+     end added about 20 px of phantom scroll to every surface, which in turn
+     switched the cue on over cards that fit. Overlapping the last 1.55rem of
+     content instead leaves the scroll range byte for byte what it was
+     (measured, both spellings side by side), and the strip is only ever
+     painted when there is more below. */
+  margin: -1.55rem -1rem 0;
+  background: linear-gradient(to bottom, rgba(12,12,12,0), rgba(12,12,12,0.40));
+  opacity: 0;
+  /* longhands, and `nearest`, on purpose. The `animation` shorthand resets
+     animation-timeline, and `scroll(self)` resolves against the PSEUDO
+     element, which is not a scroll container, so that spelling silently
+     leaves the cue at its base opacity (measured in Chrome, both spellings
+     side by side). `nearest` is the surface itself. */
+  animation-name: voy-scrollcue;
+  animation-duration: auto;
+  animation-timing-function: linear;
+  animation-fill-mode: both;
+  animation-timeline: scroll(nearest block);
+  animation-range: calc(100% - 2.5rem) 100%;
+}
+/* collapsed, there is nothing to scroll and nothing to fade */
+.voy-panel--collapsed::after { display: none; }
+/* The panel and the card keep their light-theme surface even here, where the
+   sky stays dark, so both cues re-ink with them. The scrollbar colours stay
+   inside the same two branches as above: a `scrollbar-color` outside the
+   @supports branch would hand Chrome its overlay scrollbar back. */
+html[data-theme="light"] .voy-panel::after, html[data-theme="light"] .voy-card::after {
+  background: linear-gradient(to bottom, rgba(30,32,38,0), rgba(30,32,38,0.30));
+}
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .voy-panel::after,
+  html:not([data-theme="dark"]) .voy-card::after {
+    background: linear-gradient(to bottom, rgba(30,32,38,0), rgba(30,32,38,0.30));
+  }
+}
+@media (pointer: fine) {
+  html[data-theme="light"] .voy-panel::-webkit-scrollbar-thumb,
+  html[data-theme="light"] .voy-card::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.24); }
+  html[data-theme="light"] .voy-panel:hover::-webkit-scrollbar-thumb,
+  html[data-theme="light"] .voy-card:hover::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.44); }
+}
+@media (pointer: fine) and (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .voy-panel::-webkit-scrollbar-thumb,
+  html:not([data-theme="dark"]) .voy-card::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.24); }
+  html:not([data-theme="dark"]) .voy-panel:hover::-webkit-scrollbar-thumb,
+  html:not([data-theme="dark"]) .voy-card:hover::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.44); }
+}
+@supports not selector(::-webkit-scrollbar) {
+  html[data-theme="light"] .voy-panel, html[data-theme="light"] .voy-card {
+    scrollbar-color: rgba(0,0,0,0.28) transparent;
+  }
+}
+@supports not selector(::-webkit-scrollbar) {
+  @media (prefers-color-scheme: light) {
+    html:not([data-theme="dark"]) .voy-panel, html:not([data-theme="dark"]) .voy-card {
+      scrollbar-color: rgba(0,0,0,0.28) transparent;
+    }
+  }
+}
+
 .voy-panel__head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
 .voy-panel__title { font-weight: 700; font-size: 1.05em; }
 .voy-collapse {
@@ -331,6 +449,16 @@ html[data-theme="light"] .voy-return { background: rgba(0,0,0,0.04); }
 @media (prefers-color-scheme: light) {
   html:not([data-theme="dark"]) .voy-return { background: rgba(0,0,0,0.04); }
 }
+/* This chip sits ON the sky, which stays dark in light theme (SKY_DARK), so
+   it re-inks exactly like the two corner buttons above. In light theme it was
+   the near-black light-theme ink on a near-black sky, about 2:1. Placed after
+   the light rules on purpose: same specificity, later wins. */
+body.voy-darksky .voy-return {
+  color: #d6d6d6;
+  border-color: rgba(255,255,255,0.30);
+  background: rgba(255,255,255,0.10);
+}
+body.voy-darksky .voy-return:focus-visible { outline-color: #82a6cc; }
 body.voy-sheet-open .voy-return { display: none !important; }
 
 /* The first-run hint sits at 38vh by default, which on this page is exactly

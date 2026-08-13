@@ -43,6 +43,42 @@
       return Math.round(v / p) * p;
     }
 
+    /* A2-8b: "a 80-day wait" was wrong wherever a number is read aloud. The
+       article follows the SPOKEN form of the leading digits: anything that
+       starts with an 8 is "eight..." or "eighty...", and 11 and 18 are
+       "eleven" and "eighteen" only while they are the whole leading group
+       (110 is "one hundred ten", 11,000 is "eleven thousand"). */
+    function artNum(n) {
+      var v = Math.abs(Math.round(n));
+      if (!isFinite(v)) return 'a';
+      var s = String(v);
+      if (s.charAt(0) === '8') return 'an';
+      if (s.charAt(0) === '1' && (s.charAt(1) === '1' || s.charAt(1) === '8')) {
+        var L = s.length;
+        return (L === 2 || L === 5 || L === 8 || L === 11) ? 'an' : 'a';
+      }
+      return 'a';
+    }
+
+    /* A2-8c: a unit reads singular at exactly 1, after the caller's own
+       rounding ("flip in 1 ship-year", never "1 ship-years"). */
+    function unitN(n, unit) {
+      return n + ' ' + unit + (n === 1 ? '' : 's');
+    }
+
+    /* A2-8d: past ten thousand years the digits of a period are noise. This
+       is the same rounding fmtYears already uses, with a word for the
+       millions so a chip cannot read "1,100,616-year orbit". */
+    function bigYears(y) {
+      if (!isFinite(y) || y <= 0) return '?';
+      if (y >= 1e6) {
+        var m = y / 1e6;
+        return 'about ' + (m >= 100 ? fmtInt(Math.round(m)) : (Math.round(m * 10) / 10)) +
+               ' million years';
+      }
+      return 'about ' + fmtInt(round3sig(y)) + ' years';
+    }
+
     function fmtYears(y) {
       if (!isFinite(y) || y < 0) return '?';
       if (y < 1) {
@@ -274,7 +310,9 @@
       bh: 'Sagittarius A*, the black hole at the center of the galaxy, about four ' +
           "million times the Sun's mass. There is no picture of it here because a " +
           'black hole has no surface to draw. Its position and distance are ' +
-          'measured. Everything else on this page about it is words.',
+          'measured. Everything else on this page about it is words. There is ' +
+          'not much to see here yet: no star, no surface. A closer look at this ' +
+          'place is coming.',
       globular: 'A globular cluster: a few hundred thousand old stars bound together, ' +
           "orbiting outside the galaxy's disc. Drawn as a swarm because that is what " +
           'it is.',
@@ -381,6 +419,8 @@
       if (days < 10) return (Math.round(days * 10) / 10) + ' days';
       if (days < 1200) return Math.round(days) + ' days';
       var y = days / 365.25;
+      /* A2-8d: same rule as chipLine, so the chip and its detail agree */
+      if (y >= 10000) return bigYears(y);
       return (y < 10 ? Math.round(y * 10) / 10 : Math.round(y)) + ' years';
     }
 
@@ -393,7 +433,11 @@
         if (p.per < 1200) {
           parts.push((p.per < 10 ? Math.round(p.per * 10) / 10 : Math.round(p.per)) + '-day year');
         } else {
-          parts.push((Math.round(p.per / 365.25 * 10) / 10) + '-year orbit');
+          /* A2-8d: a wide companion's period ran to seven digits and read as
+             a serial number ("1100616-year orbit") */
+          var py = p.per / 365.25;
+          parts.push(py >= 10000 ? ('orbit of ' + bigYears(py))
+                                 : ((Math.round(py * 10) / 10) + '-year orbit'));
         }
       } else if (p.a != null && isFinite(p.a)) {
         parts.push(fmt2x(p.a) + ' AU out');
@@ -864,8 +908,9 @@
           alt: ['The sky bunches up ahead and turns blue. That is what relativity says you would see.'] },
         /* [decel] */
         { t: 27500, ms: 3600,
-          text: 'Braking now. The engines face the way you came and fight your own speed.',
-          alt: ['Braking now. The engines face the way you came and fight your own speed.',
+          text: 'Braking now. The ship flies tail-first, its engines fighting your own speed.',
+          alt: ['Braking now. The ship flies tail-first, its engines fighting your own speed.',
+                'Braking. The ship flies tail-first, engines fighting your speed.',
                 'Braking. The engines fight your own speed.',
                 'Braking.'] },
         /* [capture] */
@@ -1625,6 +1670,9 @@
     }
 
     P.fmtInt = fmtInt;
+    P.artNum = artNum;
+    P.unitN = unitN;
+    P.bigYears = bigYears;
     P.round3sig = round3sig;
     P.fmtYears = fmtYears;
     P.supInt = supInt;
@@ -1787,6 +1835,7 @@
   var centeredStar = -1;                /* star index the camera is parked on */
   var cruiseSt = null;                  /* star cruise state */
   var panelUi = null;                   /* GadgetUI.initPanel handle */
+  var firstHint = null;                 /* GadgetUI.firstRunHint handle (A2-11) */
   var arriveInfo = null;                /* arrival summary for the card */
   var starPulse = 0;                    /* arrival ring pulse t0 */
   var accelIdx = 1, shipIdx = 1;        /* trip controls (1 g, crewed ship) */
@@ -1925,6 +1974,18 @@
     };
   }
   function setStatus(t) { if (statusEl) statusEl.textContent = t; }
+  /* ---- A2-6: the flight narrates itself, and a view toggle is a whisper ----
+     "Chase view. Flying with the ship." used to be the last thing the panel
+     ever said: it was written once and then sat there through the burn, the
+     flip and the capture, describing a control rather than the flight. A
+     toggle now holds the status for about four seconds and then hands it
+     back to the beat the ship is actually in, which keeps updating. */
+  var narrHold = 0, narrPhase = '';
+  function transientStatus(txt) {
+    setStatus(txt);
+    narrHold = performance.now() + 4000;
+    narrPhase = '';                      /* re-narrate as soon as the hold ends */
+  }
   function liveStatusText(txt) {
     var t = performance.now();
     if (t - ariaLast > 400) { ariaLast = t; setStatus(txt); ariaPend = null; }
@@ -1939,6 +2000,13 @@
   var scrX = new Float32Array(NS), scrY = new Float32Array(NS);
   var scrOk = new Uint8Array(NS);
   var starsVis = false;
+  /* A1-5 splits the old single flag in two. `starsVis` is "the tiers were
+     PAINTED this frame" and is now true at every zoom; `starsPick` is "the
+     tiers are the thing the reader is looking at", which is the old gate and
+     is what hover, picking and the field's own labels still use. Without the
+     split, opening a close-up would make several hundred background stars
+     clickable on top of the disc. */
+  var starsPick = false;
   var curSa = 0;                        /* this frame's star-tier alpha */
   var bandLists = [[], [], []];
   /* The same stars again, grouped by band AND atlas colour bucket, so the
@@ -2048,6 +2116,14 @@
   }
 
   var searchEntries = PURE.buildSearchEntries(SD, PLANET_LABELS);
+  /* A2-9: the one star everybody knows was the one star you could not look
+     up. It is not in the catalog (the catalog is what we see FROM here), so
+     it gets its own row, first in the list because a prefix match on "sun"
+     should not have to compete with Kalasungsang. "sol" reaches it too, as a
+     substring, which is where an old name belongs. Choosing it flies home
+     rather than opening a star card: there is no catalog record to show. */
+  searchEntries.unshift({ label: 'Sun', kind: 'sun', idx: -1,
+                          sub: 'our own star', lower: 'sun sol' });
 
   /* ---------------- procedural art libraries ---------------- */
   var ART = window.VoyageArt || null;
@@ -2101,6 +2177,17 @@
   /* the plate alpha the HUD should use this frame: nothing over empty sky,
      rising to the caption band's own 0.55 once an orb is a serious presence */
   function hudScrim() { return 0.55 * ramp(hudOrbPx, 55, 190); }
+  /* ---- A2-12: the readable-at-all-times plate ----
+     hudScrim asks "is a bright orb behind this line", which is the loud
+     case and not the only one: a dense star field, a lit hull and the
+     galaxy's own painted arms all wash out 12 px grey text, and at the
+     capture beat a lit limb under a 0.55 plate still left the hint line at
+     about 1.5:1. So the HUD block and the scale bar carry a soft backing
+     from the first frame (0.28) and it deepens past the old ceiling when
+     something bright really is behind them. The plate is the same
+     theme-aware horizontal gradient hudLine already paints, so nothing new
+     appears on screen; it just never falls to nothing. */
+  function hudPlateA() { return clampN(0.28 + hudScrim() * 1.05, 0.28, 0.85); }
   function orbDrawStar(g, x, y, r, sp, tSec, opts, allowGl) {
     if (g === ctx) noteOrb(r, opts && opts.alpha);
     if (allowGl) {
@@ -2304,7 +2391,95 @@
   var camPX = 0, camPY = 0, camPZ = 0;   /* camera position, absolute AU */
   var fX = 0, fY = 0, fZ = 0, rX = 0, rY = 0, rZ = 0, uX = 0, uY = 0, uZ = 0;
 
-  function explorePP() { return { x: W / 2, y: H * 0.5 }; }
+  /* ---- A1-11: the close-up centres in the panel-free strip ----
+     The control panel is a fixed overlay on the right, so a close-up centred
+     on the FULL canvas runs under it: at 1024-1280 px wide Saturn's rings were
+     drawn behind the panel and there was no way to see them without collapsing
+     it. The reserve is measured off the real rect (never a breakpoint), and it
+     is 0 whenever the panel is not a right-edge column that reaches into the
+     middle of the screen -- so the collapsed bar, a phone sheet and a narrow
+     viewport all keep the old centring exactly. */
+  function panelColW() {
+    if (W < 600 || !elPanel || elPanel.hidden || !elPanel.getBoundingClientRect) return 0;
+    var r = elPanel.getBoundingClientRect();
+    if (!r || !(r.width > 0) || !(r.height > 0)) return 0;
+    if (r.left < W * 0.45) return 0;          /* not a right-edge column */
+    if (!(r.bottom > H * 0.30)) return 0;     /* a short collapsed bar is clear */
+    return clampN(W - r.left + 10, 0, W * 0.42);
+  }
+  /* the card is the same story on the left, and on a wide screen it is the
+     bigger of the two: an open info card is 420 px of the viewport, and a
+     close-up centred past it puts the very body the card is about behind it.
+     A phone bottom sheet spans the width, so it leaves no strip and is
+     deliberately ignored here (the sheet already collapses the panel). */
+  function cardColW() {
+    if (W < 900 || !cardEl || cardEl.hidden || !cardEl.getBoundingClientRect) return 0;
+    var r = cardEl.getBoundingClientRect();
+    if (!r || !(r.width > 0) || !(r.height > 0)) return 0;
+    if (r.right > W * 0.55) return 0;         /* not a left-edge column */
+    if (!(r.bottom > H * 0.30)) return 0;
+    return clampN(r.right + 10, 0, W * 0.42);
+  }
+  /* the strip the two overlays leave, in canvas x */
+  function usableStrip() {
+    var x0 = cardColW(), x1 = W - panelColW();
+    if (x1 - x0 < 160) { x0 = 0; x1 = W; }
+    return { x0: x0, x1: x1, w: x1 - x0 };
+  }
+  /* `halfPx` is how much screen the close-up about to be framed will take. The
+     centre then moves by the LEAST amount that clears both overlays, and falls
+     back to the middle of the strip when the body is too big to clear them at
+     all. Called with no argument it reuses the last body's size, so a card
+     opening or the panel collapsing re-centres the scene already on screen. */
+  var ppHalf = 0;
+  function explorePP(halfPx) {
+    var given = (typeof halfPx === 'number' && isFinite(halfPx) && halfPx > 0);
+    if (given) ppHalf = halfPx;
+    var h = given ? halfPx : ppHalf;
+    var s = usableStrip();
+    var cx = W / 2;
+    if (h > 0 && s.x0 + h <= s.x1 - h) cx = clampN(cx, s.x0 + h, s.x1 - h);
+    else if (h > 0) cx = (s.x0 + s.x1) / 2;
+    else cx = clampN(cx, s.x0 + 8, Math.max(s.x0 + 8, s.x1 - 8));
+    return { x: cx, y: H * 0.5 };
+  }
+  /* E-1(a): the same centring, but aimed at the selected planet when there is
+     one. A card opening, a card closing and the panel collapsing all re-run
+     this, and re-running the ring centring alone threw the hero bias away the
+     moment the strip changed shape. With no planet selected this is byte for
+     byte the A1-11 behaviour. */
+  function exploreHeroPP(halfPx) {
+    if (mode === 'explore' && centeredStar >= 0 && selExo >= 0 && !cam.basis && SD) {
+      var D = Math.pow(10, camAnim ? camAnim.to.logD : cam.logD);
+      var h = (typeof halfPx === 'number' && isFinite(halfPx) && halfPx > 0)
+        ? halfPx : (exoDrawnOrbitPx(centeredStar, selExo, D) + 18);
+      if (h > 0) return exoHeroPP(centeredStar, selExo, D, h, performance.now() + 320);
+    }
+    return explorePP(halfPx);
+  }
+  /* how much screen a solar close-up will really occupy, rings included */
+  function planetHalfPx(pi, D) {
+    var r = clampN(PLANET_R[pi] * 2.2 * (60 / Math.max(0.5, D)),
+                   PLANET_R[pi] + 2, Math.min(H * 0.34, 240));
+    var art = solArtOf(pi);
+    var k = (art && art.rings && art.rings.outer > 1) ? art.rings.outer : 1.3;
+    return r * k + 10;
+  }
+  /* re-apply that centring after something moved the panel or the card. The
+     cinematics and the planner own their own principal point, so they are
+     left alone; a fly-to already in the air has its DESTINATION corrected
+     rather than being cancelled. */
+  function recentreExplore(ease) {
+    if (mode !== 'explore' && mode !== 'intro') return;
+    var pp = exploreHeroPP();
+    if (camAnim) { camAnim.to.ppx = pp.x; camAnim.to.ppy = pp.y; return; }
+    if (ease && mode === 'explore' && !reduced &&
+        (Math.abs(cam.ppx - pp.x) > 12 || Math.abs(cam.ppy - pp.y) > 12)) {
+      camGo({ ppx: pp.x, ppy: pp.y }, 320);
+      return;
+    }
+    cam.ppx = pp.x; cam.ppy = pp.y;
+  }
 
   function updateCamBasis() {
     camD = Math.pow(10, cam.logD);
@@ -2451,36 +2626,50 @@
     else cam.logD = zoomTarget;
   }
 
-  function zoomTargetD(starIdx) {
-    var list = starPlanets[starIdx];
-    if (list && list.length) {
-      var maxA = 0, j;
-      for (j = 0; j < list.length; j++) {
-        var a = SD.planets.a[list[j]];
-        if (a == null || !isFinite(a)) {
-          var per = SD.planets.per[list[j]];
-          if (per != null && isFinite(per) && per > 0) a = Math.pow(per / 365.25, 2 / 3);
-        }
-        if (a != null && isFinite(a) && a > maxA) maxA = a;
-      }
-      if (maxA > 0) return clampN(22 * maxA, 0.6, 160);
-    }
-    return 3;
+  /* ---- A1-6 / A1-12: the framing a star deserves ----
+     The shipped rule framed the widest known ORBIT (22 * maxA), which has two
+     failure modes the sweep caught. A supergiant is drawn with a radius of
+     several AU, so Betelgeuse's 3 AU default put the camera inside the star.
+     And a red dwarf with a planet thousands of AU out (COCONUTS-2 A) was left
+     a 20 px dot at the far end of the clamp.
+     Both go away by framing what is actually DRAWN: pick the distance at which
+     the drawn disc is about a third of the frame height, which is inside the
+     25-40 % band at every viewport. A system whose orbits cannot share that
+     frame simply has them off screen, and the card's orbit note stands down
+     (see ringsOnScreen). starOrbRadius is monotone in D and invertible in
+     closed form, so this is exact rather than a search. */
+  function starDiscTargetPx() { return Math.max(24, Math.min(H * 0.16, W * 0.20)); }
+  function starFrameD(i, targetPx) {
+    var base = starOrbBase(i);
+    var t = (typeof targetPx === 'number' && isFinite(targetPx) && targetPx > 0.5)
+      ? targetPx : starDiscTargetPx();
+    /* rpx = base * ORB_HOLD_AU / D below the hold, base * (ORB_HOLD_AU/D)^K above */
+    var D = (t >= base) ? (ORB_HOLD_AU * base / t)
+                        : (ORB_HOLD_AU * Math.pow(base / t, 1 / K_SHRINK));
+    return (isFinite(D) && D > 0) ? D : 3;
   }
   function flyToStar(i, instant) {
     centeredStar = i;
-    var pp = explorePP();
+    var pp = explorePP(starDiscTargetPx() * 1.6);
     camGo({ cx: starX[i], cy: starY[i], cz: starZ[i],
-            logD: Math.log(zoomTargetD(i)) / Math.LN10,
+            logD: Math.log(starFrameD(i)) / Math.LN10,
             ppx: pp.x, ppy: pp.y }, instant ? 0 : 1200);
   }
   function flyToPlanet(pi, instant) {
     centeredStar = -1;
     var st = A.planetState(PLANET_KEYS[pi], viewJD);
     var el = A.ELEMENTS[PLANET_KEYS[pi]];
-    var pp = explorePP();
+    var D = Math.max(0.35, el.a0 * 0.4);
+    /* A1-11: back off far enough that the drawn body (Saturn's rings are
+       2.27 radii wide) fits the strip the panel leaves. At 1024 px the
+       shipped framing put the right ring tip under the panel whatever the
+       centring did. */
+    var half = planetHalfPx(pi, D);
+    var room = usableStrip().w / 2 - 6;
+    if (room > 60 && half > room) { D *= half / room; half = planetHalfPx(pi, D); }
+    var pp = explorePP(half);
     camGo({ cx: st.r[0], cy: st.r[1], cz: st.r[2],
-            logD: Math.log(Math.max(0.35, el.a0 * 0.4)) / Math.LN10,
+            logD: Math.log(D) / Math.LN10,
             ppx: pp.x, ppy: pp.y }, instant ? 0 : 1200);
   }
   /* A far object is not a star: there is no close-up and no orb, so the
@@ -2791,10 +2980,26 @@
   }
 
   /* ---------------- porkchop machinery (ported from mars.js) ------------ */
-  function pairKey(target, origin) { return (origin || pcOrigin) + '|' + target; }
+  /* A2-3: where the departure grid starts.
+     jd0 (today - 30) is right for a ship that is still at home. It is wrong
+     for the second leg: after a 310-day flight to Mars the ship's own clock
+     is a year ahead of the grid, so the planner offered departures from
+     before the ship was ever at that port, the cruise HUD counted down
+     dates in the ship's own past, and the arrival disclosed no wait at all
+     because there was none to compute. The grid follows the ship's clock
+     whenever that clock is ahead of today, rounded up to keep jd0's own
+     time of day. viewJD's scrub rules are untouched. */
+  function pcJd0() {
+    return shipAt.jd > jdToday ? (jd0 + Math.ceil(shipAt.jd - jd0)) : jd0;
+  }
+  /* the anchor is part of the identity: a spec built on the old one must
+     never be handed back after the ship's clock has moved */
+  function pairKey(target, origin) {
+    return (origin || pcOrigin) + '|' + target + '|' + pcJd0();
+  }
   function specOf(key, origin) {
     var ck = pairKey(key, origin);
-    if (!specs[ck]) specs[ck] = A.porkchopSpec(key, jd0, origin || pcOrigin);
+    if (!specs[ck]) specs[ck] = A.porkchopSpec(key, pcJd0(), origin || pcOrigin);
     return specs[ck];
   }
   function jobOf(key, origin) {
@@ -2820,7 +3025,9 @@
     var sp = specOf(pcTarget);
     var dep = sp.jd0 + s.i * sp.depStep;
     var tof = sp.tof0 + s.j * sp.tofStep;
-    var key = pcOrigin + '|' + pcTarget + '|' + s.i + '|' + s.j;
+    /* the grid anchor is part of the key: the same cell is a different
+       departure date once the ship's clock has moved (A2-3) */
+    var key = pcOrigin + '|' + pcTarget + '|' + sp.jd0 + '|' + s.i + '|' + s.j;
     if (!(key in readoutCache)) readoutCache[key] = A.missionDv(dep, tof, pcTarget, pcOrigin);
     return { dep: dep, tof: tof, m: readoutCache[key] };
   }
@@ -2864,9 +3071,11 @@
      date there would have printed an arrival in the ship's own past. Same
      rule as E4c part 2 (post-hoc fix round 2). */
   function announceArrival(info) {
+    /* A2-8b: "a 80-day wait" read wrong out loud; the article follows the
+       number's spoken form. */
     var flight = lastArriveWait > 0
-      ? (info.tof + ' days in flight, after a ' + lastArriveWait +
-         '-day wait for the launch window')
+      ? (info.tof + ' days in flight, after ' + PURE.artNum(lastArriveWait) + ' ' +
+         lastArriveWait + '-day wait for the launch window')
       : (info.tof + ' days');
     setStatus('Arrived ' + fmtDate(shipAt.jd) + ' · ' + flight + ' · ' +
               info.m.total.toFixed(1) + ' km/s total');
@@ -2971,7 +3180,9 @@
     pcCruise = { info: info, t0: performance.now(), ms: PURE.LAM_TOTAL_MS, trail: [] };
     startSysCruise(info, pcTargetIdx());
     var comp = PURE.compressionPhrase(info.tof, timeScale, PURE.LAM_TOTAL_MS);
-    setStatus('Cruising to ' + PLANET_LABELS[pcTargetIdx()] +
+    /* A2-6: the launch line holds the status for its four seconds and then
+       the flight narration takes over */
+    transientStatus('Cruising to ' + PLANET_LABELS[pcTargetIdx()] +
               '. The engines fire at each end and the ship coasts in between' +
               (comp ? ', and ' + comp.text : '') + '.');
     if (btnLaunch) btnLaunch.textContent = 'Launch';
@@ -3243,6 +3454,7 @@
     syncReturnChip();
     arriveInfo = null;   /* the arrival banner is for the moment of arrival */
     resetPreviews();     /* a closed card must not keep painting offscreen */
+    recentreExplore(true);   /* A1-11: the strip just got wider */
   }
 
   function deselect() {
@@ -3313,6 +3525,16 @@
   }
   function resetPreviews() {
     previews = { star: null, exo: null, ship: null };
+    orbitNoteEl = null;
+  }
+  /* the card's orbit-spacing note, gated per frame on ringsOnScreen (A1-12).
+     The DOM is only touched when the answer actually changes. */
+  var orbitNoteEl = null;
+  function syncOrbitNote() {
+    if (!orbitNoteEl) return;
+    if (!orbitNoteEl.isConnected) { orbitNoteEl = null; return; }
+    var want = !ringsOnScreen;
+    if (orbitNoteEl.hidden !== want) orbitNoteEl.hidden = want;
   }
   resetPreviews();
 
@@ -3423,6 +3645,10 @@
        down when the trip ended -- with the "Arrived" banner and the Replay /
        Back buttons, which are the first block in the body, out of sight. */
     try { cardEl.scrollTop = 0; } catch (eS) { /* not scrollable */ }
+    /* A1-11: the card just took the left of the screen, so the close-up
+       centres in what is left. A fly-to already running has its destination
+       corrected instead of being cancelled. */
+    recentreExplore(true);
   }
 
   function buildPlanetCard(pi) {
@@ -3548,9 +3774,23 @@
     var lumV = A.starLumV(st.absmag[i]);
     var lb = starBolLum(i);
     var radius = A.starRadiusSun(lb, T);
-    var words = A.spectWords(st.sp[i], lumV);
-    body.appendChild(el('p', 'voy-fact',
-      words + (st.sp[i] ? ' (type ' + st.sp[i] + ')' : '') + '.'));
+    /* ---- A2-10a: the card may not contradict itself ----
+       The colour words come from the catalog's spectral letter and the
+       temperature line from the measured (or colour-derived) teff, and on a
+       handful of records the two are nowhere near each other: HD 300214 is
+       listed type B and reads 4,500 K, so the card said "a hot blue-white
+       star" one line above "Surface about 4,500 K" and drew an orange orb
+       beside both. Two whole classes apart, the NUMBER wins the wording and
+       the letter is reported as what it is, a catalog listing. */
+    var spRaw = st.sp[i] || '';
+    var spL = spRaw.trim().charAt(0).toUpperCase();
+    var tCls = classFromTeff(T);
+    var iSp = SPEC_SEQ.indexOf(spL), iT = SPEC_SEQ.indexOf(tCls);
+    var clash = iSp >= 0 && iT >= 0 && Math.abs(iSp - iT) >= 2;
+    var words = A.spectWords(clash ? tCls : spRaw, lumV);
+    body.appendChild(el('p', 'voy-fact', clash
+      ? (words + ', listed as type ' + spRaw + '.')
+      : (words + (spRaw ? ' (type ' + spRaw + ')' : '') + '.')));
     body.appendChild(el('p', 'voy-fact',
       PURE.distPhrase(starLyD[i]) + ' away; ' +
       PURE.lightPhrase(starLyD[i], thisYearFrac) + '.'));
@@ -3567,6 +3807,14 @@
       body.appendChild(tline);
     }
     var sz = isFinite(radius) ? PURE.sizeVsSun(radius) : null;
+    /* A2-10b: a white dwarf is about the size of the Earth, a hundredth of
+       the Sun. Where the L/T derivation hands one back WIDER than a tenth of
+       the Sun it has failed (the magnitude or the temperature behind it is
+       not describing the dwarf), and "the dense ember of a dead star" next
+       to "2.8x the Sun's width" is a contradiction the reader cannot
+       resolve. The line is dropped rather than patched: this card has
+       nothing trustworthy to say about that star's size. */
+    if (sz && spL === 'D' && !(radius <= 0.1)) sz = null;
     if (sz) body.appendChild(el('p', 'voy-fact', 'Its width: ' + sz + '.'));
     var mw = PURE.magWords(st.mag[i]);
     if (mw) body.appendChild(el('p', 'voy-fact', 'From Earth it ' + mw + '.'));
@@ -3604,15 +3852,14 @@
             if (open) {
               selExo = j;
               previews.exo = { cv: oCv, g: prevCtx(oCv), w: 100, h: 100, j: j };
-              /* frame it: ease the camera in so the orbit fills the view */
-              var aa = SD.planets.a[j];
-              if (aa == null || !isFinite(aa) || aa <= 0) {
-                var pp2 = SD.planets.per[j];
-                if (pp2 != null && isFinite(pp2) && pp2 > 0) aa = Math.pow(pp2 / 365.25, 2 / 3);
-              }
-              if (centeredStar === i && aa != null && isFinite(aa) && aa > 0) {
-                camGo({ logD: Math.log(clampN(aa * 4, 0.1, 200)) / Math.LN10 }, 900);
-              }
+              /* A1-2: frame the DRAWN orbit, not the true one. The old
+                 clampN(a * 4, 0.1, 200) framed the real orbit radius and put
+                 the camera inside the (far larger than life) disc. */
+              /* deferred by one task on purpose: a chip opened from a search
+                 runs while openCardFor is still appending the card, so the
+                 card's own rect is not final yet and the framing would be
+                 computed against a strip that is about to shrink. */
+              if (centeredStar === i) setTimeout(function () { frameExo(i, j); }, 0);
             } else if (selExo === j) {
               selExo = -1;
               previews.exo = null;
@@ -3630,8 +3877,16 @@
         })(list[k]);
       }
       body.appendChild(chips);
-      body.appendChild(el('p', 'voy-note',
-        'Orbit sizes are real; positions on them are not.'));
+      /* A1-12: this sentence is about the RINGS. A wide system (COCONUTS-2 A
+         and its planet thousands of AU out) is framed on its star with no
+         orbit on screen at all, and claiming the spacing is to scale beside a
+         frame that shows no spacing is a small dishonesty. The note is shown
+         only on frames where a ring really reached the viewport. */
+      orbitNoteEl = el('p', 'voy-note',
+        'Orbit spacing is to scale; the star is drawn far larger than life, ' +
+        'and where each planet sits on its orbit is not real.');
+      orbitNoteEl.hidden = true;
+      body.appendChild(orbitNoteEl);
     }
 
     var row = el('div', 'voy-actions');
@@ -3671,6 +3926,19 @@
      trip. That is all these objects come with, and the card must not fake
      the rest.
      ================================================================== */
+  /* the temperature-implied spectral class, on the usual boundaries (A2-10) */
+  var SPEC_SEQ = 'OBAFGKM';
+  function classFromTeff(T) {
+    if (!isFinite(T)) return '';
+    if (T >= 30000) return 'O';
+    if (T >= 10000) return 'B';
+    if (T >= 7500) return 'A';
+    if (T >= 6000) return 'F';
+    if (T >= 5200) return 'G';
+    if (T >= 3700) return 'K';
+    return 'M';
+  }
+
   function farYears(y) {
     var s = PURE.fmtYears(y);
     return s.lastIndexOf('about ', 0) === 0 ? s : 'about ' + s;
@@ -4002,7 +4270,7 @@
   var QA = [0, 0, 0, 1], QB = [0, 0, 0, 1], QC = [0, 0, 0, 1];
   var QD = [0, 0, 0, 1], QE = [0, 0, 0, 1], QF = [0, 0, 0, 1];
   var QS = [0, 0, 0, 1], QG = [0, 0, 0, 1];
-  var QH = [0, 0, 0, 1], QI = [0, 0, 0, 1], QJ = [0, 0, 0, 1];
+  var QH = [0, 0, 0, 1], QI = [0, 0, 0, 1], QJ = [0, 0, 0, 1], QK = [0, 0, 0, 1];
   var QIDENT = [0, 0, 0, 1];
   var depRel = [0, 0, 0, 1];            /* eased departure-framing offset */
   var VF = [0, 0, 0], VU = [0, 0, 0], VX = [0, 0, 0];
@@ -4320,7 +4588,7 @@
        track, so it obeys the same priority order and the same capSeen latch */
     var fromLbl = shipLabel();
     resetCaptions(PURE.cockpitCaptions(fromLbl));
-    setStatus('Leaving ' + fromLbl + ' for ' + cruiseDestLabel(cruiseSt) +
+    transientStatus('Leaving ' + fromLbl + ' for ' + cruiseDestLabel(cruiseSt) +
               '. Watch the two clocks.');
     if (reduced) { arriveStar(); return; }
     /* beat 1: fly to wherever the ship actually is */
@@ -4379,13 +4647,14 @@
     var dx = ax - B0.x, dy = ay - B0.y, dz = az - B0.z;
     var dd = Math.sqrt(dx * dx + dy * dy + dz * dz);
     cam.basis = null;
-    if (!(dd > 1e-9)) { cam.ppx = W / 2; cam.ppy = H * 0.5; return; }
+    var hpp = explorePP();
+    if (!(dd > 1e-9)) { cam.ppx = hpp.x; cam.ppy = hpp.y; return; }
     cam.cx = B0.x; cam.cy = B0.y; cam.cz = B0.z;
     cam.logD = Math.log(dd) / Math.LN10;
     zoomTarget = cam.logD;
     cam.yaw = Math.atan2(dy, dx);
     cam.pitch = clampN(Math.asin(clampN(dz / dd, -1, 1)), -1.45, 1.45);
-    cam.ppx = W / 2; cam.ppy = H * 0.5;
+    cam.ppx = hpp.x; cam.ppy = hpp.y;
     camAnim = null;
   }
 
@@ -4498,6 +4767,42 @@
      ================================================================== */
   var SYS_TMP = { x: 0, y: 0, z: 0 };
   var SYS_LOOK_YAW = 0, SYS_LOOK_PITCH = -0.30;
+
+  /* ---- A1-8: the Map sub-view's own camera fit ----
+     Map is drawn UNDER a live cruise HUD (three centred lines) and the
+     Chase / Map pill, and the shipped code centred it on the whole canvas, so
+     the ship marker and the world labels ran straight through both. This is
+     fitPork's arithmetic against the band the HUD actually leaves, measured
+     off the real pill rect rather than guessed from the breakpoint. Returns
+     null when there is no planner pair to fit, and the caller keeps the old
+     centring for that case. */
+  function hudClearTop() {
+    var top = hudBandY() + 60;
+    if (elFpBar && !elFpBar.hidden && elFpBar.getBoundingClientRect) {
+      var r = elFpBar.getBoundingClientRect();
+      if (r && r.height > 0) top = Math.max(top, r.bottom);
+    }
+    return top + 26;                    /* room for a label above the top orbit */
+  }
+  function fitSysMap() {
+    if (!pcTarget || !L) return null;
+    var elE, elT;
+    try {
+      elE = A.elementsRad(pcOrigin, jdToday);
+      elT = A.elementsRad(pcTarget, jdToday);
+    } catch (e) { return null; }
+    if (!elE || !elT) return null;
+    var rFit = Math.max(elE.a * (1 + elE.e), elT.a * (1 + elT.e)) * 1.12;
+    var x0 = 10, x1 = Math.max(x0 + 80, W - 10 - (L.reserve || 0));
+    var y0 = hudClearTop();
+    var y1 = L.tl.y - 30;
+    if (y1 < y0 + 90) y1 = Math.min(H - 20, y0 + 90);
+    var half = Math.max(40, Math.min(x1 - x0, y1 - y0) / 2);
+    var fpx = (H * 0.5) / FOV_T;
+    var lg = Math.log(Math.max(1, fpx * rFit / half)) / Math.LN10;
+    if (!isFinite(lg)) return null;
+    return { logD: lg, ppx: (x0 + x1) / 2, ppy: (y0 + y1) / 2 };
+  }
   function sysPlanOf(s) { return s.plan; }
   function sysTotalMs(s) { return s && s.local ? PURE.LOCAL_TOTAL_MS : PURE.LAM_TOTAL_MS; }
 
@@ -4526,7 +4831,7 @@
       t0: performance.now(), ms: 0, tPrev: 0, pose: null, ph: null, launch: null
     };
     enterSysMode(lbl, PURE.localCaptions(lbl));
-    setStatus('A short hop to ' + lbl + '. We do not know where these worlds ' +
+    transientStatus('A short hop to ' + lbl + '. We do not know where these worlds ' +
               'sit in their orbits, so there is no distance to fly.');
   }
 
@@ -4616,12 +4921,17 @@
     } else { centeredStar = -1; orbPlanet = -1; }
 
     /* MAP: the top-down seat, restored exactly, with the rig released. The
-       clock keeps running underneath, so nothing is lost toggling. */
+       clock keeps running underneath, so nothing is lost toggling.
+       A1-8: the map is then re-fitted into the band the cruise HUD leaves.
+       The shipped version centred it on the whole canvas, so the Sun, the ship
+       marker and the Earth / Mars labels were drawn straight through the three
+       centred HUD lines and the Chase / Map pill. */
     if (sysMapView) {
       cam.basis = null;
       camApply(s.map);
-      var pp = explorePP();
-      cam.ppx = pp.x; cam.ppy = pp.y;
+      var mf = fitSysMap();
+      if (mf) { cam.logD = mf.logD; zoomTarget = mf.logD; cam.ppx = mf.ppx; cam.ppy = mf.ppy; }
+      else { var pp = explorePP(); cam.ppx = pp.x; cam.ppy = pp.y; }
       camAnim = null;
       return;
     }
@@ -5092,7 +5402,13 @@
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     var idleCands = [lead + where + ', ' + yr, where + ', ' + yr, where];
-    var hb3 = hudStrip(hudY - 13, hudY + 32, blockW(idleCands, '600 ', 15));
+    var hintCands = [coarsePointer ? 'Drag to look around. Tap the sky to leave.'
+                                   : 'Drag to look around. Esc or tap the sky to leave.'];
+    /* the strip has to hold the WIDEST line in the block, not just the first:
+       the hint below is longer than the headline, so measuring only the
+       headline left it running under the arrival card ("Drag" was cut off) */
+    var hb3 = hudStrip(hudY - 13, hudY + 32,
+                       Math.max(blockW(idleCands, '600 ', 15), blockW(hintCands, '', 12)));
     /* Parked is the ONE state where a photosphere is guaranteed to be behind
        these lines: the ship is in orbit around the thing that is lit. The
        cruise band already took the plate on that rule and this band never
@@ -5100,12 +5416,10 @@
        of Sirius. hudOrbPx is filled by drawCenteredStar earlier in the same
        frame, so the value here is this frame's, and it is 0 with no bright
        orb on screen: every other parked view is unchanged. */
-    var is = hudScrim();
+    var is = hudPlateA();               /* A2-12 */
     hudLine(idleCands,
             '600 ', 15, 10, hb3.maxW, hudY, textColor(0.92), hb3.cx, is);
-    hudLine([coarsePointer ? 'Drag to look around. Tap the sky to leave.'
-                           : 'Drag to look around. Esc or tap the sky to leave.'],
-            '', 12, 9.5, hb3.maxW, hudY + 21,
+    hudLine(hintCands, '', 12, 9.5, hb3.maxW, hudY + 21,
             textColor(is > 0.02 ? 0.72 : 0.5), hb3.cx, is);
     ctx.textAlign = 'left';
     if (!SHIPS || !RIG.ok || !idlePose.ok) return;
@@ -5231,8 +5545,25 @@
     springOrient(pose.shipQ, dtReal * timeScale);
     PURE.qAxisAngle(0, 1, 0, lookYaw, QA);
     PURE.qAxisAngle(1, 0, 0, lookPitch, QB);
-    /* the COCKPIT looks out of the nose, always */
-    viewQ = PURE.qNormalize(PURE.qMul(PURE.qMul(camQ, QA, QC), QB, QG));
+    /* ---- A2-1: the cockpit turns with the story at the flip ----
+       The ship really does fly tail-first from the flip to the capture, and
+       a cockpit welded to the nose therefore spent the whole second half of
+       every interstellar trip facing the half of the sky aberration has
+       just swept empty: a black frame for eleven seconds, with the
+       destination behind the camera. So the VIEW turns instead, by exactly
+       the yaw the hull turned through, about the ship's own up axis. The
+       physics is untouched (the aberration reads the velocity and nothing
+       else, CL-23), the ship's own orientation is untouched, chase view is
+       untouched, and the caption below says out loud what the reader is
+       doing. capTurn takes it back out over the capture arc, so the last
+       frame of the cinematic still hands explore a level view.
+       Both terms are rotations about the same local axis, so they compose
+       into ONE quaternion and the user's free look still rides on top. */
+    var fpTurn = Math.PI * clampN(pose.flip01 - pose.capTurn, 0, 1);
+    var fpQ = fpTurn > 1e-4 ? PURE.qAxisAngle(0, 1, 0, lookYaw - fpTurn, QK) : QA;
+    /* the COCKPIT looks out of the nose, always, and after the flip that
+       nose is pointed back the way it came */
+    viewQ = PURE.qNormalize(PURE.qMul(PURE.qMul(camQ, fpQ, QC), QB, QG));
     basisFromQ(viewQ, rigBasis);
     /* the CHASE camera is a movie camera: while the ship is still on its
        parking orbit it holds the body being left in frame and eases back
@@ -5857,13 +6188,15 @@
        cp.t = c.tTotal this expression IS arriveStar's jdArr, so the last
        HUD frame and the arrival card cannot disagree. */
     var cal = calYearFromJD(shipAt.jd + (isFinite(cp.t) ? cp.t : 0) * 365.25);
-    var l1 = 'Ship clock ' + shipY + ' years · Earth clock ' + earthY +
-             ' years passed · Earth calendar ' + cal;
+    /* A2-8c: the unit is singular at exactly 1, on the same rounded number
+       the line prints */
+    var l1 = 'Ship clock ' + PURE.unitN(shipY, 'year') + ' · Earth clock ' +
+             PURE.unitN(earthY, 'year') + ' passed · Earth calendar ' + cal;
     var speed = PURE.speedPhrase(cp.v) + ' · γ ' + PURE.fmtGamma(cp.g);
     var state, stateShort;
     if (ph.phase === 'accel') {
       var left = Math.round(Math.max(0, c.tauHalf - cp.tau) * 10) / 10;
-      state = 'flip in ' + left + ' ship-years';
+      state = 'flip in ' + PURE.unitN(left, 'ship-year');
       stateShort = 'flip in ' + left + ' yr';
     } else if (ph.phase === 'flip') { state = stateShort = 'turning around'; }
     else if (ph.phase === 'decel') { state = stateShort = 'braking'; }
@@ -5997,14 +6330,36 @@
     if (sysSt) return sysSt.ms || 0;
     return 0;
   }
+  /* where the beat the flight is CURRENTLY in began, on the caption clock */
+  function phaseStartMs() {
+    var list = null, want = '';
+    if (cruiseSt && cruiseSt.ph) { list = PURE.CRUISE_PHASES; want = cruiseSt.ph.phase; }
+    else if (sysSt && sysSt.ph) {
+      list = sysSt.local ? PURE.LOCAL_PHASES : PURE.LAMBERT_PHASES;
+      want = sysSt.ph.phase;
+    }
+    if (!list) return 0;
+    for (var i = 0, acc = 0; i < list.length; i++) {
+      if (list[i].name === want) return acc;
+      acc += list[i].ms;
+    }
+    return 0;
+  }
   function replayCaptions() {
-    capNext = 0; capCur = null;
-    /* the offset lives on the same clock the stamps do: mixing a wall-clock
-       offset into a scaled clock would restart the track at the wrong beat
-       at every slider setting except 1 */
-    capReplay = capClockNow();
+    capCur = null;
+    /* A2-7: the replay starts at the beat the ship is ACTUALLY in. Rewinding
+       the whole track meant the circled-i answered a live departure burn
+       with "Your ship is still in orbit. The engines are cold.", which
+       contradicts the picture. Everything earlier than this phase is
+       skipped; the rest keeps its own stamps, so nothing after this fires
+       early either (that is what capReplay 0 buys). */
+    var from = phaseStartMs();
+    capNext = 0;
+    while (capNext < capTrack.length && capTrack[capNext].t < from) capNext++;
+    if (capNext >= capTrack.length) capNext = Math.max(0, capTrack.length - 1);
+    capReplay = 0;
     capSeen = false;
-    setStatus('Replaying what happens on the way.');
+    transientStatus('Replaying what happens on the way.');
   }
   function capShow(entry, prio, now) {
     if (capCur && capCur.prio < prio) return;      /* lower priority is dropped */
@@ -6087,7 +6442,7 @@
     /* the same plate the caption band carries, on the same rule: departure
        from and capture into a star both park a photosphere behind these
        exact lines */
-    var hs = hudScrim();
+    var hs = hudPlateA();               /* A2-12: never nothing */
     /* one strip for the whole three-line block, so the lines stay a block */
     var hb = hudStrip(hudY - 13, hudY + 53,
                       lines ? blockW(lines.alt1, '600 ', 15) : 0);
@@ -6111,6 +6466,19 @@
                 alt: ['Halfway. Turn around, burn the other way.',
                       'Halfway. Turn around and burn.'],
                 ms: 2600 }, 1, now);
+    }
+    /* A2-1: the second half of the flip beat, in the cockpit only. It is a
+       claim about what the READER is doing (the chase camera stays behind
+       the hull and never turns), and it goes out at priority 2 so the timed
+       braking line can still replace it at a fast slider setting. It waits
+       for the Halfway line to clear rather than cutting it off. */
+    if (fpMode && !c.flipCap2 && c.ph.phase === 'decel' && !capCur) {
+      c.flipCap2 = true;
+      capShow({ text: 'The ship flies tail-first from here. You turn to keep facing your destination.',
+                alt: ['The ship flies tail-first from here. You turn to keep facing your destination.',
+                      'The ship flies tail-first now. You turn to keep facing ahead.',
+                      'Flying tail-first. You keep facing ahead.'],
+                ms: 3400 }, 2, now);
     }
     if (!capSeen || capReplay) {
       var clock = el - capReplay;
@@ -6223,13 +6591,14 @@
     var lines = sysHudLines(s);
     var hb2 = hudStrip(hudY - 13, hudY + 53,
                        lines ? blockW(lines.a1, '600 ', 15) : 0);
+    var hs2 = hudPlateA();              /* A2-12 */
     if (lines) {
-      hudLine(lines.a1, '600 ', 15, 10, hb2.maxW, hudY, textColor(0.92), hb2.cx, hudScrim());
-      hudLine(lines.a2, '', 13, 9.5, hb2.maxW, hudY + 21, textColor(0.75), hb2.cx, hudScrim());
+      hudLine(lines.a1, '600 ', 15, 10, hb2.maxW, hudY, textColor(0.92), hb2.cx, hs2);
+      hudLine(lines.a2, '', 13, 9.5, hb2.maxW, hudY + 21, textColor(0.75), hb2.cx, hs2);
     }
     hudLine([coarsePointer ? 'Drag to look around. Tap to skip.'
                            : 'Drag to look around. Esc or tap to skip.'], '', 12, 9.5,
-            hb2.maxW, hudY + 42, textColor(0.5), hb2.cx);
+            hb2.maxW, hudY + 42, textColor(hs2 > 0.02 ? 0.72 : 0.5), hb2.cx, hs2);
 
     /* ---- captions, on the scaled clock ---- */
     var el = s.ms || 0;
@@ -6282,6 +6651,50 @@
                   : [l1, where + ' · ' + fmtDate(s.dep + pose.f * s.tofDays), where],
       a2: comp ? [l2, state + ' · ' + comp.short, state] : [l2, state]
     };
+  }
+
+  /* A2-6: the panel's own sentence for the beat the flight is in. Short,
+     plain, and the same facts the HUD is already showing, so the two can
+     never disagree. Returns null outside a cinematic. */
+  var CRUISE_NARR = {
+    'depart-zoom': 'Still in orbit. The engines are cold.',
+    ignite: 'Engines lit. From here it is one steady burn, straight out.',
+    accel: 'Accelerating. Ship time and Earth time are pulling apart.',
+    flip: 'Halfway. The ship turns around to brake.',
+    decel: 'Braking. The engines are fighting your own speed.',
+    settle: 'Settling into orbit.'
+  };
+  var SYS_NARR = {
+    'lam-depart': 'Still in orbit. The engines are cold.',
+    'lam-burn1': 'The departure burn is running.',
+    'lam-coast': 'Coasting. The engines are cold until the far end.',
+    'lam-burn2': 'The braking burn is running.',
+    'lam-settle': 'Settling into orbit.'
+  };
+  function flightNarration() {
+    if (mode === 'cruise' && cruiseSt && cruiseSt.ph) {
+      var pn = cruiseSt.ph.phase;
+      if (pn === 'capture') {
+        return { key: pn, text: 'Slowing into orbit at ' + cruiseDestLabel(cruiseSt) + '.' };
+      }
+      return CRUISE_NARR[pn] ? { key: pn, text: CRUISE_NARR[pn] } : null;
+    }
+    if (mode === 'syscruise' && sysSt && sysSt.ph) {
+      var sn = sysSt.ph.phase;
+      if (sn === 'lam-capture') {
+        return { key: sn, text: 'Slowing into orbit at ' + (sysSt.label || 'the destination') + '.' };
+      }
+      return SYS_NARR[sn] ? { key: sn, text: SYS_NARR[sn] } : null;
+    }
+    return null;
+  }
+  function syncFlightStatus(now) {
+    if (mode !== 'cruise' && mode !== 'syscruise') { narrPhase = ''; return; }
+    if (now < narrHold) return;
+    var n = flightNarration();
+    if (!n || n.key === narrPhase) return;
+    narrPhase = n.key;
+    setStatus(n.text);
   }
 
   /* ---------------- intro ---------------- */
@@ -6374,6 +6787,30 @@
     return { x: r.left, y: r.top, w: r.width, h: r.height };
   }
 
+  /* E-1(b): how much of a drawn body the two overlays cover, 0 to 1. The panel
+     and the card are opposite columns so their areas never double-count, and a
+     COLLAPSED panel is measured exactly like an open one: a planet under the
+     collapsed bar is just as invisible. Scratch-free: only the two rects the
+     DOM hands back are allocated, and only on the one frame that asks. */
+  function overlayCover(x, y, r) {
+    var bw = r * 2;
+    if (!(bw > 0)) return 0;
+    var bx = x - r, by = y - r, tot = 0, k, e, rr, ox, oy;
+    for (k = 0; k < 2; k++) {
+      e = k === 0 ? elPanel : (cardOpen() ? cardEl : null);
+      if (!e || e.hidden || !e.getBoundingClientRect) continue;
+      rr = e.getBoundingClientRect();
+      if (!rr || !(rr.width > 0) || !(rr.height > 0)) continue;
+      ox = Math.min(bx + bw, rr.right) - Math.max(bx, rr.left);
+      oy = Math.min(by + bw, rr.bottom) - Math.max(by, rr.top);
+      if (ox > 0 && oy > 0) tot += ox * oy;
+    }
+    return clampN(tot / (bw * bw), 0, 1);
+  }
+  var heroCovJ = -1;                     /* the planet the gate is tracking */
+  var heroCovHid = false;                /* is the caption held back? */
+  var heroCov = 0;                       /* last measured coverage (test hook) */
+
   /* the open card's rect in canvas coordinates, or null */
   function rectOfCard() {
     if (!cardEl || cardEl.hidden || !cardEl.getBoundingClientRect) return null;
@@ -6385,28 +6822,66 @@
   /* A caption that has to survive whatever is behind it. The exoplanet honesty
      line lands on the host star's own disc as often as not, so it gets a plate
      in the sky colour first: that sentence must be readable on any background. */
+  /* greedy word wrap at the CURRENT font; never returns an empty array */
+  function wrapText(text, maxW) {
+    var words = String(text).split(/\s+/), out = [], cur = '', i, t;
+    for (i = 0; i < words.length; i++) {
+      if (!words[i]) continue;
+      t = cur ? cur + ' ' + words[i] : words[i];
+      if (cur && ctx.measureText(t).width > maxW) { out.push(cur); cur = words[i]; }
+      else cur = t;
+    }
+    if (cur) out.push(cur);
+    return out.length ? out : [String(text)];
+  }
   function captionPlate(lines, cx0, y0, fontPx) {
     if (!lines || !lines.length || !isFinite(cx0) || !isFinite(y0)) return;
-    var fs = fontPx || 11;
     var pAlign = ctx.textAlign, pBase = ctx.textBaseline;
-    ctx.font = fs + 'px ' + FONT;
-    var lh = Math.round(fs * 1.25), i, w = 0, mw;
-    for (i = 0; i < lines.length; i++) {
-      mw = ctx.measureText(lines[i]).width;
-      if (mw > w) w = mw;
+    var padX = 9, padY = 6, i, e, r;
+    /* ---- A1-4: the plate is laid out INSIDE the strip the overlays leave ----
+       The shipped version clamped to the canvas and only dodged the card, so
+       with the panel open the sentence ran under it and was cut mid-word at
+       x = 963. The strip is measured off the real rects; an overlay that spans
+       the middle of the screen (a phone bottom sheet) is dodged vertically
+       instead, exactly as before. */
+    var x0 = 8, x1 = W - 8;
+    var mids = [];
+    var occ = [elPanel, cardOpen() ? cardEl : null];
+    for (i = 0; i < occ.length; i++) {
+      e = occ[i];
+      if (!e || e.hidden || !e.getBoundingClientRect) continue;
+      r = e.getBoundingClientRect();
+      if (!r || !(r.width > 0) || !(r.height > 0)) continue;
+      if (r.left <= W / 2 && r.right >= W / 2) { mids.push(r); continue; }
+      if (r.left > W / 2) x1 = Math.min(x1, r.left - 8);
+      else x0 = Math.max(x0, r.right + 8);
     }
-    var padX = 9, padY = 6;
-    var bw = Math.min(w + padX * 2, Math.max(40, W - 8));
-    var bh = lines.length * lh + padY * 2;
-    var bx = clampN(cx0 - bw / 2, 4, Math.max(4, W - bw - 4));
+    if (x1 - x0 < 150) { x0 = 8; x1 = W - 8; }   /* nothing usable: full width */
+    var avail = Math.max(60, x1 - x0 - padX * 2);
+    /* wrap to at most three lines, shrinking the type only if that is what it
+       takes to fit the strip */
+    var fs = fontPx || 11, out = null, wide = 0, k;
+    for (k = 0; k < 9; k++) {
+      ctx.font = fs + 'px ' + FONT;
+      out = [];
+      for (i = 0; i < lines.length; i++) out = out.concat(wrapText(lines[i], avail));
+      wide = 0;
+      for (i = 0; i < out.length; i++) wide = Math.max(wide, ctx.measureText(out[i]).width);
+      if (out.length <= 3 && wide <= avail) break;
+      if (fs <= 9) break;
+      fs = Math.max(9, fs - 0.5);
+    }
+    var lh = Math.round(fs * 1.25);
+    var bw = Math.min(wide + padX * 2, x1 - x0);
+    var bh = out.length * lh + padY * 2;
+    var bx = clampN(cx0 - bw / 2, x0, Math.max(x0, x1 - bw));
     var by = clampN(y0, 4, Math.max(4, H - bh - 6));
-    /* slide clear of the open card rather than hiding half the sentence
-       behind it, but only when the free strip is genuinely wide enough */
-    var cr = cardOpen() ? rectOfCard() : null;
-    if (cr && by + bh > cr.y && by < cr.y + cr.h && bx < cr.x + cr.w && bx + bw > cr.x) {
-      if (W - (cr.x + cr.w) - 10 >= bw) bx = cr.x + cr.w + 6;
-      else if (cr.x - 10 >= bw) bx = cr.x - bw - 6;
-      else by = clampN(cr.y - bh - 8, 4, Math.max(4, H - bh - 6));
+    /* an overlay across the middle of the screen: go above it */
+    for (i = 0; i < mids.length; i++) {
+      r = mids[i];
+      if (by + bh > r.top && by < r.top + r.height) {
+        by = clampN(r.top - bh - 8, 4, Math.max(4, H - bh - 6));
+      }
     }
     ctx.globalAlpha = 1;
     ctx.fillStyle = isLight() ? 'rgba(255,255,255,0.86)' : 'rgba(10,12,16,0.78)';
@@ -6418,11 +6893,13 @@
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
     ctx.fillStyle = isLight() ? 'rgba(38,38,38,0.94)' : 'rgba(222,222,222,0.94)';
-    for (i = 0; i < lines.length; i++) {
-      ctx.fillText(lines[i], bx + bw / 2, by + padY + i * lh + (lh - fs) * 0.5);
+    for (i = 0; i < out.length; i++) {
+      ctx.fillText(out[i], bx + bw / 2, by + padY + i * lh + (lh - fs) * 0.5);
     }
+    capRect = { x: bx, y: by, w: bw, h: bh };
     ctx.textAlign = pAlign; ctx.textBaseline = pBase;
   }
+  var capRect = null;                    /* last honesty plate rect (test hook) */
 
   var galStride = 1;                     /* 2 = decimate if a frame budget slips */
   var galKey = '';                       /* last drawn camera/size signature */
@@ -6611,10 +7088,21 @@
       ctx.font = '12px ' + FONT;
       ctx.textBaseline = 'middle';
       ctx.textAlign = 'left';
-      ctx.fillStyle = accent();
       var ly2 = Math.max(130, O.y);
-      ctx.fillText('you are here', O.x + 12, ly2);
-      claimHereLab('you are here', O.x + 12, ly2);
+      var hw = ctx.measureText('you are here').width;
+      /* A1-9(c): outlined like the far-tier names, and dropped rather than
+         clipped by an edge or the panel */
+      if (labelFits(O.x + 12, ly2 - 7, hw, 14)) {
+        ctx.globalAlpha = 0.55 * ga;
+        ctx.strokeStyle = bg();
+        ctx.lineWidth = 3;
+        ctx.lineJoin = 'round';
+        ctx.strokeText('you are here', O.x + 12, ly2);
+        ctx.globalAlpha = 0.95 * ga;
+        ctx.fillStyle = accent();
+        ctx.fillText('you are here', O.x + 12, ly2);
+        claimHereLab('you are here', O.x + 12, ly2);
+      }
       ctx.globalAlpha = 1;
     }
     /* The honest caption. It used to be centred on W / 2 at a fixed size, so
@@ -6928,6 +7416,10 @@
 
   /* alpha per brightness group, dimmest last */
   var BG_A = [0.85, 0.6, 0.4];
+  /* A1-5: the star tiers never fall below this while anything nearer is on
+     screen. Deliberately under 1, so pulling out of a system still reads as
+     the sky opening up rather than as a switch being thrown. */
+  var SKY_FLOOR_A = 0.62;
   function drawBgTier(sa) {
     if (!BG) return;
     var light = isLight();
@@ -7029,9 +7521,24 @@
   var STAR_PT_D1 = 1.2e7;                /* AU, logD 7.08: all points */
   var STAR_PT_SZ = [2.2, 1.7, 1.3];      /* point size per band, CSS px */
   var starPaintForce = 0;                /* TEST ONLY: -1 sprites, +1 points */
+  /* A1-5: below the old fade-in the two tiers are a BACKDROP behind a
+     close-up, not the subject. 1 there, 0 once the field is the subject
+     again, and exactly complementary to saFar's rise so the handover has no
+     step in it. */
+  function skyBackdrop() { return 1 - ramp(camD, 5e3, 3e4); }
   function starPointMix() {
     if (starPaintForce) return starPaintForce > 0 ? 1 : 0;
-    return ramp(camD, STAR_PT_D0, STAR_PT_D1);
+    var mix = ramp(camD, STAR_PT_D0, STAR_PT_D1);
+    /* The named tier is 10,118 atlas blits at about 5.8 us each, which is
+       most of a frame on a slow machine and is why the sky used to be
+       switched off entirely down here. As a backdrop it is drawn as POINTS
+       instead (about 0.6 us each, the same paint the far zooms use), with
+       the fifty brightest keeping their sprite. drawStars already crossfades
+       the two with complementary alpha, so there is no pop at the handover.
+       The cinematics keep the sprites: they have their own budget. */
+    if (isRigMode()) return mix;
+    var bd = skyBackdrop();
+    return bd > mix ? bd : mix;
   }
   /* the point palette: the atlas bucket colours, with the same light-theme
      darkening the atlas itself applies, so the two paints agree */
@@ -7275,6 +7782,82 @@
     var w = ctx.measureText(txt).width;
     if (isFinite(x) && isFinite(y) && w > 0) hereLab.push({ x: x, y: y, w: w });
   }
+
+  /* ==================================================================
+     A1-9: label hygiene, shared by every label the canvas draws.
+
+     Two rules, both measured rather than guessed:
+       labelFits   -- a name clipped by a screen edge, or buried under the
+                      control panel or the open card, is not a label; it is a
+                      fragment ("nus", "Mercu"). Past 30 % lost it is dropped
+                      and the body keeps its dot.
+       discFree    -- a name printed across a drawn close-up disc reads as a
+                      caption FOR that disc. Every big orb claims its circle
+                      and a label that lands on one is nudged or dropped.
+     ================================================================== */
+  var frameDiscs = [];
+  /* A2-13: the body labels this frame really drew, so the parked ship's own
+     tag can give way to them (it is the least important name on screen). */
+  var bodyLabs = [];
+  function claimBodyLab(x, y, w, h) {
+    if (isFinite(x) && isFinite(y) && w > 0) bodyLabs.push({ x: x, y: y, w: w, h: h || 14 });
+  }
+  /* no part of the box is under the panel or the open card */
+  function overlayFree(x, y, w, h) {
+    var occ = [elPanel, cardOpen() ? cardEl : null], k, e;
+    for (k = 0; k < occ.length; k++) {
+      e = occ[k];
+      if (!e || e.hidden || !e.getBoundingClientRect) continue;
+      if (coverFrac(x, y, w, h || 14, e.getBoundingClientRect()) > 0.001) return false;
+    }
+    return true;
+  }
+  function bodyLabClash(x, y, w, h) {
+    for (var k = 0; k < bodyLabs.length; k++) {
+      var b = bodyLabs[k];
+      if (x < b.x + b.w + 4 && b.x < x + w + 4 &&
+          y < b.y + b.h + 2 && b.y < y + h + 2) return true;
+    }
+    return false;
+  }
+  function claimDisc(x, y, r) {
+    if (isFinite(x) && isFinite(y) && r > 6) frameDiscs.push({ x: x, y: y, r: r });
+  }
+  /* how much of a label box an element rect covers, 0..1 */
+  function coverFrac(x, y, w, h, r) {
+    if (!r || !(r.width > 0) || !(r.height > 0)) return 0;
+    var ox = Math.min(x + w, r.left + r.width) - Math.max(x, r.left);
+    var oy = Math.min(y + h, r.top + r.height) - Math.max(y, r.top);
+    if (!(ox > 0) || !(oy > 0)) return 0;
+    return (ox * oy) / Math.max(1, w * h);
+  }
+  function labelFits(x, y, w, h) {
+    if (!isFinite(x) || !isFinite(y) || !(w > 0)) return false;
+    var hh = h || 13;
+    if (y < 40) return false;              /* the masthead's dead zone */
+    var vx = Math.min(x + w, W - 2) - Math.max(x, 2);
+    var vy = Math.min(y + hh, H - 2) - Math.max(y, 2);
+    if (!(vx > 0) || !(vy > 0)) return false;
+    if ((vx * vy) / (w * hh) < 0.70) return false;          /* clipped by an edge */
+    var occ = [elPanel, cardOpen() ? cardEl : null], k, e;
+    for (k = 0; k < occ.length; k++) {
+      e = occ[k];
+      if (!e || e.hidden || !e.getBoundingClientRect) continue;
+      if (coverFrac(x, y, w, hh, e.getBoundingClientRect()) > 0.30) return false;
+    }
+    return true;
+  }
+  /* true when the box clears every drawn disc claimed this frame */
+  function discFree(x, y, w, h) {
+    var hh = h || 13, k, d, cx2, cy2;
+    for (k = 0; k < frameDiscs.length; k++) {
+      d = frameDiscs[k];
+      cx2 = clampN(d.x, x, x + w);
+      cy2 = clampN(d.y, y, y + hh);
+      if ((cx2 - d.x) * (cx2 - d.x) + (cy2 - d.y) * (cy2 - d.y) < d.r * d.r) return false;
+    }
+    return true;
+  }
   function farLabClash(x, y, w) {
     for (var k = 0; k < farLab.length; k++) {
       var b = farLab[k];
@@ -7434,6 +8017,7 @@
         var lx = f.x + f.r + 5;
         if (lx + tw > right) lx = f.x - f.r - 5 - tw;
         if (lx < 4 || lx + tw > W - 4) continue;
+        if (!labelFits(lx, ly - 7, tw, 14)) continue;      /* A1-9 */
         if (farLabClash(lx, ly, tw)) continue;
         farLab.push({ x: lx, y: ly, w: tw });
         /* the clusters near the core land on the bulge, which is the same
@@ -7621,6 +8205,7 @@
       orbBacking(P3.x, P3.y, opx, pa);
       orbDrawPlanet(ctx, P3.x, P3.y, opx, solArtOf(i), orbT(now),
                     { quality: orbQuality(), lightDir: lds, alpha: pa }, true);
+      claimDisc(P3.x, P3.y, opx);        /* A1-9: no label lands on this disc */
       /* the ring is a "this one" marker for a dot; on a big orb it is just
          a circle drawn through the middle of a world */
       if (opx <= ORB_SEL_MAX) {
@@ -7663,6 +8248,9 @@
       var ly3 = lb.y < H * 0.17 ? lb.y + 12 + lpad : lb.y - 9 - lpad;
       var wpx = ctx.measureText(lb.txt).width;
       var rect = { x: lb.x + 8, y: ly3 - 7, w: wpx, h: 14 };
+      /* A1-9: a name the edge or the panel would eat is dropped whole. The
+         planet keeps its dot; "Mercu" and "nus" name nothing. */
+      if (!labelFits(rect.x, rect.y, rect.w, rect.h)) continue;
       var hit = false;
       for (var q = 0; q < placed.length; q++) {
         var o = placed[q];
@@ -7670,6 +8258,7 @@
       }
       if (hit) continue;
       placed.push(rect);
+      claimBodyLab(rect.x, rect.y, rect.w, rect.h);      /* A2-13 */
       ctx.globalAlpha = 0.55 * pa + (lb.color ? 0.3 : 0);
       ctx.fillStyle = lb.color || textColor(0.8);
       ctx.fillText(lb.txt, lb.x + 8, ly3);
@@ -7798,11 +8387,16 @@
      slowly (K_SHRINK 0.40, so a doubling of distance costs a quarter of the
      radius), and PURE.orbBlend fades what is left into the atlas sprite. */
   var ORB_HOLD_AU = PURE.ORB_HOLD_AU, K_SHRINK = PURE.K_SHRINK;
-  function starOrbRadius(i, D) {
+  /* the brightness-derived size the whole radius law is built on, factored out
+     so the framing helpers can invert it instead of guessing at it */
+  function starOrbBase(i) {
     var Rsun = A.starRadiusSun(starBolLum(i), starTempOf(i));
-    var base = isFinite(Rsun)
+    return isFinite(Rsun)
       ? clampN(18 + 16 * Math.log(Math.max(1e-3, Rsun)) / Math.LN10, 6, 60)
       : 8;
+  }
+  function starOrbRadius(i, D) {
+    var base = starOrbBase(i);
     if (!(D > 0)) return base;
     var lim = Math.max(base, Math.min(H * 0.72, 640));
     if (D <= ORB_HOLD_AU) return clampN(base * (ORB_HOLD_AU / D), base, lim);
@@ -7847,6 +8441,10 @@
         thrust: 0, t: reduced ? 0 : now / 1000, quality: 0, flip: 0,
         light: isLight()
       });
+      /* A2-13: on a close-up, say what that little hull is. Recorded here
+         and drawn at the end of the frame, once the body labels are down,
+         so the ship's tag is the one that gives way. */
+      if (rBody >= 24 && fade > 0.4) parkTag = { x: ex, y: ey, r: spx, a: fade };
     }
     ctx.restore();
     ctx.globalAlpha = 1;
@@ -7858,19 +8456,375 @@
      marks a sample that failed to project, which breaks the polyline run
      exactly as it always did. */
   var EXO_RING = 65;
+  var RING_CLEAR = 1.35;   /* innermost drawn orbit sits at least this far
+                              outside the disc, in disc radii */
+  /* A1-1: past this many screens across, a projected orbit has no curvature
+     left inside the viewport and reads as a straight rule ruled across the
+     art rather than as an orbit. (A circle of radius R stays within a pixel
+     of straight for 2*sqrt(2R) px, so two screens is about a 100 px segment,
+     which still visibly bends; ten screens is a dead-straight line.) */
+  var RING_MAX_SPAN = 2.2;
+  var ringsOnScreen = false;   /* did any orbit ring reach the frame? (A1-12) */
   var exoRows = [];
   function exoRowAt(k) {
     while (exoRows.length <= k) {
       exoRows.push({ j: -1, ok: false, x: 0, y: 0, z: 0, er: 0, sel: false,
-                     art: null, ring: new Float64Array(EXO_RING * 3) });
+                     draw: false, art: null, ring: new Float64Array(EXO_RING * 3) });
     }
     return exoRows[k];
+  }
+
+  /* a planet's true orbit radius in AU, with the Kepler fallback from its
+     period; 0 = not drawable */
+  function exoOrbitAu(j) {
+    var a = SD.planets.a[j];
+    var per = SD.planets.per[j];
+    if ((a == null || !isFinite(a)) && per != null && isFinite(per) && per > 0) {
+      a = Math.pow(per / 365.25, 2 / 3);
+    }
+    return (a != null && isFinite(a) && a > 0) ? a : 0;
+  }
+  /* the smallest true orbit in a system, which is what ringScale keys off */
+  function exoInnerAu(i) {
+    var list = starPlanets[i], k, a, m = Infinity;
+    if (list) {
+      for (k = 0; k < list.length; k++) {
+        a = exoOrbitAu(list[k]);
+        if (a > 0 && a < m) m = a;
+      }
+    }
+    return isFinite(m) ? m : 0;
+  }
+
+  /* ==================================================================
+     A1-2: framing a SELECTED exoplanet.
+
+     The chip's shipped fly-to used the planet's TRUE orbit radius (a * 4),
+     but the close-up draws every orbit at a * ringScale so the innermost ring
+     clears a disc that is drawn far larger than life. Framing the true radius
+     therefore flew the camera INSIDE the disc: a full-screen photosphere with
+     the planet nowhere on it. This solves for the distance at which the DRAWN
+     orbit spans the frame, out of the renderer's own two laws, so the two can
+     never drift apart.
+
+     Both laws fall monotonically with D, so a bisection on log10(D) lands on
+     the crossing whichever side of the ringScale branch it is on. Two clamps
+     bound the answer: the disc may not overflow the frame, and it may not
+     shrink below a small readable disc (a system with a 20:1 inner-to-hero
+     orbit ratio cannot show both at once, and a framed orbit around an
+     invisible star is the worse of the two pictures).
+     ================================================================== */
+  var EXO_FRAME_SPAN = 0.62;         /* drawn orbit diameter / min(W, H) */
+  var EXO_STAR_MIN_PX = 12;          /* the disc stays a disc, whatever it costs */
+  function exoDrawnOrbitPx(i, j, D) {
+    var a = exoOrbitAu(j);
+    if (!(a > 0) || !(D > 0)) return 0;
+    var aMin = exoInnerAu(i);
+    if (!(aMin > 0)) aMin = a;
+    var fpx = (H * 0.5) / FOV_T;
+    var rpx = starOrbRadius(i, D);
+    var innerPx = fpx * aMin / D;
+    var scale = (innerPx > 0 && innerPx < rpx * RING_CLEAR) ? rpx * RING_CLEAR / innerPx : 1;
+    return fpx * a * scale / D;
+  }
+  function exoFrameLogD(i, j) {
+    if (!(W > 0) || !(H > 0) || !(exoOrbitAu(j) > 0)) return null;
+    var want = EXO_FRAME_SPAN * 0.5 * Math.min(W, H);
+    if (!(want > 8)) return null;
+    var lo = -3, hi = MAX_LOGD, mid, q;
+    for (q = 0; q < 42; q++) {
+      mid = (lo + hi) / 2;
+      if (exoDrawnOrbitPx(i, j, Math.pow(10, mid)) > want) lo = mid; else hi = mid;
+    }
+    var lg = (lo + hi) / 2;
+    var lgNear = Math.log(starFrameD(i, 0.30 * Math.min(W, H))) / Math.LN10;
+    var lgFar = Math.log(starFrameD(i, EXO_STAR_MIN_PX)) / Math.LN10;
+    if (lgFar < lgNear) lgFar = lgNear;
+    return clampN(clampN(lg, lgNear, lgFar), minLogD(), MAX_LOGD);
+  }
+  /* ==================================================================
+     E-1(a): the fly-to has to leave the HERO on screen, not just its orbit.
+
+     A1-2 framed the drawn orbit and centred that ring in the strip the card
+     and the panel leave. The planet the card is about, though, sits at one
+     illustrative point ON that ring, and half the ring is outside the strip
+     whenever the orbit is wider than the strip: the verifier caught Proxima d
+     settling 88 % behind the open card and Kepler-90 f parked under the panel.
+
+     So the principal point is chosen from where the HERO will be, not from
+     where its orbit is. The offsets come out of the renderer's own laws
+     (ringScale, the same phase formula, the same projector) run at the framing
+     this fly-to is heading for, at the moment it lands and for a few seconds
+     after, and the shift with the most CLEARANCE across those samples wins,
+     ties going to the smallest shift. Two things that look like details are
+     not. Sampling forward is what makes the answer hold for more than an
+     instant: Proxima d laps its illustrative orbit in about nine seconds, so a
+     point solution at the settle frame is stale before anyone has read the
+     card. And clearance, rather than a yes-or-no "is it inside the window",
+     is what stops the answer landing exactly on an overlay edge, which is
+     where the first cut left slow Kepler-90 f: inside by a pixel, and under
+     the panel a second later.
+
+     The star is constrained too. The hero is an illustration of a world in
+     THAT star's system, and a framing that hides the star to save the planet
+     trades one empty picture for another.
+
+     One case a shift genuinely cannot solve: a close-in planet with a short
+     period. 55 Cnc e's illustrative orbit laps in about a second, so it crosses
+     both overlays several times while you are still reading the card, and no
+     principal point can be right for more than a blink. There the framing
+     itself gives ground: the camera backs off until the arc the planet covers
+     in the next couple of seconds fits between the overlays. That costs frame
+     (the drawn orbit ends up nearer a third of the frame than the 62 % A1-2
+     aims for), so it is spent only where a shift has already failed, and only
+     by the factor the motion actually demands: Kepler-90 f pays nothing,
+     TRAPPIST-1 e pays a few per cent, 55 Cnc e pays the lot.
+
+     It does not fight the orbit past that. A planet that wanders behind an
+     overlay later is honest, and the caption gate below is what keeps the page
+     from captioning a planet nobody can see.
+     ================================================================== */
+  /* Sample times after the fly-to lands. The first HERO_HOLD of them are the
+     window the framing has to hold: about two seconds, which is how long the
+     landing frame is still the frame anyone is looking at. The last two only
+     break ties, so a system that can hold longer does. */
+  var HERO_T = [0, 1000, 2000, 3000, 4000, 5200];  /* ms after the settle */
+  var HERO_HOLD = 4;                               /* the first 3 s of those */
+  var heroDx = [0, 0, 0, 0, 0, 0];                 /* hero screen offsets */
+  var heroDy = [0, 0, 0, 0, 0, 0];
+  var heroRpx = 0;                                 /* the star's drawn radius */
+  var heroLo = 0, heroHi = 0;                      /* x swept over the hold */
+  var heroSave = { yaw: 0, pitch: 0, logD: 0, cx: 0, cy: 0, cz: 0, ppx: 0, ppy: 0 };
+  var HERO_PRJ = { x: 0, y: 0, z: 0 };
+  /* fills heroDx/heroDy with the hero's screen offset from the principal point
+     at camera distance D, and heroLo/heroHi with the x range it sweeps over the
+     hold window; returns its drawn radius, or 0 when there is nothing to aim at */
+  function exoHeroOffsets(i, j, D, t0) {
+    var list = starPlanets[i];
+    if (!SD || !list || cam.basis || !(D > 0) || !(H > 0)) return 0;
+    var k = list.indexOf(j);
+    var a = exoOrbitAu(j);
+    if (k < 0 || !(a > 0)) return 0;
+    var per = SD.planets.per[j];
+    var pYr = (per != null && isFinite(per) && per > 0) ? per / 365.25 : Math.pow(a, 1.5);
+    var aMin = exoInnerAu(i);
+    if (!(aMin > 0)) aMin = a;
+    var fpx = (H * 0.5) / FOV_T;
+    var rpx = starOrbRadius(i, D);
+    var innerPx = fpx * aMin / D;
+    var scale = (innerPx > 0 && innerPx < rpx * RING_CLEAR) ? rpx * RING_CLEAR / innerPx : 1;
+    var aDraw = a * scale;
+    var orbitPx = fpx * aDraw / D;
+    var capH = 0.45 * rpx;
+    var er = clampN(Math.min(orbitPx * 0.28, capH), Math.min(10, capH), 120);
+    if (!isFinite(er) || er <= 0) er = 9;
+    /* the camera this fly-to is heading for: whatever is already pending owns
+       yaw and pitch (the same rule camGo itself follows), the centre is the
+       star, and the principal point sits at the origin so a projected point
+       IS its offset from wherever that point ends up */
+    var b = camAnim ? camAnim.to : cam, q, ph;
+    heroSave.yaw = cam.yaw; heroSave.pitch = cam.pitch; heroSave.logD = cam.logD;
+    heroSave.cx = cam.cx; heroSave.cy = cam.cy; heroSave.cz = cam.cz;
+    heroSave.ppx = cam.ppx; heroSave.ppy = cam.ppy;
+    cam.yaw = b.yaw; cam.pitch = b.pitch;
+    cam.cx = starX[i]; cam.cy = starY[i]; cam.cz = starZ[i];
+    cam.logD = Math.log(D) / Math.LN10;
+    cam.ppx = 0; cam.ppy = 0;
+    updateCamBasis();
+    var rate = reduced ? 0 : 2 * Math.PI / 600 / Math.max(1e-4, pYr);  /* rad/s */
+    var ph0 = k * 2.399 + (t0 / 1000) * rate;
+    for (q = 0; q < HERO_T.length; q++) {
+      ph = ph0 + (HERO_T[q] / 1000) * rate;
+      if (projectPt(starX[i] + aDraw * Math.cos(ph),
+                    starY[i] + aDraw * Math.sin(ph), starZ[i], HERO_PRJ)) {
+        heroDx[q] = HERO_PRJ.x; heroDy[q] = HERO_PRJ.y;
+      } else { heroDx[q] = NaN; heroDy[q] = NaN; }
+    }
+    /* the x range the hero sweeps over the hold window, sampled by ANGLE.
+       Sampling that by TIME aliases: 55 Cnc e laps in about a second, so four
+       time samples can all land on one side of the orbit and report a narrow
+       sweep for a planet that is in fact everywhere on it. */
+    var dTh = Math.min(2 * Math.PI, (HERO_T[HERO_HOLD - 1] / 1000) * rate);
+    heroLo = Infinity; heroHi = -Infinity;
+    for (q = 0; q <= 16; q++) {
+      ph = ph0 + dTh * q / 16;
+      if (projectPt(starX[i] + aDraw * Math.cos(ph),
+                    starY[i] + aDraw * Math.sin(ph), starZ[i], HERO_PRJ)) {
+        if (HERO_PRJ.x < heroLo) heroLo = HERO_PRJ.x;
+        if (HERO_PRJ.x > heroHi) heroHi = HERO_PRJ.x;
+      }
+    }
+    cam.yaw = heroSave.yaw; cam.pitch = heroSave.pitch; cam.logD = heroSave.logD;
+    cam.cx = heroSave.cx; cam.cy = heroSave.cy; cam.cz = heroSave.cz;
+    cam.ppx = heroSave.ppx; cam.ppy = heroSave.ppy;
+    updateCamBasis();
+    heroRpx = rpx;
+    return er;
+  }
+  /* The clear window, from the overlays' REAL rects. usableStrip caps each
+     column at 42 % of the width for the close-up's sake, so it can report a
+     strip that overlaps the open card by a few tens of pixels; the hero has to
+     be judged against the thing that actually hides it. */
+  var heroWin = { lx: 0, rx: 0, ly0: 0, ly1: 0, ry0: 0, ry1: 0,
+                  hasL: false, hasR: false };
+  function measureHeroWin() {
+    heroWin.lx = 8; heroWin.rx = W - 8;
+    heroWin.hasL = false; heroWin.hasR = false;
+    var k, e, r;
+    for (k = 0; k < 2; k++) {
+      e = k === 0 ? elPanel : (cardOpen() ? cardEl : null);
+      if (!e || e.hidden || !e.getBoundingClientRect) continue;
+      r = e.getBoundingClientRect();
+      if (!r || !(r.width > 0) || !(r.height > 0)) continue;
+      /* an overlay across the middle of the screen (a phone bottom sheet, the
+         panel at 390 px) is not a column and leaves no side to move to */
+      if (r.left < W * 0.45 && r.right > W * 0.55) continue;
+      if (r.left + r.width / 2 > W / 2) {
+        if (!heroWin.hasR || r.left < heroWin.rx) {
+          heroWin.rx = r.left; heroWin.ry0 = r.top; heroWin.ry1 = r.bottom;
+          heroWin.hasR = true;
+        }
+      } else if (!heroWin.hasL || r.right > heroWin.lx) {
+        heroWin.lx = r.right; heroWin.ly0 = r.top; heroWin.ly1 = r.bottom;
+        heroWin.hasL = true;
+      }
+    }
+  }
+  /* how comfortably a disc of radius r at (hx, hy) clears both overlays.
+     Negative means it is under one. Saturated on the way up: past a body's
+     width of room, more room stops being worth a bigger camera shift. */
+  var HERO_CLEAR_CAP = 56;
+  var HERO_PRI_CAP = 20;
+  function heroClearance(hx, hy, r) {
+    var c = HERO_CLEAR_CAP, v;
+    if (heroWin.hasL && hy + r > heroWin.ly0 && hy - r < heroWin.ly1) {
+      v = (hx - r) - heroWin.lx;
+      if (v < c) c = v;
+    }
+    if (heroWin.hasR && hy + r > heroWin.ry0 && hy - r < heroWin.ry1) {
+      v = heroWin.rx - (hx + r);
+      if (v < c) c = v;
+    }
+    return clampN(c, -3 * HERO_CLEAR_CAP, HERO_CLEAR_CAP);
+  }
+  /* How far the star's own centre may be pushed. The close-up is still the
+     close-up, and a card slicing a third off the disc is the same complaint
+     A1-11 fixed for Saturn's rings, so the disc keeps nine tenths of itself
+     out from under the overlay. The window caps that: a disc wider than the
+     gap between the card and the panel cannot clear either of them whatever
+     the camera does, and the answer there is to back off, not to give up. */
+  function heroStarMargin() {
+    return Math.min(heroRpx * 0.9,
+                    Math.max(20, (heroWin.rx - heroWin.lx) * 0.28));
+  }
+  function heroStarLo() {
+    return clampN(heroWin.hasL ? heroWin.lx + heroStarMargin() : 12, 12, W - 12);
+  }
+  function heroStarHi() {
+    return clampN(heroWin.hasR ? heroWin.rx - heroStarMargin() : W - 12, 12, W - 12);
+  }
+  /* the principal point that keeps the hero clear, falling back to A1-2's
+     ring centring whenever there is nothing better to say */
+  function exoHeroPP(i, j, D, halfE, t0) {
+    var base = explorePP(halfE);
+    var er = exoHeroOffsets(i, j, D, t0);
+    if (!(er > 0)) return base;
+    measureHeroWin();
+    var sLo = heroStarLo(), sHi = heroStarHi();
+    if (sHi - sLo < 24) return base;     /* no room to move: leave the framing */
+    var lo = Math.min(base.x, sLo), hi = Math.max(base.x, sHi);
+    var step = Math.max(2, (hi - lo) / 120);
+    var nStep = Math.max(2, Math.round((hi - lo) / step));
+    var bestX = base.x, bestSc = -Infinity, bestSh = Infinity;
+    var cx2, pri, arc, sec, sc, v, sh, q, c;
+    /* Three tiers, and the ordering is the whole trick.
+         1. the WORST clearance over the hold window, so the frame the visitor
+            actually lands on is never traded away for a later one;
+         2. the worst clearance at the two ends of the arc the planet sweeps in
+            that window, which is what catches a planet fast enough for the
+            time samples to alias (55 Cnc e laps in about a second, so four
+            samples can all read "clear" from one side of the orbit);
+         3. the rest of the sweep, breaking ties toward a framing that lasts.
+       Summing everything instead let a slow planet settle exactly on an overlay
+       edge (Kepler-90 f: inside the window by a pixel, under the panel a
+       second later). */
+    for (c = -1; c <= nStep; c++) {
+      cx2 = (c < 0) ? base.x : Math.min(hi, lo + c * step);
+      pri = HERO_PRI_CAP; sec = 0;
+      for (q = 0; q < HERO_T.length; q++) {
+        if (!isFinite(heroDx[q])) continue;
+        v = heroClearance(cx2 + heroDx[q], base.y + heroDy[q], er);
+        /* tier 1 saturates early on purpose: a sample that happens to pass
+           below the panel reads as wide open, and without the cap that free
+           clearance would drag the whole framing to the edge of the range
+           tier 2 is trying to centre */
+        if (q < HERO_HOLD) { if (v < pri) pri = Math.min(v, HERO_PRI_CAP); }
+        else sec += v;
+      }
+      arc = HERO_CLEAR_CAP;
+      if (isFinite(heroLo) && isFinite(heroHi)) {
+        v = heroClearance(cx2 + heroLo, base.y, er);
+        if (v < arc) arc = v;
+        v = heroClearance(cx2 + heroHi, base.y, er);
+        if (v < arc) arc = v;
+      }
+      sc = pri * 1e6 + arc * 1e3 + sec;
+      sh = Math.abs(cx2 - base.x);
+      if (sc > bestSc + 0.5 || (sc > bestSc - 0.5 && sh < bestSh - 0.5)) {
+        bestSc = sc; bestSh = sh; bestX = cx2;
+      }
+    }
+    lastHeroPP = { j: j, base: base.x, x: bestX, lx: heroWin.lx, rx: heroWin.rx,
+                   sLo: sLo, sHi: sHi, er: er, rpx: heroRpx, D: D, score: bestSc,
+                   arcLo: heroLo, arcHi: heroHi,
+                   dx: heroDx.slice(0), dy: heroDy.slice(0) };
+    return { x: bestX, y: base.y };
+  }
+  var lastHeroPP = null;                 /* what the last bias decided (hook) */
+  /* The distance at which a principal point exists that keeps the hero clear
+     for the whole hold window AND leaves the star its own margin. Returns D0
+     unchanged whenever one already does, which is most systems. */
+  function exoHeroD(i, j, D0, t0) {
+    measureHeroWin();
+    var winW = heroWin.rx - heroWin.lx;
+    if (!(winW > 80)) return D0;
+    /* the drawn disc shrinks as D^-1 close in and only as D^-0.4 past the hold
+       distance, so a single step of the deficit undershoots; iterate, bounded
+       both ways. dMax keeps the star a star (A1-2's own floor), and 2.6 keeps
+       any system from being backed off into a black frame. */
+    var dMax = Math.max(D0, starFrameD(i, EXO_STAR_MIN_PX));
+    var dCap = Math.min(D0 * 2.6, dMax);
+    var D = D0, er, t, pLo, pHi;
+    for (t = 0; t < 10; t++) {
+      er = exoHeroOffsets(i, j, D, t0);
+      if (!(er > 0) || !isFinite(heroLo) || !isFinite(heroHi)) return D0;
+      /* the principal points that keep every point of the swept arc clear */
+      pLo = Math.max(heroStarLo(), heroWin.lx + er + 18 - heroLo);
+      pHi = Math.min(heroStarHi(), heroWin.rx - er - 18 - heroHi);
+      if (pLo <= pHi || !(D < dCap)) break;
+      D = Math.min(D * clampN(1 + (pLo - pHi) / winW, 1.05, 1.5), dCap);
+    }
+    return D;
+  }
+  /* fly the camera to that framing, centred so the hero clears the overlays */
+  function frameExo(i, j) {
+    if (centeredStar !== i || selExo !== j) return;
+    var lgE = exoFrameLogD(i, j);
+    if (lgE == null) return;
+    var t0 = performance.now() + (reduced ? 0 : 900);
+    lgE = clampN(Math.log(exoHeroD(i, j, Math.pow(10, lgE), t0)) / Math.LN10,
+                 minLogD(), MAX_LOGD);
+    var D = Math.pow(10, lgE);
+    var halfE = exoDrawnOrbitPx(i, j, D) + 18;
+    var ppE = exoHeroPP(i, j, D, halfE, t0);
+    camGo({ logD: lgE, ppx: ppE.x, ppy: ppE.y }, 900);
   }
 
   /* One planet's orbit ring, restricted to the half of it that is farther
      from the camera than the star (behind) or nearer than it. Splitting at
      sample granularity is deliberate: no interpolated crossing point. */
   function strokeExoRing(row, behind, starZc, fade) {
+    if (!row.draw) return;
     ctx.strokeStyle = 'rgba(127,127,127,0.9)';
     ctx.globalAlpha = 0.35 * fade;
     ctx.lineWidth = 1;
@@ -7923,6 +8877,7 @@
     exoScr.length = 0;
     starOrbPx = 0;
     lastOrbBlend = 0;
+    ringsOnScreen = false;
     var i = centeredStar;
     if (i < 0 || i >= NS) return;
     var P = PRJ;
@@ -7971,28 +8926,62 @@
     if (fade >= 0.5 && list && list.length) {
       var exoTappable = (mode === 'explore') || (mode === 'shipidle');
       var tAnim = reduced ? 0 : now / 1000 / 600;   /* 600 s per Earth-year of sweep */
+      /* The disc is drawn far larger than life, and a compact system's TRUE
+         orbits can land inside it, which read as planets orbiting within the
+         star. One shared factor pushes every orbit out until the innermost
+         ring clears the limb: ratios between orbits are untouched, a system
+         whose inner orbit already clears the disc keeps ringScale = 1, and
+         the factor is continuous in D so nothing pops while zooming. The
+         card's note owns the honesty of this scale. */
+      var aMin = Infinity;
+      for (k = 0; k < list.length; k++) {
+        var a0 = exoOrbitAu(list[k]);
+        if (a0 > 0 && a0 < aMin) aMin = a0;
+      }
+      var ringScale = 1;
+      if (isFinite(aMin)) {
+        var innerPx = fpxV * aMin / Math.max(1e-6, D);
+        if (innerPx > 0 && innerPx < rpx * RING_CLEAR) ringScale = rpx * RING_CLEAR / innerPx;
+      }
       for (k = 0; k < list.length; k++) {
         var j = list[k];
-        var a = SD.planets.a[j];
+        var a = exoOrbitAu(j);
+        if (!(a > 0)) continue;
         var per = SD.planets.per[j];
-        if ((a == null || !isFinite(a)) && per != null && isFinite(per) && per > 0) {
-          a = Math.pow(per / 365.25, 2 / 3);
-        }
-        if (a == null || !isFinite(a) || a <= 0) continue;
         var pYr = (per != null && isFinite(per) && per > 0) ? per / 365.25 : Math.pow(a, 1.5);
         var ph = k * 2.399 + (reduced ? 0 : tAnim * 2 * Math.PI / Math.max(1e-4, pYr));
+        var aDraw = a * ringScale;
         row = exoRowAt(nRow++);
         row.j = j;
-        /* orbit circle in the ecliptic plane around the star */
+        /* orbit circle in the ecliptic plane around the star.
+           A1-1: a ring the camera sits INSIDE (or one whose drawn radius has
+           run into the tens of thousands of pixels) does not project to a
+           readable ellipse at all -- the two branches of the conic sweep
+           across the frame and read as a hard straight rule with no curvature,
+           which is exactly the "orange vertical line" the sweep photographed
+           at TRAPPIST-1 and TOI-700. Such a ring says nothing true about the
+           system, so it is not drawn. `ringOk` is the honest test: every
+           sample in front of the camera, and the whole figure inside a sane
+           multiple of the viewport. */
+        var ringOk = true;
+        var rx0 = Infinity, rx1 = -Infinity, ry0 = Infinity, ry1 = -Infinity;
         for (var q2 = 0; q2 < EXO_RING; q2++) {
           var th = q2 / 64 * 2 * Math.PI;
-          var wx2 = starX[i] + a * Math.cos(th), wy2 = starY[i] + a * Math.sin(th);
+          var wx2 = starX[i] + aDraw * Math.cos(th), wy2 = starY[i] + aDraw * Math.sin(th);
           var o2 = q2 * 3;
           if (projectPt(wx2, wy2, starZ[i], PRJ)) {
             row.ring[o2] = PRJ.x; row.ring[o2 + 1] = PRJ.y; row.ring[o2 + 2] = PRJ.z;
-          } else row.ring[o2 + 2] = NaN;
+            if (PRJ.x < rx0) rx0 = PRJ.x;
+            if (PRJ.x > rx1) rx1 = PRJ.x;
+            if (PRJ.y < ry0) ry0 = PRJ.y;
+            if (PRJ.y > ry1) ry1 = PRJ.y;
+          } else { row.ring[o2 + 2] = NaN; ringOk = false; }
         }
-        var wx3 = starX[i] + a * Math.cos(ph), wy3 = starY[i] + a * Math.sin(ph);
+        var ringCap = RING_MAX_SPAN * Math.max(W, H);
+        row.draw = ringOk && isFinite(rx0) &&
+                   (rx1 - rx0) <= ringCap && (ry1 - ry0) <= ringCap;
+        if (row.draw && rx1 > 0 && rx0 < W && ry1 > 0 && ry0 < H) ringsOnScreen = true;
+        var wx3 = starX[i] + aDraw * Math.cos(ph), wy3 = starY[i] + aDraw * Math.sin(ph);
         row.ok = projectPt(wx3, wy3, starZ[i], PRJ);
         if (row.ok) {
           row.x = PRJ.x; row.y = PRJ.y; row.z = PRJ.z;
@@ -8000,10 +8989,17 @@
           row.art = exoArtOf(j);
           /* size the orb from the orbit's own on-screen radius: a selected
              planet grows as the camera closes in, everything else stays a
-             small orb that reads as a dot on the ring */
-          var orbitPx = fpxV * a / Math.max(1e-6, D);
-          var er = row.sel ? clampN(orbitPx * 0.28, 10, 120)
-                           : clampN(orbitPx * 0.10, 8, 14);
+             small orb that reads as a dot on the ring.
+             A1-3: and neither of them may out-grow the star they orbit. The
+             disc is already drawn far larger than life, so a planet bigger
+             than it (TRAPPIST-1 e came out 175 px against a 155 px star) is
+             not an illustration of anything. The two caps keep the hero orb
+             at about twice a sibling whatever the framing. */
+          var orbitPx = fpxV * aDraw / Math.max(1e-6, D);
+          var capH = 0.45 * rpx, capS = 0.22 * rpx;
+          var er = row.sel
+            ? clampN(Math.min(orbitPx * 0.28, capH), Math.min(10, capH), 120)
+            : clampN(Math.min(orbitPx * 0.10, capS), Math.min(8, capS), 14);
           if (!isFinite(er) || er <= 0) er = 9;
           row.er = er;
           if (row.sel) selRow = nRow - 1;
@@ -8067,17 +9063,85 @@
       row = exoRows[r];
       if (row.ok && (row.sel || row.z <= starZc)) drawExoOrb(row, cx0, cy0, rpx, fade, now);
     }
+    /* the discs this frame put on screen, so a label can give way to them */
+    claimDisc(cx0, cy0, rpx);
+    for (r = 0; r < nRow; r++) {
+      row = exoRows[r];
+      if (row.ok && row.er > 6) claimDisc(row.x, row.y, row.er);
+    }
 
     /* the same honesty line the card carries, next to the close-up. It sits
        over the host star's disc more often than not, so it gets a backing
        plate and it goes down after every orb in the system: this sentence
-       has to be readable, always. */
-    if (selRow >= 0 && exoRows[selRow].ok && exoRows[selRow].er >= 26) {
+       has to be readable, always.
+       A1-10: and only on a frame where the planet it is about was really
+       drawn ON SCREEN. An orb projected far outside the viewport left the
+       plate captioning empty sky. */
+    if (selRow >= 0 && exoRows[selRow].ok && exoRows[selRow].er >= 11) {
       row = exoRows[selRow];
-      captionPlate([
-        'An impression drawn from its measured size and temperature.',
-        'Nobody has seen this planet up close.'
-      ], clampN(row.x, W * 0.24, W * 0.76), row.y + row.er + 12, W < 700 ? 10 : 11.5);
+      var onScr = row.x > -row.er && row.x < W + row.er &&
+                  row.y > -row.er && row.y < H + row.er;
+      if (heroCovJ !== row.j) { heroCovJ = row.j; heroCovHid = false; }
+      heroCov = overlayCover(row.x, row.y, row.er);
+      /* E-1(b): the plate is laid out in the clear strip, so it stays perfectly
+         readable while the planet it is about is behind the card or the panel,
+         which is the one thing it must never do. Past 85 % covered the hero
+         counts as not drawn.
+         The spec asked for a two-second grace before hiding; the acceptance
+         contract it also sets ("no sample shows the caption while the hero is
+         more than 85 % covered") does not survive a grace period, since a fast
+         illustrative orbit crosses an overlay in about two seconds. So the gate
+         is immediate and the anti-flicker job is done by releasing at 75 %
+         instead: it takes a real re-emergence, not a pixel of jitter at the
+         threshold, to bring the sentence back. */
+      if (heroCov > 0.85) heroCovHid = true;
+      else if (heroCov <= 0.75) heroCovHid = false;
+      if (onScr && !heroCovHid) {
+        captionPlate([
+          'An impression drawn from its measured size and temperature.',
+          'Nobody has seen this planet up close.'
+        ], clampN(row.x, W * 0.24, W * 0.76), row.y + row.er + 12, W < 700 ? 10 : 11.5);
+      }
+    }
+  }
+
+  /* A2-13: the parked ship's own quiet tag. It is set by drawParkedShip and
+     drawn at the end of the frame, in the same ink as a body label and a
+     size smaller, beside the hull (or under it, or over it), and not at all
+     when no slot clears the disc, an overlay and every body's name.
+     It never appears during a cinematic: drawParkedShip is only reached
+     outside the rig modes, and the drawer checks again. */
+  var parkTag = null;
+  var lastParkTag = null;               /* what the tag actually drew (test hook) */
+  function drawParkTag() {
+    var t = parkTag;
+    parkTag = null;
+    lastParkTag = null;
+    if (!t || isRigMode() || mode === 'porkchop') return;
+    ctx.font = '10.5px ' + FONT;
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    var txt = 'your ship';
+    var w = ctx.measureText(txt).width, h = 14;
+    /* beside the hull first, then under it, then over it */
+    var cand = [[t.x + t.r * 0.55 + 6, t.y - 7],
+                [t.x - t.r * 0.55 - 6 - w, t.y - 7],
+                [t.x - w / 2, t.y + t.r * 0.5 + 6],
+                [t.x - w / 2, t.y - t.r * 0.5 - 20]], k, x, y;
+    for (k = 0; k < cand.length; k++) {
+      x = cand[k][0]; y = cand[k][1];
+      /* stricter than a body label on purpose: this is the least important
+         name on the page, so it may not even TOUCH the panel or the card
+         (labelFits tolerates 30 % of a body's name being covered because a
+         body has to keep its name; this one can simply go) */
+      if (!labelFits(x, y, w, h) || !discFree(x, y, w, h) ||
+          !overlayFree(x, y, w, h) || bodyLabClash(x, y, w, h)) continue;
+      ctx.globalAlpha = clampN(0.7 * t.a, 0, 1);
+      ctx.fillStyle = textColor(0.8);
+      ctx.fillText(txt, x, y + 7);        /* the box's own middle */
+      ctx.globalAlpha = 1;
+      lastParkTag = { x: x, y: y, w: w, h: h, txt: txt };
+      return;
     }
   }
 
@@ -8092,25 +9156,60 @@
     ctx.textAlign = 'left';
     ctx.fillStyle = color;
     var ty = y < H * 0.17 ? y + ringR + 10 : y - ringR - 9;
-    ctx.fillText(txt, x + ringR + 4, ty);
+    /* A1-9: right of the ring, else left of it, else no text at all. The ring
+       stays either way, so the body is still marked; a half-clipped name or
+       one printed across a drawn disc is worse than none. */
+    var tw = ctx.measureText(txt).width;
+    var tx = x + ringR + 4;
+    if (!labelFits(tx, ty - 7, tw, 14) || !discFree(tx, ty - 7, tw, 14)) {
+      tx = x - ringR - 4 - tw;
+      if (!labelFits(tx, ty - 7, tw, 14) || !discFree(tx, ty - 7, tw, 14)) {
+        ctx.globalAlpha = 1;
+        return;
+      }
+    }
+    ctx.fillText(txt, tx, ty);
+    claimBodyLab(tx, ty - 7, tw, 14);                    /* A2-13 */
     ctx.globalAlpha = 1;
   }
 
+  /* A1-7: a body whose own close-up disc is the centered orb is not marked.
+     Once the disc is bigger than ORB_SEL_MAX the orb IS the selection, and a
+     gold ring with the name printed across its middle only gets in the way
+     (the card and the panel both name it). The shipped test was gated on
+     `starsVis && scrOk` first, so an arrival at Sirius -- where the star field
+     is drawn and the star has a screen position -- took the OTHER branch and
+     stamped ring and label straight onto the photosphere. This asks the one
+     question that matters, in every mode. */
+  /* ORB_SEL_MAX is an absolute pixel count, and on a phone a close-up disc
+     never reaches it: at 390 px wide the framed disc is about 37 px and the
+     ring landed exactly on its limb, reading as an outline drawn around the
+     star. The test is really "does this disc own its patch of screen", so it
+     scales with the frame and can only ever be stricter than the constant. */
+  function selRingMax() {
+    return Math.min(ORB_SEL_MAX, Math.max(16, 0.07 * Math.min(W, H)));
+  }
+  function ownCloseUp(i) {
+    return centeredStar === i && starOrbPx > selRingMax();
+  }
   function drawSelectionRings() {
-    if (hover && hover.kind === 's' && starsVis && scrOk[hover.idx] &&
+    if (hover && hover.kind === 's' && starsPick && scrOk[hover.idx] &&
+        !ownCloseUp(hover.idx) &&
         !(sel && sel.kind === 's' && sel.idx === hover.idx)) {
       drawTag(scrX[hover.idx], scrY[hover.idx], starName(hover.idx), textColor(0.75), 9, true);
     }
-    if (sel && sel.kind === 's') {
+    if (sel && sel.kind === 's' && !ownCloseUp(sel.idx)) {
       var i = sel.idx;
-      if (starsVis && scrOk[i]) {
+      if (starsPick && scrOk[i]) {
         drawTag(scrX[i], scrY[i], starName(i), gold(), 9, false);
-      } else if (centeredStar === i && camD < 200 && starOrbPx <= ORB_SEL_MAX) {
-        /* once the orb is big the orb IS the selection: a gold ring and a name
-           printed across its middle only get in the way (the card names it) */
+      } else if (centeredStar === i) {
+        /* A1-5: the selected star keeps its ring and its name at EVERY zoom
+           between the close-up and the point where the star field takes over.
+           The old camD < 200 gate left it unmarked from 200 to 5,000 AU, which
+           is most of the way out of a system. */
         var P = PRJ;
         if (projectPt(starX[i], starY[i], starZ[i], P)) {
-          drawTag(P.x, P.y, starName(i), gold(), 14, false);
+          drawTag(P.x, P.y, starName(i), gold(), Math.max(14, starOrbPx + 7), false);
         }
       }
     }
@@ -8166,10 +9265,22 @@
       ctx.strokeStyle = color;
       ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.arc(x, y, 6, 0, 6.2832); ctx.stroke();
-      ctx.fillStyle = color;
       var ty2 = clampN(y, 130, H - 14);
-      ctx.fillText(txt, x + 12, ty2);
-      claimHereLab(txt, x + 12, ty2);
+      var tw2 = ctx.measureText(txt).width;
+      /* A1-9(c): the one label a visitor navigates by gets the far tier's own
+         legibility treatment (a background-coloured outline under the ink, so
+         it survives the bulge) and is dropped rather than clipped. */
+      if (labelFits(x + 12, ty2 - 7, tw2, 14)) {
+        ctx.globalAlpha = a * 0.55;
+        ctx.strokeStyle = bg();
+        ctx.lineWidth = 3;
+        ctx.lineJoin = 'round';
+        ctx.strokeText(txt, x + 12, ty2);
+        ctx.globalAlpha = a * 0.95;
+        ctx.fillStyle = color;
+        ctx.fillText(txt, x + 12, ty2);
+        claimHereLab(txt, x + 12, ty2);
+      }
       ctx.globalAlpha = 1;
       hereMarks.push({ txt: txt, x: x, y: y, alpha: a });
       return { x: x, y: y };
@@ -8204,7 +9315,9 @@
     /* a touch stronger than the HUD's: this block is small, its ink is the
        faintest on the page (0.45 and 0.65), and a close-up parks a lit
        photosphere directly under it */
-    var sbScrim = Math.min(0.8, hudScrim() * 1.45);
+    /* A2-12: the same floor, a touch stronger (this block is the faintest
+       ink on the page and it sits over whatever the sky is doing) */
+    var sbScrim = clampN(0.3 + hudScrim() * 1.45, 0.3, 0.85);
     if (sbScrim > 0.004) {
       var pad = 34, gx0 = x0 - pad, gx1 = x1 + pad;
       var gsb = ctx.createLinearGradient(gx0, 0, gx1, 0);
@@ -8327,6 +9440,7 @@
     ctx.textBaseline = 'top';
     ctx.fillStyle = textColor(0.6);
     ctx.fillText('total Δv, km/s', plot.x + plot.w - 5, plot.y + 4);
+    drawDvLegend(job, plot);
 
     if (job && !job.done) {
       ctx.fillStyle = accent();
@@ -8352,6 +9466,51 @@
     }
 
     drawReadout(job);
+  }
+
+  /* A2-5: the colour key.
+     "total Δv, km/s" named a scale that was nowhere on screen, so the map's
+     own colours meant nothing until you clicked a cell. The ramp is painted
+     from dvColor itself, so it can never drift from the plot, and its two
+     end numbers are this plot's own range: the left one IS the "min" the
+     cache annotates the cheapest cell with. The top end stops where the
+     colour ramp does (it saturates at 14 km/s), which is the honest label
+     for the colour and not for the worst cell off the top of the scale. */
+  var DV_MAX_SHOWN = 14;
+  function dvRangeOf(job) {
+    if (!job || !job.done || !isFinite(job.minDv)) return null;
+    if (job.dvHi === undefined) {
+      var hi = -Infinity, t = job.total, q;
+      for (q = 0; q < job.cells; q++) { if (isFinite(t[q]) && t[q] > hi) hi = t[q]; }
+      job.dvHi = isFinite(hi) ? hi : job.minDv;
+    }
+    var hi2 = Math.min(job.dvHi, DV_MAX_SHOWN);
+    if (!(hi2 > job.minDv + 0.05)) return null;
+    return { lo: job.minDv, hi: hi2 };
+  }
+  function drawDvLegend(job, plot) {
+    var rg = dvRangeOf(job);
+    if (!rg || plot.w < 150) return;
+    var bw = 60, bh = 8;
+    var x1 = plot.x + plot.w - 5, x0 = x1 - bw;
+    var y0 = plot.y + 18;
+    var light = isLight(), k, c;
+    for (k = 0; k < bw; k++) {
+      c = dvColor(rg.lo + (rg.hi - rg.lo) * (k / (bw - 1)), light);
+      ctx.fillStyle = 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')';
+      ctx.fillRect(x0 + k, y0, 1.1, bh);
+    }
+    ctx.strokeStyle = 'rgba(127,127,127,0.45)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x0 + 0.5, y0 + 0.5, bw - 1, bh - 1);
+    ctx.font = '9.5px ' + FONT;
+    ctx.fillStyle = textColor(0.6);
+    ctx.textBaseline = 'top';
+    ctx.textAlign = 'left';
+    ctx.fillText(rg.lo.toFixed(1), x0, y0 + bh + 2);
+    ctx.textAlign = 'right';
+    ctx.fillText(rg.hi.toFixed(1) + (rg.hi >= DV_MAX_SHOWN ? '+' : ''), x1, y0 + bh + 2);
+    ctx.font = '10.5px ' + FONT;
   }
 
   function drawReadout(job) {
@@ -8426,6 +9585,11 @@
     hudDrawn = [];
     hudOrbPx = 0;                        /* and the bright-orb ledger with it */
     hereLab.length = 0;                  /* and the marker-label ledger (E7) */
+    frameDiscs.length = 0;               /* and the drawn-disc ledger (A1-9) */
+    bodyLabs.length = 0;                 /* and the body-label ledger (A2-13) */
+    parkTag = null;
+    capRect = null;                      /* and the honesty-plate rect (A1-4) */
+    heroCov = 0;                         /* and the hero's overlay cover (E-1) */
     /* One frame, at most GL_MAX_BLITS orb blits: tell VoyageGL the frame
        started so the budget is per frame and not per call. This takes the
        WALL clock, never orbT: VoyageGL resets the counter when the time it
@@ -8494,16 +9658,29 @@
        real picture and the two read together.
        1.2e9 was re-measured here after the seam fix and still misses (see
        above and the spec's perf section), so 8e8 is what ships. */
-    var sa = ramp(D, 5e3, 3e4) * (1 - ramp(D, 1.2e8, 8e8));
+    /* ---- A1-5: there is no zoom with an empty sky ----
+       `saFar` is the shipped ramp and still decides everything that treats
+       the star field as the SUBJECT: hover, picking, the field's own labels
+       and the handoff to the galaxy's "you are here". What changed is the
+       PAINT. The old ramp did not start until 5,000 AU, while the system
+       scene had faded by about 16 AU, so from a close-up out to a couple of
+       thousand AU the frame was bg() and nothing else -- and that is dishonest
+       as well as dull: pulling back from a star does not empty the sky behind
+       it. The tiers now carry a floor at every zoom and fade UP into the old
+       ramp, so the picture only ever gains stars on the way out. */
+    var saFar = ramp(D, 5e3, 3e4) * (1 - ramp(D, 1.2e8, 8e8));
+    var sa = Math.max(saFar, SKY_FLOOR_A * (1 - ramp(D, 1.2e8, 8e8)));
     if (isRigMode()) sa = Math.max(sa, 0.45);   /* the sky travels with you */
     var fa = farAlpha(D);
     var pa = 1 - ramp(D, 250, 400);
     /* the cockpit redraws the whole sky through aberration, so the ordinary
        world passes are skipped entirely there */
-    curSa = sa;
+    /* the galaxy's own "you are here" hands over to drawHereMarkers on the
+       OLD ramp, so the two still never double-print */
+    curSa = saFar;
     var cockpit = (mode === 'cruise' && fpMode && !reduced && cruiseSt);
     if (cockpit) {
-      starsVis = false;
+      starsVis = false; starsPick = false;
       scrOk.fill(0);        /* no stale screen positions survive the cockpit */
       exoScr.length = 0;
       farScr.length = 0; farVis = false;
@@ -8515,11 +9692,12 @@
     galPaintOn = gpaint > 0.004;
     if (ga > 0.004 || galPaintOn) drawGalaxy(ga, gpaint);
     starsVis = sa > 0.004;
+    starsPick = saFar > 0.004;
     /* a strided star tier leaves last frame's screen position on the stars
        it skipped, so clear the flags first and let only what is really
        drawn this frame carry one */
     if (skyLod() > 0) scrOk.fill(0);
-    drawHereMarkers(sa);
+    drawHereMarkers(saFar);
     if (starsVis) drawBgTier(sa);
     if (starsVis) drawStars(sa);
     /* the far tier fades in as the star tiers fade out, and draws OVER them
@@ -8536,8 +9714,10 @@
        screen-filling disc down to the one atlas sprite that keeps the star
        on screen at any zoom (D4). */
     if (centeredStar >= 0 && mode !== 'porkchop') drawCenteredStar(D, now, sa);
-    else { exoScr.length = 0; starOrbPx = 0; lastOrbBlend = 0; }
+    else { exoScr.length = 0; starOrbPx = 0; lastOrbBlend = 0; ringsOnScreen = false; }
+    syncOrbitNote();
     drawSelectionRings();
+    drawParkTag();                       /* A2-13: after every body label */
     if (mode === 'cruise') drawCruise(now);
     else if (mode === 'syscruise') drawSysCruise(now);
     else if (mode === 'shipidle') drawShipIdle(now);
@@ -8588,6 +9768,7 @@
     if (mode === 'cruise' && cruiseSt) cruiseStep(nowMs);
     if (mode === 'syscruise' && sysSt) sysStep(nowMs);
     if (mode === 'shipidle') idleStep(nowMs);
+    syncFlightStatus(nowMs);             /* A2-6: after the step, so the phase is this frame's */
     stepZoom(dt);
     if (mode !== lastMode) {
       lastMode = mode;
@@ -8680,7 +9861,7 @@
       if (best) return best;
     }
     /* stars */
-    if (starsVis) {
+    if (starsPick) {
       for (i = 0; i < NS; i++) {
         if (!scrOk[i]) continue;
         dx = scrX[i] - p.x; dy = scrY[i] - p.y; d2 = dx * dx + dy * dy;
@@ -8871,7 +10052,16 @@
       canvas.style.cursor = hover ? 'pointer' : 'default';
     }
     if (mode === 'porkchop' && L) {
-      canvas.style.cursor = inPlot(p) ? 'crosshair' : (nearTl(p) ? 'ew-resize' : 'default');
+      var overPlot = inPlot(p);
+      canvas.style.cursor = overPlot ? 'crosshair' : (nearTl(p) ? 'ew-resize' : 'default');
+      /* A2-4: a mouse over the map moves the crosshair and updates the
+         readout, exactly as dragging does. The plot is a chart to read, not
+         a form to submit, and holding a button down to see a number was the
+         only way to read it. Mouse only, and only with no button held, so
+         touch behaviour and the two-finger rule are untouched; setPcSel
+         early-returns on an unchanged cell, so a slow sweep costs one
+         Lambert solve per cell and no more. */
+      if (overPlot && e.pointerType === 'mouse' && !e.buttons) pcPick(p);
     }
   });
 
@@ -8924,6 +10114,11 @@
   canvas.addEventListener('wheel', function (e) {
     e.preventDefault();
     userTouched();
+    /* A2-11: GadgetUI dissolves the first-run plate on the first POINTERDOWN
+       anywhere, and a wheel is not one. Someone who arrives and immediately
+       zooms out has plainly touched the page, and the plate sat over the sky
+       through the whole gesture. */
+    if (firstHint) firstHint.dismiss();
     var dy = e.deltaY;
     if (e.deltaMode === 1) dy *= 16;         /* line-mode mice -> pixels */
     else if (e.deltaMode === 2) dy *= (H || 600);
@@ -8962,9 +10157,29 @@
       return;
     }
   }
+  /* A2-2: only a real TEXT field may swallow Escape.
+     GadgetUI.isTyping counts every input as typing, which is right for the
+     letter keys (a focused slider owns its own arrows, the search box owns
+     its own letters) and wrong for Escape: after one click on the time
+     slider the focus stays there, the range input swallowed the key, and
+     the HUD's own promise ("Esc or tap to skip") stopped being true for the
+     rest of the flight. Relaxing only the Escape path keeps the staged
+     ladder intact everywhere else: the search box is a text field and still
+     eats Escape (its own handler closes the list), and a <select> keeps
+     Escape for closing its dropdown. */
+  function textEntry(t) {
+    if (!t) return false;
+    var tag = (t.tagName || '').toLowerCase();
+    if (tag === 'textarea' || tag === 'select' || t.isContentEditable) return true;
+    if (tag !== 'input') return false;
+    var ty = (t.type || 'text').toLowerCase();
+    return !(ty === 'range' || ty === 'checkbox' || ty === 'radio' ||
+             ty === 'button' || ty === 'submit' || ty === 'reset' || ty === 'file');
+  }
   window.addEventListener('keydown', function (e) {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
-    if (window.GadgetUI && GadgetUI.isTyping(e)) return;
+    if (window.GadgetUI && GadgetUI.isTyping(e) &&
+        (e.key !== 'Escape' || textEntry(e.target))) return;
     var tag = (e.target && e.target.tagName || '').toLowerCase();
     var k = e.key;
     /* Escape runs the page ladder FIRST, before the interactive-element
@@ -9058,7 +10273,8 @@
         li.appendChild(el('span', 'voy-search__kind',
           h.kind === 'p' ? 'planet'
           : (h.kind === 'x' ? 'exoplanet'
-          : (h.kind === 'f' ? (h.sub || 'far object') : 'star'))));
+          : (h.kind === 'f' ? (h.sub || 'far object')
+          : (h.kind === 'sun' ? (h.sub || 'our own star') : 'star')))));
         li.addEventListener('pointerdown', function (ev) { ev.preventDefault(); });
         li.addEventListener('click', function () { chooseSearch(qi); });
         elList.appendChild(li);
@@ -9079,7 +10295,12 @@
     exitShipIdle('quiet');
     if (mode === 'porkchop' || pcSessionLive) exitPorkchop();
     cancelStarCruise(true);
-    if (h.kind === 'p') {
+    if (h.kind === 'sun') {
+      /* home view: no card, because there is no record behind it */
+      deselect();
+      flyHome(false);
+      setStatus('The Sun, our own star, with its planets around it.');
+    } else if (h.kind === 'p') {
       selectBody({ kind: 'p', idx: h.idx }, { openCard: true, fly: true });
     } else if (h.kind === 's') {
       selectBody({ kind: 's', idx: h.idx }, { openCard: true, fly: true });
@@ -9474,7 +10695,7 @@
     if (mode !== 'syscruise') return;
     sysMapView = !!on;
     syncFpBar();
-    setStatus(sysMapView
+    transientStatus(sysMapView
       ? 'Map view. The same flight, seen from above, on the same clock.'
       : 'Chase view. Flying with the ship.');
   }
@@ -9499,8 +10720,9 @@
     fpMode = !!on && !reduced;
     try { if (window.sessionStorage) sessionStorage.setItem(FP_KEY, fpMode ? '1' : '0'); } catch (e8) {}
     syncFpBar();
-    setStatus(fpMode ? 'Cockpit view. The sky is drawn as relativity says you would see it.'
-                     : 'Chase view.');
+    transientStatus(fpMode
+      ? 'Cockpit view. The sky is drawn as relativity says you would see it.'
+      : 'Chase view. Flying with the ship.');
   }
   var elFpInfo = id('voy-fp-info');
   if (elFpChase) elFpChase.addEventListener('click', function () {
@@ -9605,6 +10827,7 @@
   if (window.GadgetUI) {
     var hint = GadgetUI.firstRunHint('voyage',
       'Tap any planet or star, or search for one, and plan the trip.');
+    firstHint = hint;                  /* A2-11: the wheel dismisses it too */
     var pnl = GadgetUI.initPanel({
       panel: elPanel, toggle: elCollapse,
       collapsedClass: 'voy-panel--collapsed',
@@ -9612,6 +10835,11 @@
       onToggle: function (c) {
         panelOpen = !c;
         if (L) { layout(); pcCache = null; pcDirty = true; }
+        /* A1-11: the close-up centres in the strip the panel leaves, so
+           opening or closing the panel re-centres it. Twice, because the
+           panel's own rect settles after the class lands. */
+        recentreExplore(true);
+        setTimeout(function () { recentreExplore(true); }, 340);
         syncReturnChip();
       }
     });
@@ -9711,6 +10939,51 @@
       return exoScr.map(function (e) { return { j: e.j, x: e.x, y: e.y, r: e.r }; });
     },
     selExo: function () { return selExo; },
+    /* ---- sweep fix round (A2) ----
+       the planner's own clock: the grid anchor, the ship's date and the
+       selected cell, so a harness can check a second leg cannot depart
+       before the ship exists at the port */
+    planner: function () {
+      if (!pcTarget) return null;
+      var sp = specOf(pcTarget), info = selInfo();
+      return { target: pcTarget, origin: pcOrigin,
+               jd0: sp.jd0, depMax: sp.depMax, anchor: pcJd0(),
+               shipJd: shipAt.jd, today: jdToday, lastWait: lastArriveWait,
+               viewJD: viewJD,
+               dep: info ? info.dep : null, tof: info ? info.tof : null };
+    },
+    parkTag: function () {
+      return lastParkTag ? { x: lastParkTag.x, y: lastParkTag.y, w: lastParkTag.w,
+                             h: lastParkTag.h, txt: lastParkTag.txt } : null;
+    },
+    bodyLabs: function () { return bodyLabs.slice(); },
+    /* ---- sweep fix round (A1) ---- */
+    starOrb: function () {
+      return { rpx: starOrbPx, blend: lastOrbBlend, rings: ringsOnScreen,
+               centered: centeredStar,
+               name: (centeredStar >= 0 && SD) ? starName(centeredStar) : null };
+    },
+    exoOrbs: function () {
+      var out = [], k;
+      for (k = 0; k < exoRows.length; k++) {
+        if (exoRows[k].j < 0) continue;
+        out.push({ j: exoRows[k].j, ok: exoRows[k].ok, sel: exoRows[k].sel,
+                   x: exoRows[k].x, y: exoRows[k].y, r: exoRows[k].er,
+                   ring: exoRows[k].draw });
+      }
+      return out;
+    },
+    capRect: function () { return capRect ? { x: capRect.x, y: capRect.y, w: capRect.w, h: capRect.h } : null; },
+    /* ---- sweep fix follow-up (E-1) ---- */
+    heroCap: function () { return { j: heroCovJ, cov: heroCov, held: heroCovHid, cap: !!capRect }; },
+    heroPP: function () { return lastHeroPP; },
+    orbitNote: function () {
+      return orbitNoteEl ? { present: true, hidden: !!orbitNoteEl.hidden } : { present: false, hidden: true };
+    },
+    frameStar: function (name) {
+      var i = starIndexByName(name);
+      return i >= 0 ? { d: starFrameD(i), base: starOrbBase(i) } : null;
+    },
     /* ---- wave 4, builder B ---- */
     cruisePose: function (tSec) {
       if (!cruiseSt) return null;

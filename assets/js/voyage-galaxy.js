@@ -240,16 +240,25 @@
   /* ---------------- palettes ----------------
      Dark: emissive colour, composited 'lighter'.
      Light: dark ink in the GAL_TINT_L family, composited 'source-over'. */
+  /* Sweep fix round (2026-08): the arms read as chains of bubblegum pink and
+     violet, and next to the blue crests they set up an iridescent magenta and
+     cyan pairing that belongs to a nebula poster rather than to this site.
+     Real star-forming regions are pink, so the hint stays, but it is now a
+     MUTED rose and a soft mauve, and the arm crest is a dustier blue-white:
+     none of the three now carries more chroma than the site's own accent
+     blue. The warm bulge entries are untouched, and so is the rule that
+     every colour fades to transparent through its OWN hue (buildSprites),
+     never through grey. */
   var PAL_D = {
     nucleus: [255, 247, 226],
     warmIn: [255, 214, 146],
     warmOut: [246, 206, 158],
     kGiant: [255, 178, 118],       /* the old red-giant light of the inner disc */
     neutral: [226, 226, 220],
-    armBlue: [142, 184, 255],
+    armBlue: [164, 194, 244],
     armHot: [212, 234, 255],
-    hii: [255, 118, 176],          /* pink-magenta star-forming knots */
-    hiiDeep: [206, 122, 255],      /* the violet the owner liked, sparser */
+    hii: [238, 176, 194],          /* muted rose star-forming knots */
+    hiiDeep: [200, 176, 214],      /* a soft mauve, sparser */
     halo: [150, 166, 198],
     dustGlow: [198, 136, 100]
   };
@@ -270,8 +279,15 @@
     neutral: [88, 88, 94],
     armBlue: [34, 58, 124],
     armHot: [22, 42, 96],
-    hii: [160, 26, 92],
-    hiiDeep: [96, 24, 136],
+    /* The same sweep-fix treatment, in ink. These were a neon magenta and a
+       neon violet; they are now a dusty maroon rose and a muted plum, each a
+       shade DARKER in relative luminance than the colour it replaces, so the
+       plate never gets thinner than the one the round-3 verifier judged and
+       only the chroma comes down. (The light palette is dead weight while
+       SKY_DARK keeps the sky dark in light theme, but it is the fallback the
+       moment that flag flips, so it stays in step with the dark one.) */
+    hii: [116, 48, 82],
+    hiiDeep: [76, 44, 98],
     halo: [82, 98, 132],
     dustGlow: [104, 76, 48]
   };
@@ -705,7 +721,11 @@
           pr = lerp(P.hii[0], P.hiiDeep[0], hue);
           pg = lerp(P.hii[1], P.hiiDeep[1], hue);
           pb = lerp(P.hii[2], P.hiiDeep[2], hue);
-          mix = clamp(0.92 * hz, 0, 0.92);
+          /* Sweep fix round: at 0.92 the tint did not sit ON the arm, it
+             REPLACED it, so the outer windings turned into pink ribbons.
+             Two thirds leaves the knots plainly rosy over blue-white arms,
+             which is what a real arm looks like. */
+          mix = clamp(0.66 * hz, 0, 0.66);
           r = lerp(r, pr, mix); gg = lerp(gg, pg, mix); b = lerp(b, pb, mix);
         }
         /* reddening through the dust */
@@ -1090,9 +1110,11 @@
       var halo = (8 + rnd() * 15) * big * k, core = (1.7 + rnd() * 2.6) * big * k;
       var tr = fsamp(L.trn, n, u, v);
       var px = u * S, py = v * S;
-      /* the violet variant is the rarer one, which is what keeps it reading
-         as a colour accent instead of a wash */
-      var tint = rnd() < 0.30 ? 'hiiDeep' : 'hii';
+      /* the mauve variant is the rarer one, which is what keeps it reading
+         as a colour accent instead of a wash (sweep fix: rarer still, the
+         violet and pink knots alternating along one arm were most of the
+         iridescence) */
+      var tint = rnd() < 0.20 ? 'hiiDeep' : 'hii';
       var a1 = clamp(0.13 + rnd() * 0.20, 0, 1) * tr;
       c.globalAlpha = a1;
       c.drawImage(sp[tint], px - halo, py - halo, halo * 2, halo * 2);

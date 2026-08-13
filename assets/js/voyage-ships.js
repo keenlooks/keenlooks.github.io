@@ -64,8 +64,8 @@
 
    Detail is procedural and scales with the drawn length O.L, so zooming the
    cruise rig in really does reveal more ship rather than a bigger blur:
-     L <  14   a legible dart
-     L >= 14   the lathed hull
+     L <  26   a legible dart
+     L >= 26   the lathed hull
      L >= 40   silhouette outlines
      L >= 56   quality 1 passes
      L >= 88   tier 1: panel seams, joint occlusion, specular streak
@@ -976,9 +976,12 @@
       }
     }
 
-    /* thin specular line along the upper third */
-    if (O.q && O.L > 70) {
-      contour(ctx, O, secs, item, 0.44, rgba(255, 255, 255, 0.42), Math.max(0.6, O.L * 0.004));
+    /* Thin specular line along the upper third. It is the one stroke that
+       tells the eye the hull is round, so the small-marker tier gets it too:
+       a 60 px parked ship drawn without it read as a flat cut-out wedge. */
+    if (O.L > 44) {
+      contour(ctx, O, secs, item, 0.44, rgba(255, 255, 255, O.q ? 0.42 : 0.34),
+              Math.max(0.6, O.L * 0.004));
     }
     /* structural contours on the big curved shells (bell, mirror) */
     if (O.q && O.L > 80 && spec.ribs && spec.ribs[item.g]) {
@@ -2807,9 +2810,12 @@
     ctx.lineCap = 'butt';
     alpha(ctx, 1);
 
-    /* Below about 14 px the lathed hull is mush and a legible dart reads
-       better; above it the real ship is drawn, however small the marker. */
-    if (L < 14) { drawTiny(ctx, O, spec, key); ctx.restore(); return; }
+    /* Below about 26 px the lathed hull is mush: the sections are a pixel
+       or two each, the caps vanish and what is left is an unreadable pale
+       blob, which is exactly what a parked ship showed part-way through an
+       arrival. A legible dart reads better all the way up to the size where
+       the hull can carry its own shading. */
+    if (L < 26) { drawTiny(ctx, O, spec, key); ctx.restore(); return; }
 
     if (gim) gimPush(ctx, gimX, gimY, gim);
     drawExhaust(ctx, O, spec, key);
