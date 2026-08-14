@@ -1835,6 +1835,19 @@
   var hover = null;                     /* {kind, idx} (mouse only) */
   var lastTap = null;                   /* {name, t} for manual double-tap */
   var centeredStar = -1;                /* star index the camera is parked on */
+  /* ---- X1: the exoplanet anchor ----
+     Flying to an exoplanet used to leave the camera on its host star, which
+     is what the owner saw: "it looks like when I fly to an exoplanet, I orbit
+     around the sun instead of the exoplanet". exoAnchor names the world the
+     camera belongs to and exoAnchorK is how far the scene has morphed into
+     its frame: 0 is the star-centered overview (pixel for pixel what it
+     always was) and 1 is the planet drawn as the close-up with its star far
+     away at its true angular size, the way the Sun looks from Earth orbit.
+     centeredStar STAYS the host throughout, so drawCenteredStar still owns
+     the scene and there is no second renderer to keep in step. */
+  var exoAnchor = -1;                   /* global exoplanet index, or -1 */
+  var exoAnchorK = 0;                   /* 0 = star frame, 1 = planet frame */
+  var anchorAnim = null;                /* {t0, ms, from, to} for the blend */
   var cruiseSt = null;                  /* star cruise state */
   var panelUi = null;                   /* GadgetUI.initPanel handle */
   var firstHint = null;                 /* GadgetUI.firstRunHint handle (A2-11) */
@@ -2327,16 +2340,22 @@
     return shipAt.kind === 'p' ? PLANET_KEYS[shipAt.idx] : 'earth';
   }
   /* The world position of whatever the ship is orbiting, in AU.
-     An EXOPLANET has no known orbital position, so its host star's position
-     is the only honest one to fly from; nothing on screen or in copy claims
-     otherwise. */
+     X5: an exoplanet's position on its orbit is not known, so the page picks
+     one, sweeps it at the planet's real period and says so in the card and
+     on the canvas. What it may NOT do is quietly park the ship at the star
+     instead, which is what it used to do and what the owner saw. The ship
+     orbits the world, at the world's own true orbit radius; a planet with no
+     drawable orbit still falls back to its host. */
   var SHIP_POS = { x: 0, y: 0, z: 0 };
+  var SHIPX = { ok: false, x: 0, y: 0, z: 0, a: 0, aDraw: 0, ph: 0, k: -1 };
   function shipBodyPos(out) {
     var o = out || SHIP_POS;
     if (shipAt.kind === 'p') {
       var st = A.planetState(PLANET_KEYS[shipAt.idx], viewJD);
       o.x = st.r[0]; o.y = st.r[1]; o.z = st.r[2];
     } else if (shipAt.kind === 'x') {
+      var XP = exoWorldPos(shipAt.idx, SHIPX);
+      if (XP) { o.x = XP.x; o.y = XP.y; o.z = XP.z; return o; }
       var h = (SD && SD.planets) ? SD.planets.host[shipAt.idx] : -1;
       if (h >= 0 && h < NS) { o.x = starX[h]; o.y = starY[h]; o.z = starZ[h]; }
       else { o.x = 0; o.y = 0; o.z = 0; }
@@ -2451,6 +2470,13 @@
      moment the strip changed shape. With no planet selected this is byte for
      byte the A1-11 behaviour. */
   function exploreHeroPP(halfPx) {
+    /* X2: anchored, the camera centre IS the world, so there is no orbit to
+       bias against -- the close-up just centres in the strip the panel and
+       the card leave, the way every other close-up does. */
+    var aj = anchorIdx();
+    if (aj >= 0 && anchorOn() && !cam.basis) {
+      return explorePP(anchorPx(aj, Math.pow(10, camAnim ? camAnim.to.logD : cam.logD)) + 14);
+    }
     if (mode === 'explore' && centeredStar >= 0 && selExo >= 0 && !cam.basis && SD) {
       var D = Math.pow(10, camAnim ? camAnim.to.logD : cam.logD);
       var h = (typeof halfPx === 'number' && isFinite(halfPx) && halfPx > 0)
@@ -2550,7 +2576,18 @@
      once the camera is parked on a star its planets can sit 0.03 AU out, so
      a close-up is allowed all the way down to 0.1 AU. Without this an
      exoplanet system like TRAPPIST-1 is a 17 px smudge. */
-  function minLogD() { return centeredStar >= 0 ? -1.0 : 0.5; }
+  /* X3: standing AT an exoplanet the floor is that planet's own standoff with
+     a little room to lean in, so the close-up can reach full size instead of
+     being stopped a decade short by a floor meant for a star. Every other
+     case is untouched. */
+  function minLogD() {
+    var j = anchorIdx();
+    if (j >= 0) {
+      var st = exoStandoff(j);
+      if (st > 0) return clampN(Math.log(st) / Math.LN10 - 0.7, -2.6, -1.0);
+    }
+    return centeredStar >= 0 ? -1.0 : 0.5;
+  }
   /* Zoom ceiling, a base-10 LOG of the camera distance in AU: 10.34 is about
      2.2e10 AU, roughly 350,000 light years. It stops there because that is
      where the content stops: the galaxy halo is painted to 120,000 ly and
@@ -2588,6 +2625,12 @@
       ppx: (to.ppx != null) ? to.ppx : b.ppx,
       ppy: (to.ppy != null) ? to.ppy : b.ppy
     };
+    /* X3: a camera move the PAGE made is not a reader asking to go closer,
+       so it disarms the dive. Without this, the fly-to a star that a search
+       runs before the chip's own framing lands passes through a zoom where
+       the selected planet's drawn orbit is ten frames wide, and the page
+       dived on the way past. */
+    diveArm = false;
     if (reduced || ms === 0) { camApply(full); camAnim = null; return; }
     camAnim = { t0: performance.now(), ms: ms || 1200, from: camSnapshot(), to: full };
   }
@@ -2650,7 +2693,11 @@
                         : (ORB_HOLD_AU * Math.pow(base / t, 1 / K_SHRINK));
     return (isFinite(D) && D > 0) ? D : 3;
   }
+  /* X1: every fly-to that names a body OTHER than an anchored exoplanet drops
+     the anchor. The camera is going somewhere else, so the planet frame is
+     over; flyToExo is the one that sets it. */
   function flyToStar(i, instant) {
+    clearAnchor();
     centeredStar = i;
     var pp = explorePP(starDiscTargetPx() * 1.6);
     camGo({ cx: starX[i], cy: starY[i], cz: starZ[i],
@@ -2658,6 +2705,7 @@
             ppx: pp.x, ppy: pp.y }, instant ? 0 : 1200);
   }
   function flyToPlanet(pi, instant) {
+    clearAnchor();
     centeredStar = -1;
     var st = A.planetState(PLANET_KEYS[pi], viewJD);
     var el = A.ELEMENTS[PLANET_KEYS[pi]];
@@ -2681,6 +2729,7 @@
   function flyToFar(i, instant) {
     var fr = farRec(i);
     if (!fr) return;
+    clearAnchor();
     centeredStar = -1;
     var pp = explorePP();
     /* Sgr A* is the one far object with something to see up close: the
@@ -2698,6 +2747,7 @@
           instant ? 0 : 1400);
   }
   function flyHome(instant) {
+    clearAnchor();
     centeredStar = -1;
     var pp = explorePP();
     camGo({ cx: 0, cy: 0, cz: 0, logD: Math.log(15) / Math.LN10, ppx: pp.x, ppy: pp.y },
@@ -3447,7 +3497,12 @@
       elTarget.textContent = 'Selected: ' + bodyLabel(sel) +
         (frT ? ' · ' + PURE.farDistPhrase(frT.dLy, frT.approx) : '') + '.' + ship;
     } else {
-      elTarget.textContent = 'Selected: ' + starName(sel.idx) + ' · ' +
+      /* X6: with a planet's chip open the selection IS that planet, and the
+         line said the star's name. The distance is the system's either way:
+         nothing measures the gap between a star and its planet from here. */
+      var jT = openExoOf(sel.idx);
+      elTarget.textContent = 'Selected: ' +
+        (jT >= 0 ? SD.planets.name[jT] : starName(sel.idx)) + ' · ' +
         PURE.distPhrase(starLyD[sel.idx]) + '.' + ship;
     }
   }
@@ -3540,14 +3595,47 @@
   function resetPreviews() {
     previews = { star: null, exo: null, ship: null };
     orbitNoteEl = null;
+    zoomBtn = null;
   }
   /* the card's orbit-spacing note, gated per frame on ringsOnScreen (A1-12).
-     The DOM is only touched when the answer actually changes. */
+     The DOM is only touched when the answer actually changes.
+     X7: standing AT one of these worlds the sentence is a different one, and
+     it is about the planet rather than the spacing: the orbits are true
+     there, the planet is the thing drawn larger than life, and the star is
+     the thing that is honest. */
+  var ORBIT_NOTE_SYS =
+    'Orbit spacing is to scale; the star is drawn far larger than life, ' +
+    'and where each planet sits on its orbit is not real.';
+  /* X11: the anchored frame shows the whole system on one scale, so several
+     worlds can be oversized at once. The sentence says so in the plural. */
+  var ORBIT_NOTE_ANCHOR =
+    'Planets are drawn far larger than life, and where each sits on its ' +
+    'orbit is not real. The star is shown at its true size and distance.';
   var orbitNoteEl = null;
+  var zoomBtn = null;                   /* the star card's zoom / release button */
+  /* X8: what was last written into each of those two nodes. Reading a DOM
+     textContent back builds a JS string, and this runs once a frame while a
+     card is open, so the comparison is kept on this side of the boundary. */
+  var orbitNoteTxt = '', zoomBtnTxt = '';
   function syncOrbitNote() {
+    var anch = anchorOn();
+    if (zoomBtn && zoomBtn.el) {
+      if (!zoomBtn.el.isConnected) { zoomBtn = null; zoomBtnTxt = ''; }
+      else {
+        /* X9: the label reads off the SAME test the click branches on, so a
+           second click halfway through a dive can never release under a
+           button that still says "Zoom to it". */
+        var aj = anchorIdx();
+        var lbl = (aj >= 0 && anchorHostOf(aj) === zoomBtn.star)
+          ? 'See the system' : 'Zoom to it';
+        if (zoomBtnTxt !== lbl) { zoomBtn.el.textContent = lbl; zoomBtnTxt = lbl; }
+      }
+    }
     if (!orbitNoteEl) return;
-    if (!orbitNoteEl.isConnected) { orbitNoteEl = null; return; }
-    var want = !ringsOnScreen;
+    if (!orbitNoteEl.isConnected) { orbitNoteEl = null; orbitNoteTxt = ''; return; }
+    var txt = anch ? ORBIT_NOTE_ANCHOR : ORBIT_NOTE_SYS;
+    if (orbitNoteTxt !== txt) { orbitNoteEl.textContent = txt; orbitNoteTxt = txt; }
+    var want = anch ? !anchorDrawn : !ringsOnScreen;
     if (orbitNoteEl.hidden !== want) orbitNoteEl.hidden = want;
   }
   resetPreviews();
@@ -3796,6 +3884,10 @@
       var arow = el('div', 'voy-actions');
       var rep = el('button', 'voy-btn', 'Replay');
       var repFrom = arriveInfo.from;
+      /* X4: replay the trip that was actually flown. The destination lives on
+         arriveInfo.dest; keying the replay on the star re-flew a trip to the
+         exoplanet's host instead of to the exoplanet. */
+      var repDest = arriveInfo.dest;
       rep.type = 'button';
       /* the ship lives at the destination now, so a replay has to put it
          back where the trip started before flying it again */
@@ -3804,7 +3896,8 @@
           shipAt = PURE.normShipAt(repFrom, PLANET_KEYS.length, NS, NX, NF);
           saveShipAt();
         }
-        startStarCruise(i);
+        if (repDest && repDest.kind === 'x' && repDest.exoIdx >= 0) startCruiseTo(repDest);
+        else startStarCruise(i);
       });
       var back = el('button', 'voy-btn', 'Back');
       back.type = 'button';
@@ -3906,7 +3999,7 @@
                  runs while openCardFor is still appending the card, so the
                  card's own rect is not final yet and the framing would be
                  computed against a strip that is about to shrink. */
-              if (centeredStar === i) setTimeout(function () { frameExo(i, j); }, 0);
+              if (centeredStar === i) setTimeout(function () { frameExoChip(i, j); }, 0);
             } else if (selExo === j) {
               selExo = -1;
               previews.exo = null;
@@ -3916,6 +4009,10 @@
             var wasOpen = !det.hidden;
             for (var w2 = 0; w2 < openers.length; w2++) openers[w2](false);
             if (!wasOpen) setOpen(true);
+            /* X4: the open chip decides where Launch goes, so the trip block
+               has to be told (it owns the "you are already there" state) */
+            if (tripEls && tripEls.star === i) updateTripLive(i);
+            updateTargetLine();
           });
           openers.push(setOpen);
           chips.appendChild(chip);
@@ -3929,9 +4026,8 @@
          orbit on screen at all, and claiming the spacing is to scale beside a
          frame that shows no spacing is a small dishonesty. The note is shown
          only on frames where a ring really reached the viewport. */
-      orbitNoteEl = el('p', 'voy-note',
-        'Orbit spacing is to scale; the star is drawn far larger than life, ' +
-        'and where each planet sits on its orbit is not real.');
+      orbitNoteEl = el('p', 'voy-note', ORBIT_NOTE_SYS);
+      orbitNoteTxt = ORBIT_NOTE_SYS;
       orbitNoteEl.hidden = true;
       body.appendChild(orbitNoteEl);
     }
@@ -3941,7 +4037,19 @@
     plan.type = 'button';
     var zoom = el('button', 'voy-btn', 'Zoom to it');
     zoom.type = 'button';
-    zoom.addEventListener('click', function () { flyToStar(i, false); });
+    /* X3: with a planet's chip open this button is how you get to the planet
+       without touching the wheel, and standing there it is the way back out.
+       Its label is kept in step by syncOrbitNote, once a frame, only when the
+       answer changes. */
+    zoomBtn = { el: zoom, star: i };
+    zoomBtnTxt = 'Zoom to it';
+    zoom.addEventListener('click', function () {
+      var aj = anchorIdx();
+      if (aj >= 0 && anchorHostOf(aj) === i) { releaseAnchor(); return; }
+      var j = openExoOf(i);
+      if (j >= 0 && flyToExo(i, j, false)) return;
+      flyToStar(i, false);
+    });
     row.appendChild(plan); row.appendChild(zoom);
     body.appendChild(row);
 
@@ -4273,7 +4381,18 @@
 
     var launch = el('button', 'voy-btn voy-btn--primary voy-btn--launch', 'Launch');
     launch.type = 'button';
-    launch.addEventListener('click', function () { startStarCruise(i); });
+    /* X4: with a planet's chip open, Launch flies to THAT planet. The trip
+       numbers are the same (the last fraction of an AU is nothing beside the
+       light-years), and the ship ends up in orbit around the world the reader
+       was reading about instead of around its star. */
+    launch.addEventListener('click', function () {
+      var j = openExoOf(i);
+      if (j >= 0) {
+        startCruiseTo({ kind: 'x', starIdx: -1, planetIdx: -1, exoIdx: j, farIdx: -1 });
+        return;
+      }
+      startStarCruise(i);
+    });
     wrap.appendChild(launch);
     tripEls = { name: hlName, time: hlTime, peak: peak, energy: energy,
                 photon: photon, star: i, launch: launch, origin: origin };
@@ -4319,14 +4438,19 @@
     tripEls.photon.textContent = fuel
       ? 'Even a perfect photon rocket would need about ' + fuel + ' kg of fuel for every kg that arrives.'
       : '';
-    var here = shipAt.kind === 's' && shipAt.idx === i;
+    /* X4: with a chip open the trip is to that planet, so "already there"
+       means parked at the PLANET; parked at the host star it is a real trip
+       (the short local hop) and the button stays live. */
+    var jSel = openExoOf(i);
+    var here = jSel >= 0 ? (shipAt.kind === 'x' && shipAt.idx === jSel)
+                         : (shipAt.kind === 's' && shipAt.idx === i);
     if (tripEls.launch) {
       tripEls.launch.disabled = here;
       tripEls.launch.textContent = here ? 'You are already there' : 'Launch';
     }
     if (tripEls.origin) {
       tripEls.origin.textContent = here
-        ? 'Your ship is already in orbit around ' + starName(i) + '.'
+        ? 'Your ship is already in orbit around ' + shipLabel() + '.'
         : ('Your ship is ' + shipWhere() + '.' +
            (shipAt.kind === 's'
              ? ' Distances and times here are measured from the solar system.'
@@ -4503,6 +4627,7 @@
      helpers are the ONLY places that turn one into a world position, a
      shipAt or a label, so a new kind lands in one spot. */
   var DSTP = { x: 0, y: 0, z: 0 };
+  var DSTX = { ok: false, x: 0, y: 0, z: 0, a: 0, aDraw: 0, ph: 0, k: -1 };
   function shipAtKindOf(d) {
     if (!d) return null;
     if (d.kind === 'p') return { kind: 'p', idx: d.planetIdx };
@@ -4524,6 +4649,14 @@
       if (!fr) return null;
       o.x = fr.x * LY_AU; o.y = fr.y * LY_AU; o.z = fr.z * LY_AU;
       return o;
+    }
+    /* X4: an exoplanet destination is the PLANET, not its star. The extra
+       fraction of an AU changes no number a reader sees on an interstellar
+       leg, and it is the difference between braking at the world and braking
+       at the sun it orbits. */
+    if (d.kind === 'x') {
+      var XW = exoWorldPos(d.exoIdx, DSTX);
+      if (XW) { o.x = XW.x; o.y = XW.y; o.z = XW.z; return o; }
     }
     var i = d.kind === 'x' ? (SD && SD.planets ? SD.planets.host[d.exoIdx] : -1) : d.starIdx;
     if (!(i >= 0 && i < NS)) return null;
@@ -4709,9 +4842,18 @@
     transientStatus('Leaving ' + fromLbl + ' for ' + cruiseDestLabel(cruiseSt) +
               '. Watch the two clocks.');
     if (reduced) { arriveStar(); return; }
-    /* beat 1: fly to wherever the ship actually is */
+    /* beat 1: fly to wherever the ship actually is.
+       X7: `from.idx` indexes whichever catalogue `from.kind` names, and
+       centeredStar indexes the STARS. Departing an exoplanet or a far object
+       used to write that raw index here and leave cruiseStep to correct it a
+       tick later; the host (or nothing) is resolved at the write site
+       instead, so no reader can ever see the wrong star. */
     if (cruiseSt.from.kind === 'p') { centeredStar = -1; orbPlanet = cruiseSt.from.idx; }
-    else { centeredStar = cruiseSt.from.idx; orbPlanet = -1; }
+    else {
+      centeredStar = (cruiseSt.from.kind === 's') ? cruiseSt.from.idx
+                   : (cruiseSt.from.kind === 'x' ? anchorHostOf(cruiseSt.from.idx) : -1);
+      orbPlanet = -1;
+    }
     /* CL-18 launch handoff: the departure arc starts from the pose the
        explore camera is actually in and eases into the rig over the same
        2400 ms the old camGo took, so there is no cut at the boundary. */
@@ -4730,9 +4872,10 @@
      stops one capture-orbit radius short of the star with its nose on it,
      which is precisely what camSnapshot needs to hand camGo. */
   /* E3: the CAPTURE BODY comes from `dest`, never from plan.star (which
-     stays the host star index the draw path and the handoff read). An
-     exoplanet has no known orbital position, so its host star is the
-     honest anchor and nothing on screen claims otherwise. */
+     stays the host star index the draw path and the handoff read).
+     X4: an exoplanet destination captures at the PLANET. Its place on its
+     orbit is invented, the page says so, and it is held still for the whole
+     flight so the braking point cannot move under the ship. */
   function cruiseDestPos(c, out) {
     var o = out || DSTP;
     var d = c && c.dest;
@@ -4744,6 +4887,10 @@
     if (d && d.kind === 'f') {
       var fr = farRec(d.farIdx);
       if (fr) { o.x = fr.x * LY_AU; o.y = fr.y * LY_AU; o.z = fr.z * LY_AU; return o; }
+    }
+    if (d && d.kind === 'x' && d.exoIdx >= 0) {
+      var XW = exoWorldPos(d.exoIdx, DSTX);
+      if (XW) { o.x = XW.x; o.y = XW.y; o.z = XW.z; return o; }
     }
     var i = c ? c.star : -1;
     if (i >= 0) { o.x = starX[i]; o.y = starY[i]; o.z = starZ[i]; }
@@ -4824,11 +4971,15 @@
     if (!idled) {
       if (toSolar) flyToPlanet(c.dest.planetIdx, reduced);
       else if (dk === 'f') flyToFar(c.dest.farIdx, reduced);
+      /* X4: an exoplanet arrival lands AT the planet, not at its star */
+      else if (dk === 'x' && flyToExo(i, c.dest.exoIdx, reduced)) { /* placed */ }
       else flyToStar(i, reduced);
     }
+    /* X4: the arrival card opens with the planet's own chip expanded, so the
+       banner and the numbers sit beside the world the trip was about */
     openCardFor(toSolar ? { kind: 'p', idx: c.dest.planetIdx }
               : (dk === 'f' ? { kind: 'f', idx: c.dest.farIdx } : { kind: 's', idx: i }),
-                { trip: true });
+                { trip: true, exo: dk === 'x' ? c.dest.exoIdx : null });
     updateTargetLine();
     syncReturnChip();
     /* E8 forbids "in orbit around" for a black hole, a cluster or a galaxy:
@@ -4864,8 +5015,14 @@
     if (silent) return;                 /* a follow-up action takes over */
     var pp = explorePP();
     cam.ppx = pp.x; cam.ppy = pp.y;
+    /* X6: shipAt.idx indexes whichever catalog shipAt.kind names. Handing an
+       exoplanet index (or a far-object index) to flyToStar centred a
+       completely unrelated star, or an undefined position -- a NaN camera --
+       whenever a launch was cancelled from anywhere but a planet or a star. */
     if (shipAt.kind === 'p') flyToPlanet(shipAt.idx, reduced);
-    else flyToStar(shipAt.idx, reduced);
+    else if (shipAt.kind === 'f') flyToFar(shipAt.idx, reduced);
+    else if (shipAt.kind === 'x') flyToShipPark(reduced);
+    else if (shipAt.idx >= 0 && shipAt.idx < NS) flyToStar(shipAt.idx, reduced);
     setStatus('Launch cancelled. Your ship is still at ' + shipLabel() + '.');
   }
 
@@ -4924,10 +5081,29 @@
   function sysPlanOf(s) { return s.plan; }
   function sysTotalMs(s) { return s && s.local ? PURE.LOCAL_TOTAL_MS : PURE.LAM_TOTAL_MS; }
 
+  /* X1: how far off a local hop parks while it captures. The SAME laws
+     idleFraming settles the arrival at, so the beat ends where the orbit
+     begins and nothing has to jump at the handover. */
+  function destStandoff(d) {
+    var want = orbWantPx();
+    if (d) {
+      if (d.kind === 'x' && d.exoIdx >= 0) {
+        var sx = exoStandoff(d.exoIdx);
+        if (sx > 0) return sx;
+      } else if (d.kind === 'p' && d.planetIdx >= 0) {
+        return clampN((PLANET_R[d.planetIdx] || 4) * 2.2 * 60 / want, 0.6, 40);
+      } else if (d.kind === 's' && d.starIdx >= 0 && d.starIdx < NS) {
+        return clampN(starOrbBase(d.starIdx) * ORB_HOLD_AU / want, 0.5, 60);
+      }
+    }
+    return 0.25;
+  }
+
   /* E3's local transfer: an exoplanet and its own host, or two worlds of
      one star. The separation is not known, so there is no arc, no
      interstellar leg, no relativity caption and no flip. The camera runs
      the capture beat only and the ship ends parked at the destination. */
+  var SYS_ORG = { x: 0, y: 0, z: 0 };
   function startLocalTransfer(dest) {
     var d = dest || {};
     var lbl = destLabelOf(d);
@@ -4937,16 +5113,56 @@
     var B = destWorldOf(d, SYS_TMP);
     if (!B) { setStatus('That destination is not on the map.'); return; }
     if (reduced) { sysArrive(d, lbl, 0); return; }
+    /* X1: the shipped plan hands lambertPose a PLACEHOLDER frame (velocity
+       and orbit normal both +z). That is degenerate: the parking arc circles
+       the destination in the ecliptic while the nose points at the ecliptic
+       pole, so a hop to the HOST STAR was flown looking at empty sky with the
+       star ninety degrees out of frame (the "starless sky" half of the
+       report; the other half was the anchor snap above). The hop still claims
+       no distance, and nothing on screen says otherwise. What it does have is
+       a DIRECTION: from the world being left to the world being flown to.
+       Approaching along it, at the standoff the arrival settles at, puts the
+       star dead ahead for the whole capture and hands the orbit a camera that
+       is already where it wants to be.
+
+       Scoped to the star hop on purpose. A world-to-world hop keeps the
+       shipped frame byte for byte: it was not what was reported, its
+       destination is an orb rather than the thing the whole close-up is
+       sorted around, and pointing its nose along one planet-to-planet chord
+       measurably put the HOST behind the camera, which drops the whole
+       close-up (drawCenteredStar needs the star in front of the eye). */
+    var v0 = [0, 0, 1], nrm = [0, 0, 1];
+    var rD = [B.x, B.y, B.z];
+    if (d.kind === 's') {
+      var O = shipBodyPos(SYS_ORG);
+      var ux = B.x - O.x, uy = B.y - O.y, uz = B.z - O.z;
+      var un = Math.sqrt(ux * ux + uy * uy + uz * uz);
+      if (un > 1e-9) {
+        ux /= un; uy /= un; uz /= un;
+        var back = destStandoff(d);
+        /* an orbit normal perpendicular to the approach, so the parking arc
+           is a small wobble about a nose that stays on the destination */
+        var wy = (Math.abs(uz) > 0.999) ? 1 : 0, wz = 1 - wy;
+        var nx = uy * wz - uz * wy, ny = -ux * wz, nz = ux * wy;
+        var nn = Math.sqrt(nx * nx + ny * ny + nz * nz);
+        if (nn > 1e-9) {
+          v0 = [ux, uy, uz];
+          nrm = [nx / nn, ny / nn, nz / nn];
+          rD = [B.x - back * ux, B.y - back * uy, B.z - back * uz];
+        }
+      }
+    }
     sysSt = {
       local: true, dest: d, label: lbl,
       from: { kind: shipAt.kind, idx: shipAt.idx, planet: null, jd: shipAt.jd },
       bx: B.x, by: B.y, bz: B.z,
       tofDays: 0, dep: viewJD,
-      plan: { local: true, rDep: [B.x, B.y, B.z], rArr: [B.x, B.y, B.z],
-              r0: [B.x, B.y, B.z], v0: [0, 0, 1], mu: A.MU_SUN,
-              nx: 0, ny: 0, nz: 1, tofDays: 1, depJD: viewJD,
+      plan: { local: true, rDep: rD, rArr: [B.x, B.y, B.z],
+              r0: rD, v0: v0, mu: A.MU_SUN,
+              nx: nrm[0], ny: nrm[1], nz: nrm[2], tofDays: 1, depJD: viewJD,
               shipKey: shipKeyOf(accelIdx) },
-      t0: performance.now(), ms: 0, tPrev: 0, pose: null, ph: null, launch: null
+      t0: performance.now(), ms: 0, tPrev: 0, pose: null, ph: null, launch: null,
+      relK0: null                     /* X1: the anchor blend this hop started at */
     };
     enterSysMode(lbl, PURE.localCaptions(lbl));
     transientStatus('A short hop to ' + lbl + '. We do not know where these worlds ' +
@@ -5029,8 +5245,38 @@
 
     /* the close-up orb: the world being left, then the world arrived at */
     if (s.local) {
-      centeredStar = -1;
-      orbPlanet = (s.dest.kind === 'p') ? s.dest.planetIdx : -1;
+      /* X4: a same-system hop used to capture on NOTHING -- no orb, no
+         centred star, a cinematic that flew at empty sky. It captures at
+         whatever it is going to: a solar world, an exoplanet in its own
+         frame, or the host star itself. */
+      var ld = s.dest ? s.dest.kind : '';
+      if (ld === 'p') { centeredStar = -1; orbPlanet = s.dest.planetIdx; }
+      else if (ld === 'x' && s.dest.exoIdx >= 0) {
+        centeredStar = anchorHostOf(s.dest.exoIdx); orbPlanet = -1;
+        if (centeredStar >= 0 && exoStandoff(s.dest.exoIdx) > 0) {
+          if (anchorIdx() !== s.dest.exoIdx) {
+            anchorTo(s.dest.exoIdx, reduced ? 0 : 1600);
+          }
+        } else clearAnchor();
+      } else if (ld === 's' && s.dest.starIdx >= 0) {
+        centeredStar = s.dest.starIdx; orbPlanet = -1;
+        /* X1: hopping from an anchored world to its own host star used to
+           drop K to 0 on the first frame. The camera is still standing a
+           hundredth of an AU from that star, where the unanchored close-up
+           law draws a 640 px disc, so the cinematic opened on a wall of
+           photosphere and then flew at empty sky for a second. The release
+           rides the beat's OWN clock instead (not a wall-clock animation, so
+           it lands with the ship at every time-slider setting): the star
+           grows out of its true angular size into the close-up over the same
+           seconds the ship spends closing on it. */
+        if (anchorIdx() >= 0 && !reduced && total > 0) {
+          if (s.relK0 == null) s.relK0 = clampN(exoAnchorK, 0, 1);
+          anchorAnim = null;
+          exoAnchorK = s.relK0 *
+            (1 - easeInOutCubic(clampN(s.ms / (total * 0.8), 0, 1)));
+          if (!(exoAnchorK > 0.002)) clearAnchor();
+        } else clearAnchor();
+      } else { centeredStar = -1; orbPlanet = -1; }
     } else if (pose.phaseLabel === 'lam-depart' || pose.phaseLabel === 'lam-burn1') {
       centeredStar = -1;
       orbPlanet = (s.from.kind === 'p') ? s.from.idx : -1;
@@ -5198,10 +5444,17 @@
     openCardFor(sa.kind === 'x'
       ? { kind: 's', idx: SD.planets.host[sa.idx] } : { kind: 's', idx: sa.idx },
       { exo: sa.kind === 'x' ? sa.idx : null });
-    if (!reduced) {
-      if (!enterShipIdle(typeof blendMs === 'number' ? blendMs : 1000)) {
-        if (idleStarIdx() >= 0) flyToStar(idleStarIdx(), false);
-      }
+    /* X6: reduced motion skips the orbit ride, but it must NOT skip the
+       framing. The fallback used to sit inside the guard, so a reduced-motion
+       local hop parked the ship and left the camera out in the system view
+       with the anchor dead, while the reduced INTERSTELLAR arrival centred
+       the planet. Both arrive at the destination now; reduced motion just
+       gets there instantly. */
+    var entered = !reduced &&
+                  enterShipIdle(typeof blendMs === 'number' ? blendMs : 1000);
+    if (!entered) {
+      if (shipAt.kind === 'x') flyToShipPark(reduced);
+      else if (idleStarIdx() >= 0) flyToStar(idleStarIdx(), reduced);
     }
     updateTargetLine();
     syncReturnChip();
@@ -5270,6 +5523,12 @@
       var dP = clampN(pr * 2.2 * 60 / want, 0.6, 40);
       return { standoff: dP, logD: Math.log(dP) / Math.LN10 };
     }
+    /* X5: parked at an exoplanet the camera orbits the PLANET, at a standoff
+       that keeps the orbit sphere from sweeping through the star. */
+    if (shipAt.kind === 'x' && anchorHostOf(shipAt.idx) >= 0) {
+      var dX = exoStandoff(shipAt.idx);
+      if (dX > 0) return { standoff: dX, logD: Math.log(dX) / Math.LN10 };
+    }
     var si = idleStarIdx();
     var base = 8;
     if (si >= 0) {
@@ -5280,9 +5539,80 @@
     var d = clampN(base * ORB_HOLD_AU / want, 0.5, 60);
     return { standoff: d, logD: Math.log(d) / Math.LN10 };
   }
-  /* the star the idle frames: the star itself, or an exoplanet's host (an
-     exoplanet has no known orbital position, so its host is the honest
-     anchor and nothing on screen claims otherwise) */
+  /* ---- X5: the ring the parked camera rides ----
+     World-fixed by default, byte for byte the constants it always used. At an
+     exoplanet it is TURNED, for one reason: the ride is a full circle around
+     the world, and on a circle in a fixed world plane the star spends part of
+     the lap behind the camera. Starting the lap where the dive would have
+     stood, with the ring's own normal pointing at the star, puts the star
+     above the world on the first frame at every aspect ratio (the vertical
+     field is the one that does not shrink on a phone) and sweeps from there. */
+  var idleE1 = [IDLE_E1[0], IDLE_E1[1], IDLE_E1[2]];
+  var idleE2 = [IDLE_E2[0], IDLE_E2[1], IDLE_E2[2]];
+  var idleN3 = [IDLE_N[0], IDLE_N[1], IDLE_N[2]];
+  function resetIdleBasis() {
+    idleE1[0] = IDLE_E1[0]; idleE1[1] = IDLE_E1[1]; idleE1[2] = IDLE_E1[2];
+    idleE2[0] = IDLE_E2[0]; idleE2[1] = IDLE_E2[1]; idleE2[2] = IDLE_E2[2];
+    idleN3[0] = IDLE_N[0]; idleN3[1] = IDLE_N[1]; idleN3[2] = IDLE_N[2];
+  }
+  function setIdleBasisAtExo(j) {
+    resetIdleBasis();
+    var h = anchorHostOf(j);
+    var st = exoStandoff(j);
+    if (!(h >= 0 && h < NS) || !(st > 0)) return false;
+    var P = exoWorldPos(j, EXOW);
+    if (!P || !(P.a > 0)) return false;
+    var ux = P.x - starX[h], uy = P.y - starY[h], uz = P.z - starZ[h];
+    var un = Math.sqrt(ux * ux + uy * uy + uz * uz);
+    if (!(un > 1e-12)) return false;
+    ux /= un; uy /= un; uz /= un;
+    /* the same closed form the dive uses: tilt out of the orbital plane by
+       the angle that lifts the star a planet-and-a-half above the world */
+    var offPx = clampN(anchorPx(j, st) * 1.35 + 30, 40, Math.max(60, H * 0.34));
+    var t = offPx / fpxOf();
+    var sPhi = t * (st / P.a) / Math.sqrt(1 + t * t);
+    if (!(sPhi < 0.95)) return false;
+    var phi = Math.atan(t) + Math.asin(sPhi);
+    var cf = Math.cos(phi), sf = Math.sin(phi);
+    /* e1: where the ride starts. The exoplanet orbits lie in the z = starZ
+       plane, so tilting toward +z is always a real tilt out of it. */
+    var e1x = cf * ux, e1y = cf * uy, e1z = cf * uz + sf;
+    var e1n = Math.sqrt(e1x * e1x + e1y * e1y + e1z * e1z);
+    if (!(e1n > 1e-12)) return false;
+    e1x /= e1n; e1y /= e1n; e1z /= e1n;
+    /* n = -(the part of u perpendicular to e1): the ring's normal, which is
+       the camera's up, pointed so the star sits ABOVE the world rather than
+       under the caption plate */
+    var dp = ux * e1x + uy * e1y + uz * e1z;
+    var nx = -(ux - dp * e1x), ny = -(uy - dp * e1y), nz = -(uz - dp * e1z);
+    var nn = Math.sqrt(nx * nx + ny * ny + nz * nz);
+    if (!(nn > 1e-9)) return false;
+    nx /= nn; ny /= nn; nz /= nn;
+    /* e2 = n x e1, so that cross(e1, e2) is exactly n */
+    var e2x = ny * e1z - nz * e1y;
+    var e2y = nz * e1x - nx * e1z;
+    var e2z = nx * e1y - ny * e1x;
+    idleE1[0] = e1x; idleE1[1] = e1y; idleE1[2] = e1z;
+    idleE2[0] = e2x; idleE2[1] = e2y; idleE2[2] = e2z;
+    idleN3[0] = nx; idleN3[1] = ny; idleN3[2] = nz;
+    return true;
+  }
+  /* X5: what lights the parked ship. A star lights itself; an exoplanet is
+     lit by the star it orbits. (A solar-system park keeps the shipped
+     behaviour, which lights the hull from the planet beside it.) */
+  function idleLightPos(out) {
+    if (shipAt.kind === 'x') {
+      var h = anchorHostOf(shipAt.idx);
+      if (h >= 0 && h < NS) {
+        var o = out || IDLE_B;
+        o.x = starX[h]; o.y = starY[h]; o.z = starZ[h];
+        return o;
+      }
+    }
+    return shipBodyPos(out);
+  }
+  /* the star the close-up frames while the ship is parked: the star itself,
+     or an exoplanet's host (the exoplanet is drawn in front of it) */
   function idleStarIdx() {
     if (shipAt.kind === 's') return shipAt.idx;
     if (shipAt.kind === 'x' && SD && SD.planets) return SD.planets.host[shipAt.idx];
@@ -5329,8 +5659,18 @@
     camQ = [idleSt.from.q[0], idleSt.from.q[1], idleSt.from.q[2], idleSt.from.q[3]];
     camWx = camWy = camWz = 0;
     /* the body owns the close-up orb while we sit next to it */
-    if (shipAt.kind === 'p') { centeredStar = -1; orbPlanet = shipAt.idx; }
-    else { centeredStar = idleStarIdx(); orbPlanet = -1; }
+    resetIdleBasis();
+    if (shipAt.kind === 'p') { centeredStar = -1; orbPlanet = shipAt.idx; clearAnchor(); }
+    else {
+      centeredStar = idleStarIdx(); orbPlanet = -1;
+      /* X5: at an exoplanet that means the PLANET, with its star drawn where
+         it really is. A planet with no drawable orbit keeps the star-centred
+         idle rather than refusing to park at all. */
+      if (shipAt.kind === 'x' && centeredStar >= 0 && exoStandoff(shipAt.idx) > 0) {
+        anchorTo(shipAt.idx, idleSt.from.ms);
+        setIdleBasisAtExo(shipAt.idx);
+      } else clearAnchor();
+    }
     /* a fresh scene deserves a fresh detail budget, and the first second of
        it (the orb's first shader, the hull's first lathe) is not evidence */
     cruiseLod = 0; clN = 0; clHot = 0; clCool = 0; clHold = GOV_HOLD_MS;
@@ -5361,7 +5701,9 @@
       cam.yaw = Math.atan2(dy, dx);
       cam.pitch = clampN(Math.asin(clampN(dz / dd, -1, 1)), -1.45, 1.45);
     }
-    var pp = explorePP();
+    /* X5: leaving the orbit of an exoplanet hands explore the same anchored
+       frame, centred on the world. The release is the zoom-out or Escape. */
+    var pp = anchorIdx() >= 0 ? exploreHeroPP() : explorePP();
     cam.ppx = pp.x; cam.ppy = pp.y;
     cam.logD = clampN(cam.logD, minLogD(), MAX_LOGD);
     zoomTarget = cam.logD;               /* E6: the exit owns the target too */
@@ -5387,32 +5729,32 @@
        camera is the one thing that setting asks the page not to do */
     var th = reduced ? 0.85 : ((nowMs - idleSt.t0) / 1000 / IDLE_PERIOD) * 6.2831853;
     var ct = Math.cos(th), st = Math.sin(th);
-    var ox = IDLE_E1[0] * ct + IDLE_E2[0] * st;
-    var oy = IDLE_E1[1] * ct + IDLE_E2[1] * st;
-    var oz = IDLE_E1[2] * ct + IDLE_E2[2] * st;
+    var ox = idleE1[0] * ct + idleE2[0] * st;
+    var oy = idleE1[1] * ct + idleE2[1] * st;
+    var oz = idleE1[2] * ct + idleE2[2] * st;
     var px = B.x + r * ox, py = B.y + r * oy, pz = B.z + r * oz;
     if (!isFinite(px) || !isFinite(py) || !isFinite(pz)) return;
     /* The ship flies tangentially with the orbit normal as its up, which is
        also the camera's up: a belly-down attitude would put the ship's own
        up straight at the camera and draw the hull edge-on and rolled 120
        degrees. This way it crosses the frame level, in full profile. */
-    var fx = -IDLE_E1[0] * st + IDLE_E2[0] * ct;
-    var fy = -IDLE_E1[1] * st + IDLE_E2[1] * ct;
-    var fz = -IDLE_E1[2] * st + IDLE_E2[2] * ct;
-    var sxr = fy * IDLE_N[2] - fz * IDLE_N[1];
-    var syr = fz * IDLE_N[0] - fx * IDLE_N[2];
-    var szr = fx * IDLE_N[1] - fy * IDLE_N[0];
-    PURE.qFromBasis(-sxr, -syr, -szr, IDLE_N[0], IDLE_N[1], IDLE_N[2], fx, fy, fz, QD);
+    var fx = -idleE1[0] * st + idleE2[0] * ct;
+    var fy = -idleE1[1] * st + idleE2[1] * ct;
+    var fz = -idleE1[2] * st + idleE2[2] * ct;
+    var sxr = fy * idleN3[2] - fz * idleN3[1];
+    var syr = fz * idleN3[0] - fx * idleN3[2];
+    var szr = fx * idleN3[1] - fy * idleN3[0];
+    PURE.qFromBasis(-sxr, -syr, -szr, idleN3[0], idleN3[1], idleN3[2], fx, fy, fz, QD);
     idlePose.x = px; idlePose.y = py; idlePose.z = pz;
     idlePose.shipQ = QD;
     idlePose.thrust01 = 0;
     idlePose.ok = true;
     /* the camera looks INWARD at the body, with the orbit normal as up */
     var ix = -ox, iy = -oy, iz = -oz;
-    var nrx = iy * IDLE_N[2] - iz * IDLE_N[1];
-    var nry = iz * IDLE_N[0] - ix * IDLE_N[2];
-    var nrz = ix * IDLE_N[1] - iy * IDLE_N[0];
-    PURE.qFromBasis(-nrx, -nry, -nrz, IDLE_N[0], IDLE_N[1], IDLE_N[2], ix, iy, iz, QE);
+    var nrx = iy * idleN3[2] - iz * idleN3[1];
+    var nry = iz * idleN3[0] - ix * idleN3[2];
+    var nrz = ix * idleN3[1] - iy * idleN3[0];
+    PURE.qFromBasis(-nrx, -nry, -nrz, idleN3[0], idleN3[1], idleN3[2], ix, iy, iz, QE);
     if (reduced) { camQ = [QE[0], QE[1], QE[2], QE[3]]; camWx = camWy = camWz = 0; }
     else springOrient(QE, dtReal);
     PURE.qAxisAngle(0, 1, 0, lookYaw, QA);
@@ -5488,11 +5830,16 @@
   function hudStrip(y0, y1, wantW) {
     var box = { cx: W / 2, maxW: W - 16 };
     var x0 = 8, x1 = W - 8, i, e, r;
-    /* the two panes that can sit beside the block: the control panel on the
+    /* the panes that can sit beside the block: the control panel on the
        right, and (on a wide screen, where it is not a bottom sheet) the open
        card on the left. An arrival opens the card straight into the parked
-       ship's HUD line, which is how the left half of this came up. */
-    var occ = [elPanel, cardOpen() ? cardEl : null];
+       ship's HUD line, which is how the left half of this came up.
+       X5: the Leave-orbit chip is the third. It is fixed at the top left in
+       exactly the band the parked HUD lead uses, and at 390 px a long name
+       ran its first word underneath it. The chip is hidden outside explore
+       and shipidle, so no other band moves. */
+    var occ = [elPanel, cardOpen() ? cardEl : null,
+               (elReturn && !elReturn.hidden) ? elReturn : null];
     for (i = 0; i < occ.length; i++) {
       e = occ[i];
       if (!e || e.hidden || !e.getBoundingClientRect) continue;
@@ -5547,9 +5894,12 @@
             textColor(is > 0.02 ? 0.72 : 0.5), hb3.cx, is);
     ctx.textAlign = 'left';
     if (!SHIPS || !RIG.ok || !idlePose.ok) return;
-    /* the light comes from the body it is parked at, as a screen angle */
+    /* the light comes from the body it is parked at, as a screen angle.
+       X5: a planet is not a light source, so at an exoplanet the light comes
+       from its host star, which is now a real distant sun on the same
+       screen. */
     var ld = Math.PI;
-    var B = shipBodyPos(IDLE_B);
+    var B = idleLightPos(IDLE_B);
     if (projectPt(B.x, B.y, B.z, PRJ)) {
       var la = Math.atan2(PRJ.y - RIG.y, PRJ.x - RIG.x);
       if (isFinite(la)) ld = la;
@@ -5640,14 +5990,38 @@
        E2's re-cut: the world being left has to have time to recede. */
     if (ph.phase === 'depart-zoom' || ph.phase === 'ignite') {
       if (c.from.kind === 'p') { centeredStar = -1; orbPlanet = c.from.idx; }
-      else { centeredStar = c.from.idx; orbPlanet = -1; }
+      else {
+        /* X6: `from.idx` is an index into whichever catalog from.kind names.
+           Handing an exoplanet or a far-object index to centeredStar drew a
+           completely unrelated star's close-up over the departure. */
+        centeredStar = (c.from.kind === 's') ? c.from.idx
+                     : (c.from.kind === 'x' ? anchorHostOf(c.from.idx) : -1);
+        orbPlanet = -1;
+        /* X4: leaving an exoplanet, the world being left is the one that
+           recedes -- the same frame the reader was standing in a moment ago */
+        if (c.from.kind === 'x' && centeredStar >= 0 && exoStandoff(c.from.idx) > 0) {
+          if (anchorIdx() !== c.from.idx) anchorTo(c.from.idx, reduced ? 0 : 1200);
+        } else clearAnchor();
+      }
     } else if (ph.phase === 'capture' || ph.phase === 'settle') {
       /* an interstellar trip that captures at a SOLAR-SYSTEM world (E3 case
          b) frames the planet, not the Sun */
       if (c.dest && c.dest.kind === 'p') { centeredStar = -1; orbPlanet = c.dest.planetIdx; }
-      else { orbPlanet = -1; centeredStar = c.star; }
+      else {
+        orbPlanet = -1; centeredStar = c.star;
+        /* X4: and a trip to an exoplanet brakes AT the planet. The anchor
+           ramps across the capture beat, so the star shrinks to its true
+           size over the same seconds the ship is slowing down. */
+        if (c.dest && c.dest.kind === 'x' && c.dest.exoIdx >= 0 &&
+            anchorHostOf(c.dest.exoIdx) === c.star && exoStandoff(c.dest.exoIdx) > 0) {
+          if (anchorIdx() !== c.dest.exoIdx) {
+            anchorTo(c.dest.exoIdx, reduced ? 0 : 2200);
+          }
+        } else clearAnchor();
+      }
     } else {
       orbPlanet = -1; centeredStar = -1;
+      clearAnchor();
     }
 
     /* the free-look offsets ease back to zero across the capture arc, so
@@ -8617,7 +8991,8 @@
   function exoRowAt(k) {
     while (exoRows.length <= k) {
       exoRows.push({ j: -1, ok: false, x: 0, y: 0, z: 0, er: 0, sel: false,
-                     draw: false, art: null, ring: new Float64Array(EXO_RING * 3) });
+                     draw: false, art: null, mid: false, dot: 3,
+                     ring: new Float64Array(EXO_RING * 3) });
     }
     return exoRows[k];
   }
@@ -8642,6 +9017,231 @@
       }
     }
     return isFinite(m) ? m : 0;
+  }
+
+  /* ==================================================================
+     X1: the exoplanet anchor -- one position, one clock, one set of laws.
+
+     Everything below is shared by the renderer, the framing helpers, the
+     cruise, the parked ship and the test hooks. The drawn position used to
+     be computed inline in two places that had to be kept in step by hand;
+     it is computed here now, and the two callers read it.
+     ================================================================== */
+  function fpxOf() { return (H * 0.5) / FOV_T; }
+
+  /* ---- the illustrative-orbit clock ----
+     Nobody knows where an exoplanet sits on its orbit, so the page sweeps it
+     around at its real period and says so. That is fine in the system
+     overview and wrong the moment the camera is standing AT one of these
+     worlds: 55 Cnc e laps in about a second, so an anchored close-up would
+     slide out of frame while the reader is still reading the card. The clock
+     therefore holds still whenever the page is at, or flying to, an anchored
+     world, and resumes exactly where it stopped, so nothing ever jumps.
+     With no freeze in the session's history this returns performance.now()
+     unchanged, which is what keeps the unanchored scene identical. */
+  var phFrozen = false, phPause = 0, phFreezeT0 = 0;
+  function phaseMs(now) {
+    var t = (typeof now === 'number' && isFinite(now)) ? now : performance.now();
+    return phFrozen ? (phFreezeT0 - phPause) : (t - phPause);
+  }
+  function freezePhases(now) {
+    if (phFrozen) return;
+    phFreezeT0 = (typeof now === 'number' && isFinite(now)) ? now : performance.now();
+    phFrozen = true;
+  }
+  function resumePhases(now) {
+    if (!phFrozen) return;
+    var t = (typeof now === 'number' && isFinite(now)) ? now : performance.now();
+    phPause += Math.max(0, t - phFreezeT0);
+    phFrozen = false;
+  }
+  /* Derived, never latched: no path can leak a frozen clock, because the
+     answer is recomputed from the page's own state once a frame. */
+  function phasesHold() {
+    if (exoAnchor >= 0) return true;
+    if (cruiseSt && cruiseSt.dest && cruiseSt.dest.kind === 'x') return true;
+    if (sysSt && sysSt.dest && sysSt.dest.kind === 'x') return true;
+    if (mode === 'shipidle' && shipAt.kind === 'x') return true;
+    return false;
+  }
+  function syncPhases(now) {
+    if (phasesHold()) freezePhases(now); else resumePhases(now);
+  }
+
+  /* ---- the drawn geometry ----
+     ringScale is the factor that pushes a compact system's orbits outside a
+     disc drawn far larger than life (the star-centered composition rule).
+     Standing at one of those worlds there is no oversized disc to clear, so
+     the anchor blends the factor back to 1 and the orbits are drawn where
+     they really are. */
+  function exoRingScale(i, D, K) {
+    var s = 1, aMin = exoInnerAu(i);
+    if (aMin > 0) {
+      var innerPx = fpxOf() * aMin / Math.max(1e-6, D);
+      var rpx = starOrbRadius(i, D);
+      if (innerPx > 0 && innerPx < rpx * RING_CLEAR) s = rpx * RING_CLEAR / innerPx;
+    }
+    var k = (typeof K === 'number' && isFinite(K)) ? clampN(K, 0, 1) : 0;
+    return s + (1 - s) * k;
+  }
+  /* The drawn world position of exoplanet j, in AU. `tMs` is the phase clock,
+     never the wall clock. Writes into `out`; allocates nothing. */
+  var EXOP = { ok: false, x: 0, y: 0, z: 0, a: 0, aDraw: 0, ph: 0, k: -1 };
+  var EXOP2 = { ok: false, x: 0, y: 0, z: 0, a: 0, aDraw: 0, ph: 0, k: -1 };
+  function exoPos(i, j, D, tMs, K, out, scale) {
+    var o = out || EXOP;
+    o.ok = false; o.x = 0; o.y = 0; o.z = 0; o.a = 0; o.aDraw = 0; o.ph = 0; o.k = -1;
+    if (!SD || !(i >= 0 && i < NS)) return o;
+    var list = starPlanets[i];
+    if (!list) return o;
+    var k = list.indexOf(j);
+    var a = exoOrbitAu(j);
+    if (k < 0 || !(a > 0)) return o;
+    var per = SD.planets.per[j];
+    var pYr = (per != null && isFinite(per) && per > 0) ? per / 365.25 : Math.pow(a, 1.5);
+    var tAnim = reduced ? 0 : tMs / 1000 / 600;   /* 600 s per Earth-year of sweep */
+    var ph = k * 2.399 + (reduced ? 0 : tAnim * 2 * Math.PI / Math.max(1e-4, pYr));
+    /* the caller may hand in the system's ring scale (the renderer computes
+       it once a frame); everything else derives it here */
+    var s = (typeof scale === 'number' && isFinite(scale) && scale > 0)
+      ? scale : exoRingScale(i, D, K);
+    var aDraw = a * s;
+    o.k = k; o.a = a; o.aDraw = aDraw; o.ph = ph;
+    o.x = starX[i] + aDraw * Math.cos(ph);
+    o.y = starY[i] + aDraw * Math.sin(ph);
+    o.z = starZ[i];
+    o.ok = isFinite(o.x) && isFinite(o.y) && isFinite(o.z);
+    return o;
+  }
+
+  /* The drawn-size unit for an exoplanet, in the same currency as PLANET_R
+     (Mercury 2.6, Earth 4, Jupiter 5). The eight solar worlds compress a 29:1
+     range of real radii into under 2:1, so this follows the same heavy
+     compression rather than a linear one and is clamped to the range they
+     already occupy: a close-up is an illustration of a world, not a
+     measurement of it. With no measured radius the art library's own type
+     (derived from the mass on its own thresholds) picks the tier. */
+  function exoPxR(j) {
+    var rade = (SD && SD.planets) ? SD.planets.rade[j] : null;
+    if (typeof rade === 'number' && isFinite(rade) && rade > 0) {
+      return clampN(PLANET_R[2] * Math.pow(rade, 0.2), 2.6, 5);
+    }
+    var art = exoArtOf(j);
+    var t = art ? art.type : 'rock';
+    if (t === 'gas' || t === 'hotjup') return 5;
+    if (t === 'neptunian') return 4.4;
+    return 3.4;
+  }
+  /* how big a close-up may get. The solar law's own cap plus a WIDTH term it
+     never needed: a phone is 390 px across and a 240 px radius would spill
+     off both sides of it. */
+  function exoOrbCap() { return Math.min(H * 0.34, W * 0.30, 240); }
+  /* the framing size every close-up on this page aims for */
+  function orbWantPx() { return Math.max(40, H * 0.17); }
+  /* Where the camera stands. Half the orbit radius keeps the shipidle camera,
+     which rides a sphere of exactly this radius, from sweeping through the
+     star; the upper clamp is the distance at which the world would already
+     fill a third of the frame, which is as far back as a close-up may be. */
+  var EXO_STANDOFF_FLOOR = 0.0028;      /* AU; about 10^-2.55 */
+  function exoStandoff(j) {
+    var a = exoOrbitAu(j);
+    if (!(a > 0)) return 0;
+    var pxLaw = clampN(exoPxR(j) * 2.2 * 60 / orbWantPx(), 0.6, 40);
+    return clampN(0.55 * a, EXO_STANDOFF_FLOOR, Math.max(EXO_STANDOFF_FLOOR, pxLaw));
+  }
+  /* ONE scale for the anchored scene, in px * AU: the anchored world reads as
+     about a third of the frame at its own standoff, and everything else in
+     the system is drawn at the same pixels per AU of distance, so a sibling
+     twice as far away is half the size. */
+  function anchorScale() {
+    var st = exoStandoff(exoAnchor);
+    return st > 0 ? orbWantPx() * st : 0;
+  }
+  function anchorPx(j, dist, scale) {
+    var S = (typeof scale === 'number' && scale > 0) ? scale : anchorScale();
+    if (!(S > 0) || !(dist > 0)) return exoPxR(j);
+    return clampN(S / dist, exoPxR(j), exoOrbCap());
+  }
+  /* The host star at its TRUE angular size, which is the whole point of the
+     anchored view: from Earth the Sun is a half-degree disc, and from
+     TRAPPIST-1 e its star is a fat red one. Same law drawSun uses for the
+     Sun, with this star's own radius. A star with no measured temperature or
+     luminosity has no honest radius, so it keeps the dot. */
+  var SUN_R_AU = 0.00465;
+  function starTrueRadiusAu(i) {
+    if (!(i >= 0 && i < NS)) return NaN;
+    var Rsun = A.starRadiusSun(starBolLum(i), starTempOf(i));
+    return (isFinite(Rsun) && Rsun > 0) ? Rsun * SUN_R_AU : NaN;
+  }
+  function starTruePx(i, dist) {
+    var R = starTrueRadiusAu(i);
+    if (!isFinite(R) || !(dist > 0)) return 0;
+    var px = fpxOf() * R / dist;
+    /* a renderer bound, not an honesty one: from 55 Cnc e the star really
+       does cover most of the sky, and it is drawn that way */
+    return isFinite(px) ? Math.min(px, Math.max(W, H) * 1.1) : 0;
+  }
+
+  /* ---- anchor state ----
+     anchorIdx() is the ONE test for "is this anchor real". An anchor whose
+     host is not the centered star is stale (a fly-to elsewhere took the
+     camera) and reads as absent everywhere, so no path can leave the page
+     half in one frame and half in the other. */
+  function anchorHostOf(j) {
+    return (j >= 0 && SD && SD.planets) ? SD.planets.host[j] : -1;
+  }
+  function anchorIdx() {
+    if (exoAnchor < 0 || centeredStar < 0) return -1;
+    return anchorHostOf(exoAnchor) === centeredStar ? exoAnchor : -1;
+  }
+  function anchorK() { return anchorIdx() >= 0 ? clampN(exoAnchorK, 0, 1) : 0; }
+  function anchorOn() { return anchorK() > 0.5; }
+  function clearAnchor() {
+    exoAnchor = -1; exoAnchorK = 0; anchorAnim = null; exoOver = 0;
+  }
+  function stepAnchor(now) {
+    if (!anchorAnim) return;
+    var k = clampN((now - anchorAnim.t0) / anchorAnim.ms, 0, 1);
+    exoAnchorK = anchorAnim.from + (anchorAnim.to - anchorAnim.from) * easeInOutCubic(k);
+    if (k >= 1) {
+      exoAnchorK = anchorAnim.to;
+      anchorAnim = null;
+      if (!(exoAnchorK > 0)) clearAnchor();
+    }
+  }
+  /* engage / ease / drop, all through one door so the blend clock and the
+     phase freeze can never disagree */
+  function anchorTo(j, ms) {
+    if (!(j >= 0)) return false;
+    exoOver = 0;
+    exoAnchor = j;
+    freezePhases();
+    if (reduced || !(ms > 0)) { exoAnchorK = 1; anchorAnim = null; return true; }
+    anchorAnim = { t0: performance.now(), ms: ms, from: exoAnchorK, to: 1 };
+    return true;
+  }
+  function anchorOff(ms) {
+    if (exoAnchor < 0) return false;
+    exoOver = 0;
+    if (reduced || !(ms > 0)) { clearAnchor(); return true; }
+    anchorAnim = { t0: performance.now(), ms: ms, from: exoAnchorK, to: 0 };
+    return true;
+  }
+
+  /* X4: where an exoplanet IS, for the ship and for a trip. Always the true
+     orbit radius, never the ring-scaled drawn one, and never dependent on
+     the camera: this is the point a cruise brakes at and the point a parked
+     ship orbits, and neither may move because someone turned the zoom wheel.
+     The phase clock is frozen from launch to arrival (phasesHold), so it
+     cannot move under the flight either. Returns null when the planet has no
+     drawable orbit, and every caller falls back to the host star. */
+  var EXOW = { ok: false, x: 0, y: 0, z: 0, a: 0, aDraw: 0, ph: 0, k: -1 };
+  function exoWorldPos(j, out) {
+    var h = anchorHostOf(j);
+    var st = exoStandoff(j);
+    if (!(h >= 0 && h < NS) || !(st > 0)) return null;
+    var P = exoPos(h, j, st, phaseMs(performance.now()), 1, out || EXOW, 1);
+    return P.ok ? P : null;
   }
 
   /* ==================================================================
@@ -8755,13 +9355,12 @@
     if (k < 0 || !(a > 0)) return 0;
     var per = SD.planets.per[j];
     var pYr = (per != null && isFinite(per) && per > 0) ? per / 365.25 : Math.pow(a, 1.5);
-    var aMin = exoInnerAu(i);
-    if (!(aMin > 0)) aMin = a;
-    var fpx = (H * 0.5) / FOV_T;
+    var fpx = fpxOf();
     var rpx = starOrbRadius(i, D);
-    var innerPx = fpx * aMin / D;
-    var scale = (innerPx > 0 && innerPx < rpx * RING_CLEAR) ? rpx * RING_CLEAR / innerPx : 1;
-    var aDraw = a * scale;
+    /* X1: the framing reads the renderer's own laws through the shared
+       helpers, so the two can no longer drift apart. This is the framing the
+       RELEASED scene lands in, so it is always the unanchored geometry. */
+    var aDraw = a * exoRingScale(i, D, 0);
     var orbitPx = fpx * aDraw / D;
     var capH = 0.45 * rpx;
     var er = clampN(Math.min(orbitPx * 0.28, capH), Math.min(10, capH), 120);
@@ -8782,9 +9381,8 @@
     var rate = reduced ? 0 : 2 * Math.PI / 600 / Math.max(1e-4, pYr);  /* rad/s */
     var ph0 = k * 2.399 + (t0 / 1000) * rate;
     for (q = 0; q < HERO_T.length; q++) {
-      ph = ph0 + (HERO_T[q] / 1000) * rate;
-      if (projectPt(starX[i] + aDraw * Math.cos(ph),
-                    starY[i] + aDraw * Math.sin(ph), starZ[i], HERO_PRJ)) {
+      var HP = exoPos(i, j, D, t0 + HERO_T[q], 0, EXOP2);
+      if (HP.ok && projectPt(HP.x, HP.y, HP.z, HERO_PRJ)) {
         heroDx[q] = HERO_PRJ.x; heroDy[q] = HERO_PRJ.y;
       } else { heroDx[q] = NaN; heroDy[q] = NaN; }
     }
@@ -8954,18 +9552,193 @@
     }
     return D;
   }
-  /* fly the camera to that framing, centred so the hero clears the overlays */
-  function frameExo(i, j) {
-    if (centeredStar !== i || selExo !== j) return;
+  /* fly the camera to that framing, centred so the hero clears the overlays.
+     `recenter` puts the camera centre back on the star, which is what the
+     anchor's release needs and what a plain chip open never does (there the
+     centre is already the star and naming it would fight a fly-to that is
+     still in the air). */
+  var GOP = { ok: false, x: 0, y: 0, z: 0, a: 0, aDraw: 0, ph: 0, k: -1 };
+  function frameExo(i, j, recenter, ms) {
+    if (centeredStar !== i) return;
+    if (!recenter && selExo !== j) return;
     var lgE = exoFrameLogD(i, j);
     if (lgE == null) return;
-    var t0 = performance.now() + (reduced ? 0 : 900);
+    var t0 = phaseMs(performance.now()) + (reduced ? 0 : 900);
     lgE = clampN(Math.log(exoHeroD(i, j, Math.pow(10, lgE), t0)) / Math.LN10,
                  minLogD(), MAX_LOGD);
     var D = Math.pow(10, lgE);
     var halfE = exoDrawnOrbitPx(i, j, D) + 18;
     var ppE = exoHeroPP(i, j, D, halfE, t0);
-    camGo({ logD: lgE, ppx: ppE.x, ppy: ppE.y }, 900);
+    var go = { logD: lgE, ppx: ppE.x, ppy: ppE.y };
+    if (recenter) { go.cx = starX[i]; go.cy = starY[i]; go.cz = starZ[i]; }
+    camGo(go, (typeof ms === 'number' && ms >= 0) ? ms : 900);
+  }
+
+  /* ==================================================================
+     X3: the dive and the release.
+
+     "when i look at an exoplanet and try zooming in, I zoom in on the sun of
+     the exoplanet, not the exoplanet" -- because the only thing the camera
+     could ever close in on was the star. Past the point where the drawn
+     system no longer fits the frame there is nothing left of it to see, so
+     the camera hands over to the planet's own frame; backing off far enough
+     that the system fits again hands it back. The two thresholds are a
+     factor apart, and each transition lands well clear of both, so a wheel
+     resting on the boundary cannot flip the scene back and forth.
+     ================================================================== */
+  var DIVE_SPAN = 1.30;                 /* drawn orbit diameters per frame */
+  var RISE_SPAN = 0.80;
+  var EXO_OVER = 0.12;                  /* decades of zoom asked for past the floor */
+  var exoOver = 0;
+  /* X3: the dive and the release are consequences of a READER's zoom, never
+     of a camera move the page made itself. Set by the wheel, the pinch and
+     the zoom keys; cleared by every camGo. */
+  var diveArm = false;
+  /* the drawn orbit of j, in frames across, at camera distance D */
+  function exoSpan(i, j, D) {
+    var m = Math.min(W, H);
+    if (!(m > 0)) return 0;
+    return 2 * exoDrawnOrbitPx(i, j, D) / m;
+  }
+  /* X3: the same idea as noteRigOver. A zoom-in the floor refuses is
+     invisible in cam.logD, so the REQUEST is what has to be counted; any
+     outward gesture forgets it. */
+  function noteExoOver(dy, want, got) {
+    if (!(dy < 0)) { exoOver = 0; return; }
+    var over = got - want;
+    if (over > 0) exoOver += over;
+  }
+  /* the distance from the eye to a world at the zoom the reader is heading
+     for, rather than the one the ease happens to be passing through */
+  function eyeDistAt(wx, wy, wz, lg) {
+    var D = Math.pow(10, lg);
+    var cp = Math.cos(cam.pitch);
+    var dx = cam.cx + D * cp * Math.cos(cam.yaw) - wx;
+    var dy = cam.cy + D * cp * Math.sin(cam.yaw) - wy;
+    var dz = cam.cz + D * Math.sin(cam.pitch) - wz;
+    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+  /* X6: fly the camera to wherever the ship is parked at an exoplanet -- its
+     own frame when the planet has a drawable orbit, its host's framing when
+     it does not. Used by the paths that used to hand an exoplanet index
+     straight to flyToStar. */
+  function flyToShipPark(instant) {
+    if (shipAt.kind !== 'x') return false;
+    var h = anchorHostOf(shipAt.idx);
+    if (!(h >= 0 && h < NS)) return false;
+    if (flyToExo(h, shipAt.idx, instant)) return true;
+    flyToStar(h, instant);
+    return true;
+  }
+  /* Fly into the planet's own frame. The camera centre becomes the world
+     itself, the standoff is its own, and the blend rides the same clock as
+     the fly-to, so the star shrinks to its true size exactly as the camera
+     arrives: nothing pops at either end. */
+  function flyToExo(i, j, instant) {
+    if (!SD || !(i >= 0 && i < NS)) return false;
+    var st = exoStandoff(j);
+    if (!(st > 0)) return false;
+    var ms = (instant || reduced) ? 0 : 1200;
+    centeredStar = i;
+    if (!anchorTo(j, ms)) return false;
+    var P = exoPos(i, j, st, phaseMs(performance.now()), 1, GOP);
+    if (!P.ok) { clearAnchor(); return false; }
+    var orb = anchorPx(j, st);
+    var pp = explorePP(orb + 14);
+    var go = { cx: P.x, cy: P.y, cz: P.z, logD: Math.log(st) / Math.LN10,
+               ppx: pp.x, ppy: pp.y };
+    /* ---- the framing, chosen rather than inherited ----
+       "id like the exoplanet to be the center, and it looking ike the sun is
+       far away". Where the sun lands is pure geometry: at a standoff of half
+       an orbit radius the star sits behind the planet for a camera directly
+       outside its orbit and behind the CAMERA for one inside it, so an
+       inherited yaw could easily leave no star on screen at all. Tilting the
+       camera out of the orbital plane by the angle that puts the star a
+       planet-and-a-half above the world solves it in closed form: the star's
+       screen offset is fpx * sin(phi) / (cos(phi) + standoff/a), which is
+       monotone in phi, so one atan/asin pair gives the answer. The offset is
+       capped so the star never climbs into the masthead's dead zone, and the
+       shift is vertical, which is the axis that stays in frame at every
+       aspect ratio (fpx scales with the HEIGHT, so a phone has barely a
+       quarter of the horizontal field a desktop does). */
+    var ux = P.x - starX[i], uy = P.y - starY[i], uz = P.z - starZ[i];
+    var un = Math.sqrt(ux * ux + uy * uy + uz * uz);
+    if (un > 1e-12 && P.a > 0) {
+      var offPx = clampN(orb * 1.35 + 30, 40, Math.max(60, H * 0.34));
+      var t = offPx / fpxOf();
+      var kk = st / P.a;
+      var sPhi = t * kk / Math.sqrt(1 + t * t);
+      if (sPhi < 0.95) {
+        var phi = Math.atan(t) + Math.asin(sPhi);
+        go.pitch = clampN(phi, -1.45, 1.45);
+        /* nearest turn, not the long way round: camStep lerps yaw linearly */
+        var yw = Math.atan2(uy, ux);
+        var base = camAnim ? camAnim.to.yaw : cam.yaw;
+        while (yw - base > Math.PI) yw -= 2 * Math.PI;
+        while (base - yw > Math.PI) yw += 2 * Math.PI;
+        go.yaw = yw;
+      }
+    }
+    camGo(go, ms);
+    return true;
+  }
+  /* Hand the frame back to the system view: the centre returns to the star,
+     the blend runs backwards, and the orbits inflate back into the diagram
+     over the same 900 ms. */
+  function releaseAnchor(j2) {
+    if (exoAnchor < 0) return false;
+    var i = centeredStar;
+    var jj = (typeof j2 === 'number' && j2 >= 0)
+      ? j2 : (selExo >= 0 ? selExo : exoAnchor);
+    var ms = reduced ? 0 : 900;
+    if (i >= 0 && starPlanets[i] && starPlanets[i].indexOf(jj) >= 0) {
+      anchorOff(ms);
+      frameExo(i, jj, true, ms);
+    } else if (i >= 0) {
+      flyToStar(i, reduced);             /* drops the anchor itself */
+    } else {
+      clearAnchor();
+    }
+    return true;
+  }
+  /* X3: a chip open frames its planet's orbit, as it always has -- unless the
+     camera is already standing AT that planet, where the framing it wants is
+     the one it is in. Opening a DIFFERENT planet's chip hands the frame back
+     to the system and frames that orbit, which is the same move the release
+     makes. */
+  function frameExoChip(i, j) {
+    var aj = anchorIdx();
+    if (aj >= 0) {
+      if (aj === j) return;
+      releaseAnchor(j);
+      return;
+    }
+    frameExo(i, j);
+  }
+  /* the exoplanet whose chip is open on the star card for star i, or -1 */
+  function openExoOf(i) {
+    return (selExo >= 0 && anchorHostOf(selExo) === i) ? selExo : -1;
+  }
+  /* One test a frame, on the zoom the reader is heading for. Both sides are
+     gated on a settled camera: a threshold crossed by an easing fly-to is
+     the fly-to's own business. */
+  function stepExoDive() {
+    if (mode !== 'explore' || camAnim || anchorAnim || cam.basis) return;
+    var i = centeredStar;
+    if (i < 0 || !SD) { exoOver = 0; return; }
+    if (!diveArm) return;
+    var j = anchorIdx();
+    if (j >= 0) {
+      if (!(exoAnchorK > 0.99)) return;
+      if (exoSpan(i, j, eyeDistAt(starX[i], starY[i], starZ[i], zoomTarget)) < RISE_SPAN) {
+        releaseAnchor();
+      }
+      return;
+    }
+    if (selExo < 0 || anchorHostOf(selExo) !== i) { exoOver = 0; return; }
+    if (exoSpan(i, selExo, Math.pow(10, zoomTarget)) > DIVE_SPAN || exoOver > EXO_OVER) {
+      flyToExo(i, selExo, false);
+    }
   }
 
   /* One planet's orbit ring, restricted to the half of it that is farther
@@ -9016,6 +9789,127 @@
     }
   }
 
+  /* X2: the host star, drawn where the stack says it goes. `far` marks the
+     anchored case, where the star is a real distant sun rather than the
+     larger-than-life close-up: below about eight pixels the procedural
+     surface has nothing left to say and a bare disc reads as a dead grey
+     dot, so it takes drawSun's own treatment instead, a small bright disc
+     inside its own glow. */
+  function drawStarDot(i, x, y, rpx, fade) {
+    if (!isFinite(x) || !isFinite(y)) return;
+    var size = clampN(rpx, 1.2, 26);
+    var T = starTempOf(i);
+    var c = isFinite(T) ? A.kelvinToRgb(T) : { r: 238, g: 242, b: 250 };
+    var rr = c.r, gg = c.g, bb = c.b;
+    if (isLight()) { rr = Math.round(rr * 0.5); gg = Math.round(gg * 0.42); bb = Math.round(bb * 0.24); }
+    var pre = 'rgba(' + rr + ',' + gg + ',' + bb + ',';
+    noteOrb(size, fade);
+    var g = ctx.createRadialGradient(x, y, 0, x, y, size * 5);
+    g.addColorStop(0, pre + clampN(0.5 * fade, 0, 1) + ')');
+    g.addColorStop(1, pre + '0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(x, y, size * 5, 0, 6.2832); ctx.fill();
+    ctx.fillStyle = pre + clampN(0.95 * fade, 0, 1) + ')';
+    ctx.beginPath(); ctx.arc(x, y, size, 0, 6.2832); ctx.fill();
+  }
+  function drawHostOrb(i, x, y, rpx, fade, now, far) {
+    if (far && !(rpx >= 8)) { drawStarDot(i, x, y, rpx, fade); return; }
+    orbBacking(x, y, rpx, fade);
+    var art = starArtOf(i);
+    if (art) {
+      orbDrawStar(ctx, x, y, rpx, art, orbT(now),
+                  { quality: orbQuality(), alpha: fade }, true);
+    } else {
+      drawStarBlob(x, y, rpx, starTempOf(i), fade);
+    }
+  }
+
+  /* X2: did the anchored world really get drawn this frame, and how big?
+     The card's orbit note and the test hooks read these.
+     X3: and is the centered star's disc completely behind one of them? */
+  var anchorDrawn = false, anchorOrbPx = 0, starCovered = false;
+  /* how many rows of the exoRows POOL this frame really measured: everything
+     past it is last frame's leftovers, which the test hook must not report */
+  var exoRowN = 0;
+
+  /* ---- X2: the anchored frame's two composition caps ----
+
+     One shared scale is honest about distance, but at a wide system seen from
+     an outer world (Kepler-90 h) it drew half a dozen inner planets as big
+     overlapping discs piled on top of each other, with the 3 px host star
+     buried behind one of them. The picture a reader should get there is "the
+     star, with small worlds near it".
+
+     Two caps, applied to the SIBLINGS only (the anchored world is the subject
+     of the frame and is never shrunk, and a world crossing in front of it is
+     a foreground world, not a pile):
+
+       1. a sibling may not bury the star. The cap is the clearance of the
+          star's own disc, and it ramps in over the last 2*rpx of overlap, so
+          it is zero exactly when the star is still peeking out and full when
+          the star is well inside. A sibling silhouetted on a star that is
+          BIGGER than it (55 Cnc e's looming host) can never trip it.
+       2. two sibling discs may not overlap. The farther of the pair gives
+          way, down to its dot size at worst, and the pad phases in over the
+          first few pixels of overlap so the shrink starts from tangency.
+
+     Both are continuous in the positions and radii they read, so nothing pops
+     frame to frame, and both are scaled by K, so the unanchored scene is
+     untouched. Nearest first, so a row's radius is settled before anything
+     behind it is measured against it. */
+  var SIB_PAD = 3;
+  var sibOrd = [];
+  function capAnchorOrbs(nRow, skip, K, cx0, cy0, rpx) {
+    var n = 0, t, r, row, other, hyp, dx, dy, ov, pd, cap, want;
+    for (r = 0; r < nRow; r++) {
+      row = exoRows[r];
+      if (r === skip || !row.ok || !(row.er > 0)) continue;
+      /* insertion sort on camera depth, nearest first; equal depths keep
+         catalogue order, so the result is the same every frame */
+      for (t = n; t > 0 && exoRows[sibOrd[t - 1]].z > row.z; t--) sibOrd[t] = sibOrd[t - 1];
+      sibOrd[t] = r;
+      n++;
+    }
+    for (t = 0; t < n; t++) {
+      row = exoRows[sibOrd[t]];
+      want = row.er;
+      /* 1. the star stays visible */
+      if (rpx > 0) {
+        dx = row.x - cx0; dy = row.y - cy0;
+        hyp = Math.sqrt(dx * dx + dy * dy);
+        var bury = clampN((want - hyp - rpx) / (2 * rpx), 0, 1);
+        if (bury > 0) {
+          cap = Math.max(row.dot, hyp - rpx - SIB_PAD);
+          if (cap < want) want = want + (cap - want) * bury;
+        }
+      }
+      /* 2. and it clears every sibling already settled in front of it */
+      for (var u = 0; u < t; u++) {
+        other = exoRows[sibOrd[u]];
+        dx = row.x - other.x; dy = row.y - other.y;
+        hyp = Math.sqrt(dx * dx + dy * dy);
+        ov = other.er + want - hyp;
+        if (ov > 0) {
+          pd = SIB_PAD * clampN(ov / SIB_PAD, 0, 1);
+          cap = Math.max(row.dot, hyp - other.er - pd);
+          if (cap < want) want = cap;
+        }
+      }
+      if (isFinite(want) && want < row.er) row.er = row.er + (want - row.er) * K;
+    }
+  }
+
+  /* X2: paint every measured world whose camera depth falls in (zLo, zHi],
+     skipping one row. The anchored stack is a merge over two depths, so the
+     passes are windows rather than a single split. */
+  function paintOrbRange(nRow, skip, zHi, zLo, cx0, cy0, rpx, fade, now) {
+    for (var r = 0; r < nRow; r++) {
+      var row = exoRows[r];
+      if (r === skip || !row.ok) continue;
+      if (row.z <= zHi && row.z > zLo) drawExoOrb(row, cx0, cy0, rpx, fade, now);
+    }
+  }
+
   /* D4. The old version switched the whole close-up off at D = 200 AU and
      the star tiers only fade IN at 5,000, so everything between the two was
      a screen full of nothing but bg(). There is no switch left: the orb
@@ -9026,6 +9920,10 @@
     starOrbPx = 0;
     lastOrbBlend = 0;
     ringsOnScreen = false;
+    anchorDrawn = false;
+    anchorOrbPx = 0;
+    starCovered = false;
+    exoRowN = 0;
     var i = centeredStar;
     if (i < 0 || i >= NS) return;
     var P = PRJ;
@@ -9036,8 +9934,26 @@
        front of this disc or behind it */
     var starZc = P.z;
     if (!isFinite(cx0) || !isFinite(cy0)) return;
-    var rpx = starOrbRadius(i, D);
-    var fade = PURE.orbBlend(rpx);
+    /* X2: the anchor morphs the star's size law. At K = 0 this is the shipped
+       close-up radius to the last bit. At K = 1 the star is drawn at the
+       angle it really subtends from the anchored world, which is the whole
+       point: from Earth orbit the Sun is a small bright disc a long way off,
+       and that is what a star should look like from one of its planets.
+       The fade (and with it the sprite, the orbs and the tap targets) keeps
+       reading the UNANCHORED radius and is blended to 1, so a star drawn
+       three pixels across cannot take its own system off the screen. */
+    var K = anchorK();
+    var aJ = anchorIdx();
+    var rpx0 = starOrbRadius(i, D);
+    var rpx = rpx0;
+    if (K > 0) {
+      var sdx = starX[i] - camPX, sdy = starY[i] - camPY, sdz = starZ[i] - camPZ;
+      var dStar = Math.sqrt(sdx * sdx + sdy * sdy + sdz * sdz);
+      rpx = rpx0 + (starTruePx(i, dStar) - rpx0) * K;
+      if (!isFinite(rpx) || rpx < 0) rpx = rpx0;
+    }
+    var fade = PURE.orbBlend(rpx0);
+    if (K > 0) fade = fade + (1 - fade) * K;
     lastOrbBlend = fade;
     starOrbPx = fade > 0 ? rpx : 0;
 
@@ -9069,36 +9985,42 @@
        every planet carries its camera depth, so the star's disc can be laid
        down between the half of the system that is behind it and the half in
        front, instead of under all of it. */
-    var nRow = 0, selRow = -1, k, r, row;
+    var nRow = 0, selRow = -1, anchorRow = -1, k, r, row;
     var list = starPlanets[i];
+    /* X2: the anchored world's own screen position and drawn size, measured
+       before the loop because every OTHER world is sized on its scale and
+       hidden behind its disc. */
+    var aOk = false, aX = 0, aY = 0, aZ = 0, aOrb = 0, aScale = 0;
     if (fade >= 0.5 && list && list.length) {
       var exoTappable = (mode === 'explore') || (mode === 'shipidle');
-      var tAnim = reduced ? 0 : now / 1000 / 600;   /* 600 s per Earth-year of sweep */
+      var tMs = phaseMs(now);
       /* The disc is drawn far larger than life, and a compact system's TRUE
          orbits can land inside it, which read as planets orbiting within the
          star. One shared factor pushes every orbit out until the innermost
          ring clears the limb: ratios between orbits are untouched, a system
          whose inner orbit already clears the disc keeps ringScale = 1, and
          the factor is continuous in D so nothing pops while zooming. The
-         card's note owns the honesty of this scale. */
-      var aMin = Infinity;
-      for (k = 0; k < list.length; k++) {
-        var a0 = exoOrbitAu(list[k]);
-        if (a0 > 0 && a0 < aMin) aMin = a0;
-      }
-      var ringScale = 1;
-      if (isFinite(aMin)) {
-        var innerPx = fpxV * aMin / Math.max(1e-6, D);
-        if (innerPx > 0 && innerPx < rpx * RING_CLEAR) ringScale = rpx * RING_CLEAR / innerPx;
+         card's note owns the honesty of this scale.
+         X2: standing AT one of these worlds there is no oversized disc to
+         clear, so the anchor blends the factor back to 1 and the orbits are
+         drawn where they really are. */
+      var ringScale = exoRingScale(i, D, K);
+      if (K > 0 && aJ >= 0) {
+        var AP = exoPos(i, aJ, D, tMs, K, EXOP2, ringScale);
+        if (AP.ok && projectPt(AP.x, AP.y, AP.z, PRJ)) {
+          var adx = AP.x - camPX, ady = AP.y - camPY, adz = AP.z - camPZ;
+          aScale = anchorScale();
+          aOrb = anchorPx(aJ, Math.sqrt(adx * adx + ady * ady + adz * adz), aScale);
+          aX = PRJ.x; aY = PRJ.y; aZ = PRJ.z;
+          aOk = isFinite(aX) && isFinite(aY);
+        }
       }
       for (k = 0; k < list.length; k++) {
         var j = list[k];
-        var a = exoOrbitAu(j);
+        var EP = exoPos(i, j, D, tMs, K, EXOP, ringScale);
+        var a = EP.a;
         if (!(a > 0)) continue;
-        var per = SD.planets.per[j];
-        var pYr = (per != null && isFinite(per) && per > 0) ? per / 365.25 : Math.pow(a, 1.5);
-        var ph = k * 2.399 + (reduced ? 0 : tAnim * 2 * Math.PI / Math.max(1e-4, pYr));
-        var aDraw = a * ringScale;
+        var aDraw = EP.aDraw;
         row = exoRowAt(nRow++);
         row.j = j;
         /* orbit circle in the ecliptic plane around the star.
@@ -9129,12 +10051,13 @@
         row.draw = ringOk && isFinite(rx0) &&
                    (rx1 - rx0) <= ringCap && (ry1 - ry0) <= ringCap;
         if (row.draw && rx1 > 0 && rx0 < W && ry1 > 0 && ry0 < H) ringsOnScreen = true;
-        var wx3 = starX[i] + aDraw * Math.cos(ph), wy3 = starY[i] + aDraw * Math.sin(ph);
-        row.ok = projectPt(wx3, wy3, starZ[i], PRJ);
+        row.ok = EP.ok && projectPt(EP.x, EP.y, EP.z, PRJ);
         if (row.ok) {
           row.x = PRJ.x; row.y = PRJ.y; row.z = PRJ.z;
           row.sel = selExo === j;
           row.art = exoArtOf(j);
+          var isMid = (j === aJ && K > 0);
+          if (isMid) anchorRow = nRow - 1;
           /* size the orb from the orbit's own on-screen radius: a selected
              planet grows as the camera closes in, everything else stays a
              small orb that reads as a dot on the ring.
@@ -9142,74 +10065,162 @@
              disc is already drawn far larger than life, so a planet bigger
              than it (TRAPPIST-1 e came out 175 px against a 155 px star) is
              not an illustration of anything. The two caps keep the hero orb
-             at about twice a sibling whatever the framing. */
+             at about twice a sibling whatever the framing.
+             (Both caps read the UNANCHORED star radius: they exist to keep a
+             planet from out-growing a disc drawn larger than life, and the
+             anchored star is not that disc.) */
           var orbitPx = fpxV * aDraw / Math.max(1e-6, D);
-          var capH = 0.45 * rpx, capS = 0.22 * rpx;
+          var capH = 0.45 * rpx0, capS = 0.22 * rpx0;
           var er = row.sel
             ? clampN(Math.min(orbitPx * 0.28, capH), Math.min(10, capH), 120)
             : clampN(Math.min(orbitPx * 0.10, capS), Math.min(8, capS), 14);
           if (!isFinite(er) || er <= 0) er = 9;
-          row.er = er;
-          if (row.sel) selRow = nRow - 1;
-          /* a world the star disc fully covers is not on screen this frame,
-             so it is not a tap target either: it takes the same off-screen
-             sentinel a failed projection does. A partial cover keeps the tap
-             (the sliver is visible) and the selected close-up always draws. */
-          var covered = !row.sel && row.z > starZc &&
-                        Math.hypot(row.x - cx0, row.y - cy0) + er <= rpx;
-          if (exoTappable) {
-            if (covered) exoScr.push({ j: j, x: -9999, y: -9999, r: 3 });
-            else exoScr.push({ j: j, x: row.x, y: row.y, r: er });
+          /* X2: anchored, the whole system is drawn on ONE scale keyed to the
+             camera's real distance from each world, so the world the camera
+             is standing at reads as about a third of the frame and a sibling
+             twice as far away is half the size. */
+          if (K > 0 && aScale > 0) {
+            var pdx = EP.x - camPX, pdy = EP.y - camPY, pdz = EP.z - camPZ;
+            var erA = anchorPx(j, Math.sqrt(pdx * pdx + pdy * pdy + pdz * pdz), aScale);
+            if (!isMid && aOrb > 0) erA = Math.min(erA, aOrb * 0.45);
+            if (isFinite(erA) && erA > 0) er = er + (erA - er) * K;
           }
-        } else if (exoTappable) {
-          exoScr.push({ j: j, x: -9999, y: -9999, r: 3 });
+          row.er = er;
+          row.mid = isMid;
+          row.dot = exoPxR(j);
+          if (row.sel) selRow = nRow - 1;
+        } else { row.mid = false; }
+      }
+      /* X2: the composition caps run once the whole system is measured,
+         because both of them are about how the drawn discs sit against each
+         other. Skipped entirely with no anchor, so the shipped scene is
+         byte-identical. */
+      if (K > 0) capAnchorOrbs(nRow, anchorRow, K, cx0, cy0, rpx);
+      exoRowN = nRow;
+      /* X3: with the star's whole disc behind a planet, its gold ring and its
+         name are chrome painted over that planet's face, and a visitor reads
+         the empty circle as a bug. The same cover test the tap sentinel uses,
+         pointed the other way. Anchored only: unanchored the star IS the
+         close-up and nothing in the system is drawn in front of it. */
+      if (K > 0 && rpx > 0) {
+        for (r = 0; r < nRow; r++) {
+          row = exoRows[r];
+          if (!row.ok || !(row.er > 0) || !(row.z < starZc)) continue;
+          if (Math.hypot(row.x - cx0, row.y - cy0) + rpx <= row.er) {
+            starCovered = true;
+            break;
+          }
+        }
+      }
+      /* the tap targets, measured against the radii that were really drawn.
+         A world a drawn disc fully covers is not on screen this frame, so it
+         is not a tap target either: it takes the same off-screen sentinel a
+         failed projection does. A partial cover keeps the tap (the sliver is
+         visible) and the selected close-up always draws.
+         X2: anchored, the world the camera stands at is a second disc that
+         can swallow a sibling, and is itself never swallowed. */
+      if (exoTappable) {
+        for (r = 0; r < nRow; r++) {
+          row = exoRows[r];
+          if (!row.ok) { exoScr.push({ j: row.j, x: -9999, y: -9999, r: 3 }); continue; }
+          var covered = !row.sel && !row.mid && row.z > starZc &&
+                        Math.hypot(row.x - cx0, row.y - cy0) + row.er <= rpx;
+          if (!covered && !row.sel && !row.mid && aOk && row.z > aZ &&
+              Math.hypot(row.x - aX, row.y - aY) + row.er <= aOrb) covered = true;
+          if (covered) exoScr.push({ j: row.j, x: -9999, y: -9999, r: 3 });
+          else exoScr.push({ j: row.j, x: row.x, y: row.y, r: row.er });
         }
       }
     }
-    var parked = !isRigMode() && shipAt.kind === 's' && shipAt.idx === i;
+    /* X2: which body owns the middle of the stack. Unanchored it is the star,
+       exactly as it always was; anchored it is the world the camera is
+       standing at, and the star takes its place in whichever pass its own
+       camera depth puts it. */
+    var midRow = (anchorRow >= 0 && anchorOn() && exoRows[anchorRow].ok) ? anchorRow : -1;
+    var refZ = midRow >= 0 ? exoRows[midRow].z : starZc;
+    var starFar = midRow < 0 || starZc >= refZ;
+    var mx = midRow >= 0 ? exoRows[midRow].x : cx0;
+    var my = midRow >= 0 ? exoRows[midRow].y : cy0;
+    var mr = midRow >= 0 ? exoRows[midRow].er : rpx;
+    /* the ship is drawn around the body it is really parked at, which is not
+       always the one in the middle of the stack: a ship parked at the star
+       while the camera stands at one of its planets belongs beside the star. */
+    var parkMid = !isRigMode() && midRow >= 0 &&
+                  shipAt.kind === 'x' && shipAt.idx === exoRows[midRow].j;
+    var parkStar = !isRigMode() && shipAt.kind === 's' && shipAt.idx === i;
+    if (midRow >= 0) { anchorDrawn = true; anchorOrbPx = mr; }
 
     /* the far side, rings before orbs so a world is never crossed by a ring
        drawn in its own pass.
 
-       The SELECTED planet is exempt from the split and always paints in front.
-       Its orb is the close-up the card and the honesty caption are about, and
-       the disc it would hide behind is drawn hundreds of times life size (the
-       scale bar says so): a real TRAPPIST-1 planet orbits far outside its
-       star, so swallowing it there is an artefact of the illustration, not a
-       fact about the system. Hiding it left the caption pointing at nothing. */
-    for (r = 0; r < nRow; r++) strokeExoRing(exoRows[r], true, starZc, fade);
-    for (r = 0; r < nRow; r++) {
-      row = exoRows[r];
-      if (row.ok && !row.sel && row.z > starZc) drawExoOrb(row, cx0, cy0, rpx, fade, now);
-    }
-    if (parked) drawParkedShip(cx0, cy0, rpx, now, fade, -1);
+       Unanchored the SELECTED planet is exempt from the split and always
+       paints in front. Its orb is the close-up the card and the honesty
+       caption are about, and the disc it would hide behind is drawn hundreds
+       of times life size (the scale bar says so): a real TRAPPIST-1 planet
+       orbits far outside its star, so swallowing it there is an artefact of
+       the illustration, not a fact about the system. Hiding it left the
+       caption pointing at nothing.
 
-    orbBacking(cx0, cy0, rpx, fade);
-    var art = starArtOf(i);
-    if (art) {
-      orbDrawStar(ctx, cx0, cy0, rpx, art, orbT(now),
-                  { quality: orbQuality(), alpha: fade }, true);
+       Anchored there is no oversized disc and no exemption, and the star is
+       one more body in the stack rather than the thing everything is sorted
+       around: the passes below are a three-way merge over BOTH depths (the
+       anchored world's and the star's), or a bright star lands on the face
+       of a sibling that is really in front of it. */
+    var zFar = Math.max(refZ, starZc), zNear = Math.min(refZ, starZc);
+    for (r = 0; r < nRow; r++) strokeExoRing(exoRows[r], true, refZ, fade);
+    if (midRow >= 0) {
+      paintOrbRange(nRow, midRow, Infinity, zFar, cx0, cy0, rpx, fade, now);
+      if (starFar) {
+        if (parkStar) drawParkedShip(cx0, cy0, rpx, now, fade, -1);
+        drawHostOrb(i, cx0, cy0, rpx, fade, now, true);
+        if (parkStar) drawParkedShip(cx0, cy0, rpx, now, fade, 1);
+      }
+      paintOrbRange(nRow, midRow, zFar, refZ, cx0, cy0, rpx, fade, now);
     } else {
-      drawStarBlob(cx0, cy0, rpx, starTempOf(i), fade);
+      for (r = 0; r < nRow; r++) {
+        row = exoRows[r];
+        if (!row.ok) continue;
+        if (!row.sel && row.z > starZc) drawExoOrb(row, cx0, cy0, rpx, fade, now);
+      }
     }
-    /* arrival pulse */
+    if (midRow < 0) {
+      if (parkStar) drawParkedShip(cx0, cy0, rpx, now, fade, -1);
+      drawHostOrb(i, cx0, cy0, rpx, fade, now, false);
+    } else {
+      if (parkMid) drawParkedShip(mx, my, mr, now, fade, -1);
+      drawExoOrb(exoRows[midRow], cx0, cy0, rpx, fade, now);
+    }
+    /* arrival pulse, around whatever the ship arrived at */
     if (starPulse && !reduced) {
       var kp = (now - starPulse) / 1400;
       if (kp < 1) {
         ctx.strokeStyle = gold();
         ctx.globalAlpha = 0.7 * (1 - kp) * fade;
         ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.arc(cx0, cy0, rpx + kp * 40, 0, 6.2832); ctx.stroke();
+        ctx.beginPath(); ctx.arc(mx, my, mr + kp * 40, 0, 6.2832); ctx.stroke();
         ctx.globalAlpha = 1;
       } else starPulse = 0;
     }
-    if (parked) drawParkedShip(cx0, cy0, rpx, now, fade, 1);
+    if (midRow >= 0) { if (parkMid) drawParkedShip(mx, my, mr, now, fade, 1); }
+    else if (parkStar) drawParkedShip(cx0, cy0, rpx, now, fade, 1);
 
     /* the near side, plus the selected planet whatever its illustrative phase */
-    for (r = 0; r < nRow; r++) strokeExoRing(exoRows[r], false, starZc, fade);
-    for (r = 0; r < nRow; r++) {
-      row = exoRows[r];
-      if (row.ok && (row.sel || row.z <= starZc)) drawExoOrb(row, cx0, cy0, rpx, fade, now);
+    if (midRow >= 0) {
+      for (r = 0; r < nRow; r++) strokeExoRing(exoRows[r], false, refZ, fade);
+      paintOrbRange(nRow, midRow, refZ, zNear, cx0, cy0, rpx, fade, now);
+      if (!starFar) {
+        if (parkStar) drawParkedShip(cx0, cy0, rpx, now, fade, -1);
+        drawHostOrb(i, cx0, cy0, rpx, fade, now, true);
+        if (parkStar) drawParkedShip(cx0, cy0, rpx, now, fade, 1);
+      }
+      paintOrbRange(nRow, midRow, zNear, -Infinity, cx0, cy0, rpx, fade, now);
+    } else {
+      for (r = 0; r < nRow; r++) strokeExoRing(exoRows[r], false, refZ, fade);
+      for (r = 0; r < nRow; r++) {
+        row = exoRows[r];
+        if (!row.ok) continue;
+        if (row.sel || row.z <= starZc) drawExoOrb(row, cx0, cy0, rpx, fade, now);
+      }
     }
     /* the discs this frame put on screen, so a label can give way to them */
     claimDisc(cx0, cy0, rpx);
@@ -9225,8 +10236,9 @@
        A1-10: and only on a frame where the planet it is about was really
        drawn ON SCREEN. An orb projected far outside the viewport left the
        plate captioning empty sky. */
-    if (selRow >= 0 && exoRows[selRow].ok && exoRows[selRow].er >= 11) {
-      row = exoRows[selRow];
+    var capRow = midRow >= 0 ? midRow : selRow;
+    if (capRow >= 0 && exoRows[capRow].ok && exoRows[capRow].er >= 11) {
+      row = exoRows[capRow];
       var onScr = row.x > -row.er && row.x < W + row.er &&
                   row.y > -row.er && row.y < H + row.er;
       if (heroCovJ !== row.j) { heroCovJ = row.j; heroCovHid = false; }
@@ -9244,7 +10256,14 @@
          threshold, to bring the sentence back. */
       if (heroCov > 0.85) heroCovHid = true;
       else if (heroCov <= 0.75) heroCovHid = false;
-      if (onScr && !heroCovHid) {
+      /* X4: while the anchor is still blending in, the hero is on its way to
+         the middle of the frame and can be anywhere on the way, including
+         under the parked ship's HUD lead, where the plate double-exposed
+         over "Drag to look around" for the first second of every arrival.
+         The sentence waits for the frame to settle. With no anchor in play
+         this is false and the shipped gate is untouched. */
+      var settling = anchorIdx() >= 0 && (!!anchorAnim || !!camAnim);
+      if (onScr && !heroCovHid && !settling) {
         captionPlate([
           'An impression drawn from its measured size and temperature.',
           'Nobody has seen this planet up close.'
@@ -9350,11 +10369,13 @@
       var i = sel.idx;
       if (starsPick && scrOk[i]) {
         drawTag(scrX[i], scrY[i], starName(i), gold(), 9, false);
-      } else if (centeredStar === i) {
+      } else if (centeredStar === i && !starCovered) {
         /* A1-5: the selected star keeps its ring and its name at EVERY zoom
            between the close-up and the point where the star field takes over.
            The old camD < 200 gate left it unmarked from 200 to 5,000 AU, which
-           is most of the way out of a system. */
+           is most of the way out of a system.
+           X3: unless its disc is entirely behind one of its own planets, where
+           the ring and the name are painted on that planet's face. */
         var P = PRJ;
         if (projectPt(starX[i], starY[i], starZ[i], P)) {
           drawTag(P.x, P.y, starName(i), gold(), Math.max(14, starOrbPx + 7), false);
@@ -9499,7 +10520,13 @@
        it is disclosing (the old D < 200 test would have gone quiet while the
        disc was still drawn). */
     var whisperA = sbScrim > 0.02 ? 0.78 : 0.45;
-    if (centeredStar >= 0 && lastOrbBlend > 0) {
+    /* X2: standing at one of these worlds the star IS to scale and the planet
+       is the thing drawn larger than life, so the whisper swaps with it. */
+    if (anchorDrawn && anchorOn()) {
+      ctx.font = '10px ' + FONT;
+      ctx.fillStyle = textColor(whisperA);
+      ctx.fillText('planet disc not to scale', (x0 + x1) / 2, y - 24);
+    } else if (centeredStar >= 0 && lastOrbBlend > 0) {
       ctx.font = '10px ' + FONT;
       ctx.fillStyle = textColor(whisperA);
       ctx.fillText('star disc not to scale', (x0 + x1) / 2, y - 24);
@@ -9897,7 +10924,12 @@
        screen-filling disc down to the one atlas sprite that keeps the star
        on screen at any zoom (D4). */
     if (centeredStar >= 0 && mode !== 'porkchop') drawCenteredStar(D, now, sa);
-    else { exoScr.length = 0; starOrbPx = 0; lastOrbBlend = 0; ringsOnScreen = false; }
+    /* X10: the anchor's own two frame flags reset with the rest of them, so
+       nothing can read last frame's answer on a frame that drew no scene. */
+    else {
+      exoScr.length = 0; starOrbPx = 0; lastOrbBlend = 0; ringsOnScreen = false;
+      anchorDrawn = false; anchorOrbPx = 0; starCovered = false;
+    }
     /* the S-star cluster, whenever the camera is close enough to Sgr A* to
        be looking at it. It owns no mode: it is a close-up like any other. */
     drawSgrA(now, bhSceneA());
@@ -9926,6 +10958,8 @@
 
     if (mode === 'intro') { introStep(nowMs); viewJD += dt * 10; }
     camStep(nowMs);
+    stepAnchor(nowMs);                   /* X1: the exoplanet-frame blend */
+    syncPhases(nowMs);                   /* X1: the illustrative-orbit clock */
 
     var job = curJob();
     if (job && !job.done) {
@@ -9958,6 +10992,7 @@
     if (mode === 'bhfall' && bhSt) bhStep(nowMs);
     syncFlightStatus(nowMs);             /* A2-6: after the step, so the phase is this frame's */
     stepZoom(dt);
+    stepExoDive();                       /* X3: after the zoom target is settled */
     if (mode !== lastMode) {
       lastMode = mode;
       syncFpBar();
@@ -10229,6 +11264,7 @@
           camAnim = null;
           cam.logD = clampN(cam.logD - Math.log(nd / pinchSt.d) / Math.LN10, minLogD(), MAX_LOGD);
           zoomTarget = cam.logD;
+          diveArm = true;                    /* X3 */
         }
       }
       pinchSt.d = nd;
@@ -10353,7 +11389,10 @@
     /* E6: a wheel tick during a fly-to takes the camera over from wherever it
        has actually reached, so nothing snaps */
     if (camAnim) { camAnim = null; zoomTarget = cam.logD; }
-    zoomTarget = clampN(zoomTarget + dy * 0.005 / Math.LN10, minLogD(), MAX_LOGD);
+    var wantLg = zoomTarget + dy * 0.005 / Math.LN10;
+    zoomTarget = clampN(wantLg, minLogD(), MAX_LOGD);
+    noteExoOver(dy, wantLg, zoomTarget);     /* X3 */
+    diveArm = true;
   }, { passive: false });
 
   /* ---------------- keyboard (one consumer per key per mode) ------------ */
@@ -10376,6 +11415,14 @@
     if (cardOpen() && bhEndGuarded()) return;
     if (cardOpen()) { closeCard(); return; }
     if (mode === 'shipidle') { exitShipIdle('esc'); return; }
+    /* X3: standing at an exoplanet, the step back is out to its system --
+       the same rung the card's own button offers, one key earlier than the
+       planner and the panel */
+    if (mode === 'explore' && anchorIdx() >= 0) {
+      releaseAnchor();
+      setStatus('Back to the system view.');
+      return;
+    }
     if (mode === 'porkchop') {
       if (pcCruise) { cancelPcCruise(); setStatus('Cruise cancelled.'); return; }
       exitPorkchop();
@@ -10434,13 +11481,18 @@
     if (mode === 'cruise' || mode === 'syscruise' || mode === 'bhfall') return;
     if (k === '+' || k === '=') {
       if (camAnim) { camAnim = null; zoomTarget = cam.logD; }
-      zoomTarget = clampN(zoomTarget - 0.15, minLogD(), MAX_LOGD);
+      var wantIn = zoomTarget - 0.15;
+      zoomTarget = clampN(wantIn, minLogD(), MAX_LOGD);
+      noteExoOver(-1, wantIn, zoomTarget);
+      diveArm = true;                        /* X3 */
       e.preventDefault();
       return;
     }
     if (k === '-' || k === '_') {
       if (camAnim) { camAnim = null; zoomTarget = cam.logD; }
       zoomTarget = clampN(zoomTarget + 0.15, minLogD(), MAX_LOGD);
+      exoOver = 0;
+      diveArm = true;                        /* X3 */
       e.preventDefault();
       return;
     }
@@ -12558,6 +13610,75 @@
       return exoScr.map(function (e) { return { j: e.j, x: e.x, y: e.y, r: e.r }; });
     },
     selExo: function () { return selExo; },
+    /* ---- X: the exoplanet anchor (2026-08-13) ----
+       exoAnchor()    {j, live, k, on, host, drawn, orbPx, starPx, anim,
+                      starCovered, name}
+                      j is what is set, `live` is -1 when the host is not the
+                      centered star (a stale anchor reads as absent)
+       exoDiscs()     one row per measured world after the X2 composition
+                      caps: {j, ok, mid, x, y, z, er, dot, name}
+       exoStandoff(j) the camera's distance from that world, in AU
+       anchorPos()    {x, y, z, a} the anchored world's true position, or null
+       exoSpan(j, D)  the drawn orbit in frames across, at camera distance D
+       exoPhase()     {ms, frozen, pause, hold} the illustrative-orbit clock
+       exoDive()      the two zoom thresholds, the over-zoom tally and the
+                      floor they play against
+       All read-only snapshots; nothing here is called by the page. */
+    exoAnchor: function () {
+      return { j: exoAnchor, live: anchorIdx(), k: exoAnchorK, on: anchorOn(),
+               host: anchorHostOf(exoAnchor), drawn: anchorDrawn,
+               orbPx: anchorOrbPx, starPx: starOrbPx, anim: !!anchorAnim,
+               starCovered: starCovered,
+               name: (exoAnchor >= 0 && SD && SD.planets) ? SD.planets.name[exoAnchor] : null };
+    },
+    /* X2: what the anchored composition caps actually left on screen. One
+       entry per measured world, in catalogue order, after both caps. */
+    exoDiscs: function () {
+      var out = [], r, row;
+      for (r = 0; r < exoRowN && r < exoRows.length; r++) {
+        row = exoRows[r];
+        if (!row || row.j < 0) continue;
+        out.push({ j: row.j, ok: !!row.ok, mid: !!row.mid, x: row.x, y: row.y,
+                   z: row.z, er: row.er, dot: row.dot,
+                   name: (SD && SD.planets) ? SD.planets.name[row.j] : null });
+      }
+      return out;
+    },
+    exoStandoff: function (j) { return exoStandoff(j | 0); },
+    anchorPos: function () {
+      var j = anchorIdx();
+      if (j < 0) return null;
+      var P = exoWorldPos(j, EXOW);
+      return P ? { x: P.x, y: P.y, z: P.z, a: P.a } : null;
+    },
+    exoSpan: function (j, D) {
+      var i = anchorHostOf(j | 0);
+      if (i < 0) return 0;
+      return exoSpan(i, j | 0, (typeof D === 'number' && D > 0) ? D : camD);
+    },
+    exoPhase: function () {
+      return { ms: phaseMs(performance.now()), frozen: phFrozen,
+               pause: phPause, hold: phasesHold() };
+    },
+    exoDive: function () {
+      return { dive: DIVE_SPAN, rise: RISE_SPAN, over: exoOver,
+               overMax: EXO_OVER, floor: minLogD() };
+    },
+    /* TEST ONLY: the drawn position of an exoplanet under given inputs, and
+       the size laws behind it, so a suite can check them against the
+       arithmetic they replaced without having to drive the camera into the
+       state that produces them. Nothing in the page calls these. */
+    exoPosAt: function (j, D, tMs, K) {
+      var i = anchorHostOf(j | 0);
+      if (i < 0) return null;
+      var P = exoPos(i, j | 0, D, tMs, K, EXOP2);
+      return P.ok ? { host: i, x: P.x, y: P.y, z: P.z, a: P.a, aDraw: P.aDraw,
+                      ph: P.ph, k: P.k, scale: exoRingScale(i, D, K),
+                      rpx: starOrbRadius(i, D), fpx: fpxOf(),
+                      sx: starX[i], sy: starY[i], sz: starZ[i],
+                      pxR: exoPxR(j | 0), orbCap: exoOrbCap(),
+                      want: orbWantPx(), truePx: starTruePx(i, D) } : null;
+    },
     /* ---- sweep fix round (A2) ----
        the planner's own clock: the grid anchor, the ship's date and the
        selected cell, so a harness can check a second leg cannot depart

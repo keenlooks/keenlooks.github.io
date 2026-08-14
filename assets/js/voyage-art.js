@@ -1391,6 +1391,15 @@
 
     if (big) {
       type = (fin(eqt) && eqt > 900) ? 'hotjup' : 'gas';
+    } else if (fin(eqt) && eqt >= 1300 && fin(rade) && rade <= 2.2) {
+      /* X12: the radius tiers used to be consulted before the temperature, so
+         a super-Earth just over the 1.8 line came out as a cool blue banded
+         world however hot it is. That put 55 Cnc e, a roughly 2,000 K world
+         whose own card quotes that temperature, on screen as a serene
+         mini-Neptune. Above 1300 K nothing that small holds a thick envelope,
+         so the temperature wins inside this narrow band (1.8 to 2.2 Earth
+         radii); everything outside it maps exactly as before. */
+      type = 'lava';
     } else if (mid) {
       type = 'neptunian';
     } else if (fin(eqt) && eqt > 1200) {
