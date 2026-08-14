@@ -31,9 +31,15 @@
                        control panel (see placeHint) it is re-centred in the
                        free strip beside it.
 
-   isTyping(e)       — true when a key event targets an input / textarea /
-                       select / contenteditable, so gadget keyboard
-                       shortcuts stay out of the way of typing.
+   isTyping(e)       — true when a key event belongs to the focused control,
+                       so gadget keyboard shortcuts stay out of its way.
+                       Text-entry fields (text/search/number/email/url/
+                       password/tel inputs, textarea, select, contenteditable)
+                       own every key. Non-text controls (range, checkbox,
+                       radio, buttons) own only their operating keys — arrows
+                       and Home/End/Page on a slider, Space on a checkbox —
+                       so page hotkeys like Space-to-pause and R-to-reset
+                       stay alive after a click lands focus on a slider.
 
    liveStatus(el)    — mirrors el's textContent into a visually-hidden
                        role="status" div appended to document.body, so a
@@ -243,7 +249,28 @@
     var t = e && e.target;
     if (!t) return false;
     var tag = (t.tagName || '').toLowerCase();
-    return tag === 'input' || tag === 'textarea' || tag === 'select' || !!t.isContentEditable;
+    if (tag === 'textarea' || tag === 'select' || !!t.isContentEditable) return true;
+    if (tag !== 'input') return false;
+    var ty = (t.type || 'text').toLowerCase();
+    var k = e.key;
+    /* Non-text inputs are not "typing", but each still owns its operating
+       keys: treating EVERY input as typing left page hotkeys dead after a
+       click on a slider (the gadget canvases preventDefault pointerdown, so
+       focus never left it), while handing a slider's arrows to the page
+       would steal the keys the control actually uses. */
+    if (ty === 'range') {
+      return k === 'ArrowLeft' || k === 'ArrowRight' || k === 'ArrowUp' || k === 'ArrowDown' ||
+             k === 'Home' || k === 'End' || k === 'PageUp' || k === 'PageDown';
+    }
+    if (ty === 'radio') {
+      return k === ' ' || k === 'ArrowLeft' || k === 'ArrowRight' || k === 'ArrowUp' || k === 'ArrowDown';
+    }
+    if (ty === 'checkbox') return k === ' ';
+    if (ty === 'button' || ty === 'submit' || ty === 'reset' || ty === 'file') {
+      return k === ' ' || k === 'Enter';
+    }
+    /* text, search, number, email, url, password, tel, date… : real typing */
+    return true;
   }
 
   function liveStatus(el) {

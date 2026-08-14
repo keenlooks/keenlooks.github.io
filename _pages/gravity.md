@@ -19,15 +19,6 @@ description: "An interactive full-screen 2D gravity sandbox by Keane Lucas: pick
       <button id="grav-collapse" class="grav-collapse" type="button" aria-label="Hide / show controls" title="Hide / show controls">&ndash;</button>
     </div>
     <div class="grav-panel__body" id="grav-panel-body">
-      <p class="grav-blurb">
-        Pick a <strong>mass</strong>, then <strong>click</strong> empty space to drop a body,
-        or <strong>drag and release</strong> to fling it into orbit. <strong>Click an existing body</strong>
-        to retarget its velocity (drag to aim, or click without dragging to stop it). Everything pulls on
-        everything else; bodies that collide <strong>merge</strong>. Tip: drop one heavy "sun," then lower
-        the mass and fling light planets around it.
-      </p>
-      <p class="grav-edu">Every pair attracts with F = G&middot;m&#8321;&middot;m&#8322;/r&sup2;.</p>
-
       <label class="grav-slider"><span>Mass: <strong id="grav-mass-val" class="editable-val" data-range="grav-mass">400</strong></span>
         <input id="grav-mass" type="range" min="5" max="10000" step="5" value="400"></label>
       <label class="grav-slider"><span>Speed: <strong id="grav-speed-val" class="editable-val" data-range="grav-speed">1.00&times;</strong></span>
@@ -50,11 +41,21 @@ description: "An interactive full-screen 2D gravity sandbox by Keane Lucas: pick
         <button id="grav-snap" class="grav-btn" type="button" title="Download the scene as a PNG">Save image</button>
       </div>
 
+      <p class="grav-status-line"><span id="grav-status">0 bodies</span></p>
+
+      <p class="grav-blurb">
+        Pick a <strong>mass</strong>, then <strong>click</strong> empty space to drop a body,
+        or <strong>drag and release</strong> to fling it into orbit. <strong>Click an existing body</strong>
+        to retarget its velocity (drag to aim, or click without dragging to stop it). Everything pulls on
+        everything else; bodies that collide <strong>merge</strong>. Tip: drop one heavy "sun," then lower
+        the mass and fling light planets around it.
+      </p>
+      <p class="grav-edu">Every pair attracts with F = G&middot;m&#8321;&middot;m&#8322;/r&sup2;.</p>
       <p class="grav-hint">
         <strong>Click a body</strong>: retarget / stop it &middot; <strong>Right-click</strong> (or press and hold) a body: delete &middot;
-        <strong>Right-drag</strong>: pan &middot; <strong>Scroll / pinch</strong>: zoom
+        <strong>Right-drag</strong>: pan &middot; <strong>Scroll / pinch</strong>: zoom &middot;
+        <strong>Space</strong>: pause &middot; <strong>R</strong>: reset view
       </p>
-      <p class="grav-status-line"><span id="grav-status">0 bodies</span></p>
     </div>
   </div>
 </div>
@@ -113,6 +114,61 @@ html[data-theme="light"] .grav-panel { background: rgba(255,255,255,0.97); borde
 @media screen and (max-width: 768px) {
   /* the corner buttons are raised to bottom: 4rem here, so give them more room */
   .grav-panel { max-height: calc(100vh - 12.5rem); max-height: calc(100dvh - 12.5rem); }
+}
+
+/* ---- scroll cues (voyage pattern): the panel is height-capped and scrolls,
+   and on short viewports the overlay scrollbar hid that. Two cues: a thin
+   scrollbar that stays drawn while scrollable, and a soft bottom fade driven
+   by a scroll timeline (off when the panel fits, gone at the end). ---- */
+@media (pointer: fine) {
+  .grav-panel::-webkit-scrollbar { width: 9px; }
+  .grav-panel::-webkit-scrollbar-track { background: transparent; }
+  .grav-panel::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.26); border-radius: 5px; }
+  .grav-panel:hover::-webkit-scrollbar-thumb,
+  .grav-panel:focus-within::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.46); }
+}
+@supports not selector(::-webkit-scrollbar) {
+  .grav-panel { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.30) transparent; }
+}
+@keyframes grav-scrollcue { from { opacity: 1; } to { opacity: 0; } }
+.grav-panel::after {
+  content: ''; display: block; pointer-events: none;
+  position: sticky; bottom: 0; height: 1.55rem;
+  /* negative TOP margin matching the height: a negative bottom margin would
+     add phantom scroll height and switch the cue on over panels that fit */
+  margin: -1.55rem -1rem 0;
+  background: linear-gradient(to bottom, rgba(12,12,12,0), rgba(12,12,12,0.40));
+  opacity: 0;
+  /* longhands + `nearest` on purpose: the shorthand resets animation-timeline,
+     and scroll(self) resolves against the pseudo-element */
+  animation-name: grav-scrollcue;
+  animation-duration: auto;
+  animation-timing-function: linear;
+  animation-fill-mode: both;
+  animation-timeline: scroll(nearest block);
+  animation-range: calc(100% - 2.5rem) 100%;
+}
+.grav-panel--collapsed::after { display: none; }
+/* light theme fades to a soft DARK shadow, never white-on-white */
+html[data-theme="light"] .grav-panel::after { background: linear-gradient(to bottom, rgba(30,32,38,0), rgba(30,32,38,0.30)); }
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .grav-panel::after { background: linear-gradient(to bottom, rgba(30,32,38,0), rgba(30,32,38,0.30)); }
+}
+@media (pointer: fine) {
+  html[data-theme="light"] .grav-panel::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.24); }
+  html[data-theme="light"] .grav-panel:hover::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.44); }
+}
+@media (pointer: fine) and (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .grav-panel::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.24); }
+  html:not([data-theme="dark"]) .grav-panel:hover::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.44); }
+}
+@supports not selector(::-webkit-scrollbar) {
+  html[data-theme="light"] .grav-panel { scrollbar-color: rgba(0,0,0,0.28) transparent; }
+}
+@supports not selector(::-webkit-scrollbar) {
+  @media (prefers-color-scheme: light) {
+    html:not([data-theme="dark"]) .grav-panel { scrollbar-color: rgba(0,0,0,0.28) transparent; }
+  }
 }
 
 .grav-panel__head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }

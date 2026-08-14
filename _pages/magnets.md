@@ -19,14 +19,6 @@ description: "An interactive full-screen magnetic-field sandbox by Keane Lucas: 
       <button id="mag-collapse" class="mag-collapse" type="button" aria-label="Hide / show controls" title="Hide / show controls">&ndash;</button>
     </div>
     <div class="mag-panel__body" id="mag-panel-body">
-      <p class="mag-blurb">
-        <strong>Click</strong> empty space to drop a bar magnet. <strong>Drag the middle</strong>
-        to move it, <strong>drag an end</strong> to spin it. Each has a north (red) and south (blue)
-        pole; field lines leave the north and curl into the south. Bring opposite poles together and
-        they <strong>snap</strong> into a stronger magnet; line up like poles and they shove apart.
-      </p>
-      <p class="mag-edu">Each magnet is modelled as two point poles; real magnets are continuous dipoles, but the field pattern matches.</p>
-
       <label class="mag-slider"><span>New magnet strength: <strong id="mag-strength-val" class="editable-val" data-range="mag-strength">3.0</strong></span>
         <input id="mag-strength" type="range" min="1" max="9" step="0.5" value="3"></label>
       <label class="mag-slider"><span>Field lines: <strong id="mag-lines-val" class="editable-val" data-range="mag-lines">12</strong></span>
@@ -43,11 +35,19 @@ description: "An interactive full-screen magnetic-field sandbox by Keane Lucas: 
         <button id="mag-clear" class="mag-btn" type="button">Clear</button>
       </div>
 
+      <p class="mag-status-line"><span id="mag-status">0 magnets</span></p>
+
+      <p class="mag-blurb">
+        <strong>Click</strong> empty space to drop a bar magnet. <strong>Drag the middle</strong>
+        to move it, <strong>drag an end</strong> to spin it. Each has a north (red) and south (blue)
+        pole; field lines leave the north and curl into the south. Bring opposite poles together and
+        they <strong>snap</strong> into a stronger magnet; line up like poles and they shove apart.
+      </p>
+      <p class="mag-edu">Each magnet is modelled as two point poles; real magnets are continuous dipoles, but the field pattern matches.</p>
       <p class="mag-hint">
         <strong>Right-click</strong> (or press and hold) a magnet: delete &middot;
         <strong>Scroll</strong> over one, or <strong>tap</strong> it for + / &minus; buttons: change its strength
       </p>
-      <p class="mag-status-line"><span id="mag-status">0 magnets</span></p>
     </div>
   </div>
 </div>
@@ -103,6 +103,61 @@ html[data-theme="light"] .mag-panel { background: rgba(255,255,255,0.97); border
 @media screen and (max-width: 768px) {
   /* the corner buttons are raised to bottom: 4rem here, so give them more room */
   .mag-panel { max-height: calc(100vh - 12.5rem); max-height: calc(100dvh - 12.5rem); }
+}
+
+/* ---- scroll cues (voyage pattern): the panel is height-capped and scrolls,
+   and on short viewports the overlay scrollbar hid that. Two cues: a thin
+   scrollbar that stays drawn while scrollable, and a soft bottom fade driven
+   by a scroll timeline (off when the panel fits, gone at the end). ---- */
+@media (pointer: fine) {
+  .mag-panel::-webkit-scrollbar { width: 9px; }
+  .mag-panel::-webkit-scrollbar-track { background: transparent; }
+  .mag-panel::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.26); border-radius: 5px; }
+  .mag-panel:hover::-webkit-scrollbar-thumb,
+  .mag-panel:focus-within::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.46); }
+}
+@supports not selector(::-webkit-scrollbar) {
+  .mag-panel { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.30) transparent; }
+}
+@keyframes mag-scrollcue { from { opacity: 1; } to { opacity: 0; } }
+.mag-panel::after {
+  content: ''; display: block; pointer-events: none;
+  position: sticky; bottom: 0; height: 1.55rem;
+  /* negative TOP margin matching the height: a negative bottom margin would
+     add phantom scroll height and switch the cue on over panels that fit */
+  margin: -1.55rem -1rem 0;
+  background: linear-gradient(to bottom, rgba(12,12,12,0), rgba(12,12,12,0.40));
+  opacity: 0;
+  /* longhands + `nearest` on purpose: the shorthand resets animation-timeline,
+     and scroll(self) resolves against the pseudo-element */
+  animation-name: mag-scrollcue;
+  animation-duration: auto;
+  animation-timing-function: linear;
+  animation-fill-mode: both;
+  animation-timeline: scroll(nearest block);
+  animation-range: calc(100% - 2.5rem) 100%;
+}
+.mag-panel--collapsed::after { display: none; }
+/* light theme fades to a soft DARK shadow, never white-on-white */
+html[data-theme="light"] .mag-panel::after { background: linear-gradient(to bottom, rgba(30,32,38,0), rgba(30,32,38,0.30)); }
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .mag-panel::after { background: linear-gradient(to bottom, rgba(30,32,38,0), rgba(30,32,38,0.30)); }
+}
+@media (pointer: fine) {
+  html[data-theme="light"] .mag-panel::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.24); }
+  html[data-theme="light"] .mag-panel:hover::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.44); }
+}
+@media (pointer: fine) and (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .mag-panel::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.24); }
+  html:not([data-theme="dark"]) .mag-panel:hover::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.44); }
+}
+@supports not selector(::-webkit-scrollbar) {
+  html[data-theme="light"] .mag-panel { scrollbar-color: rgba(0,0,0,0.28) transparent; }
+}
+@supports not selector(::-webkit-scrollbar) {
+  @media (prefers-color-scheme: light) {
+    html:not([data-theme="dark"]) .mag-panel { scrollbar-color: rgba(0,0,0,0.28) transparent; }
+  }
 }
 
 .mag-panel__head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }

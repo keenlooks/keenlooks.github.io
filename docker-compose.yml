@@ -12,6 +12,10 @@
 # http://0.0.0.0:4000, which the browser can't load, breaking all CSS/JS. Building
 # with root-relative URLs (see _config.docker.yml) and serving the static output
 # avoids that entirely.
+#
+# The WEBrick server below also maps extensionless permalinks (e.g.
+# /publications/2019-06-01-creating-xbd) to their foo.html files, the way GitHub
+# Pages does, so publication/talk detail links work on the local preview too.
 services:
   site:
     image: ruby:2.7
@@ -27,7 +31,14 @@ services:
       --config _config.yml,_config.dev.yml,_config.docker.yml --destination _site & ) &&
       ( until [ -f _site/index.html ]; do sleep 2; done ) &&
       echo '>>> Site ready at http://localhost:4000' &&
-      ruby -run -e httpd -- _site --port=4000 --bind-address=0.0.0.0 --do-not-reverse-lookup"
+      ruby -e 'require %q{webrick};
+      root = File.expand_path(%q{_site});
+      cb = lambda{|req,res| pt = File.join(root, req.path);
+      req.instance_variable_set(:@path, req.path + %q{.html}) if
+      !req.path.end_with?(%q{/}) && !File.exist?(pt) && File.file?(pt + %q{.html})};
+      s = WEBrick::HTTPServer.new(:Port=>4000, :BindAddress=>%q{0.0.0.0},
+      :DocumentRoot=>root, :DoNotReverseLookup=>true, :RequestCallback=>cb);
+      trap(%q{INT}){ s.shutdown }; s.start'"
     ports:
       - "4000:4000"
     volumes:

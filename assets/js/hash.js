@@ -246,7 +246,8 @@
       ctx.drawImage(acc, 0, 0, W, H);
       ctx.restore();
     }
-    ctx.font = '600 ' + Math.max(15, Math.min(22, W / 34)) + 'px "Source Sans 3", system-ui, sans-serif';
+    var headFs = Math.max(15, Math.min(22, W / 34));
+    ctx.font = '600 ' + headFs + 'px "Source Sans 3", system-ui, sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.fillStyle = textColor(0.75);
     var head = found
       ? 'Collision found after ' + found.tries.toLocaleString() + ' inputs'
@@ -289,9 +290,11 @@
       ctx.fillStyle = textColor(0.5);
       ctx.fillText('two different inputs, identical checksum', W / 2, yb + 46);
     } else if (!searching && tries === 0) {
+      /* idle landing (reduced-motion visitors see this first): sit the
+         instruction fully below the header line, never overlapping it */
       ctx.font = Math.max(13, W / 64) + 'px "Source Sans 3", system-ui, sans-serif';
       ctx.fillStyle = textColor(0.55); ctx.textBaseline = 'top';
-      ctx.fillText('Press “Find a collision”: each dot is one input’s 32-bit CRC.', W / 2, 160);
+      ctx.fillText('Press “Find a collision”: each dot is one input’s 32-bit CRC.', W / 2, 146 + headFs * 1.6);
     }
   }
 
@@ -305,7 +308,13 @@
     if (view === 'collide') drawCollide(now); else drawResult(now);
   }
 
-  canvas.addEventListener('pointerdown', function (e) { if (view === 'result') { flipOneChar(); e.preventDefault(); } });
+  canvas.addEventListener('pointerdown', function (e) {
+    /* take focus off any panel control so hotkeys (R) work after a canvas
+       click even when preventDefault suppresses the focus transfer */
+    if (document.activeElement && document.activeElement !== document.body &&
+        document.activeElement.blur) document.activeElement.blur();
+    if (view === 'result') { flipOneChar(); e.preventDefault(); }
+  });
   if (elFlip) elFlip.addEventListener('click', flipOneChar);
   if (elFind) elFind.addEventListener('click', function () { resetSearch(); searching = true; });
   if (elText) elText.addEventListener('input', rehash);

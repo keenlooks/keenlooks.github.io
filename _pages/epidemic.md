@@ -19,15 +19,6 @@ description: "An interactive epidemic simulator by Keane Lucas: every cell is a 
       <button id="epi-collapse" class="epi-collapse" type="button" aria-label="Hide / show controls" title="Hide / show controls">&ndash;</button>
     </div>
     <div class="epi-panel__body" id="epi-panel-body">
-      <p class="epi-blurb">
-        Every cell is a person. Each day, the <strong style="color:#c4574a">infected</strong> cells pass it
-        to nearby susceptible cells with the transmission chance you set, then they recover and become
-        immune. <strong>Click or drag</strong> to start infections and watch the case curve along the bottom.
-        If you vaccinate enough of the grid first, an outbreak often can't spread, which is roughly what
-        herd immunity means. The vaccinated slider works while it's running, and you can also paint
-        vaccinated regions directly.
-      </p>
-
       <label class="epi-slider"><span>Transmission chance: <strong id="epi-trans-val" class="editable-val" data-range="epi-trans">10%</strong></span>
         <input id="epi-trans" type="range" min="1" max="50" step="1" value="10"></label>
       <label class="epi-slider"><span>Days infectious: <strong id="epi-dur-val" class="editable-val" data-range="epi-dur">10</strong></span>
@@ -52,6 +43,15 @@ description: "An interactive epidemic simulator by Keane Lucas: every cell is a 
       </div>
 
       <p class="epi-status-line"><span id="epi-status"></span></p>
+
+      <p class="epi-blurb">
+        Every cell is a person. Each day, the <strong style="color:#c4574a">infected</strong> cells pass it
+        to nearby susceptible cells with the transmission chance you set, then they recover and become
+        immune. <strong>Click or drag</strong> to start infections and watch the case curve along the bottom.
+        If you vaccinate enough of the grid first, an outbreak often can't spread, which is roughly what
+        herd immunity means. The vaccinated slider works while it's running, and you can also paint
+        vaccinated regions directly.
+      </p>
     </div>
   </div>
 </div>
@@ -107,6 +107,61 @@ html[data-theme="light"] .epi-panel { background: rgba(255,255,255,0.97); border
 @media screen and (max-width: 768px) {
   /* the corner buttons are raised to bottom: 4rem here, so give them more room */
   .epi-panel { max-height: calc(100vh - 12.5rem); max-height: calc(100dvh - 12.5rem); }
+}
+
+/* ---- scroll cues (voyage pattern): the panel is height-capped and scrolls,
+   and on short viewports the overlay scrollbar hid that. Two cues: a thin
+   scrollbar that stays drawn while scrollable, and a soft bottom fade driven
+   by a scroll timeline (off when the panel fits, gone at the end). ---- */
+@media (pointer: fine) {
+  .epi-panel::-webkit-scrollbar { width: 9px; }
+  .epi-panel::-webkit-scrollbar-track { background: transparent; }
+  .epi-panel::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.26); border-radius: 5px; }
+  .epi-panel:hover::-webkit-scrollbar-thumb,
+  .epi-panel:focus-within::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.46); }
+}
+@supports not selector(::-webkit-scrollbar) {
+  .epi-panel { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.30) transparent; }
+}
+@keyframes epi-scrollcue { from { opacity: 1; } to { opacity: 0; } }
+.epi-panel::after {
+  content: ''; display: block; pointer-events: none;
+  position: sticky; bottom: 0; height: 1.55rem;
+  /* negative TOP margin matching the height: a negative bottom margin would
+     add phantom scroll height and switch the cue on over panels that fit */
+  margin: -1.55rem -1rem 0;
+  background: linear-gradient(to bottom, rgba(12,12,12,0), rgba(12,12,12,0.40));
+  opacity: 0;
+  /* longhands + `nearest` on purpose: the shorthand resets animation-timeline,
+     and scroll(self) resolves against the pseudo-element */
+  animation-name: epi-scrollcue;
+  animation-duration: auto;
+  animation-timing-function: linear;
+  animation-fill-mode: both;
+  animation-timeline: scroll(nearest block);
+  animation-range: calc(100% - 2.5rem) 100%;
+}
+.epi-panel--collapsed::after { display: none; }
+/* light theme fades to a soft DARK shadow, never white-on-white */
+html[data-theme="light"] .epi-panel::after { background: linear-gradient(to bottom, rgba(30,32,38,0), rgba(30,32,38,0.30)); }
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .epi-panel::after { background: linear-gradient(to bottom, rgba(30,32,38,0), rgba(30,32,38,0.30)); }
+}
+@media (pointer: fine) {
+  html[data-theme="light"] .epi-panel::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.24); }
+  html[data-theme="light"] .epi-panel:hover::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.44); }
+}
+@media (pointer: fine) and (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .epi-panel::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.24); }
+  html:not([data-theme="dark"]) .epi-panel:hover::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.44); }
+}
+@supports not selector(::-webkit-scrollbar) {
+  html[data-theme="light"] .epi-panel { scrollbar-color: rgba(0,0,0,0.28) transparent; }
+}
+@supports not selector(::-webkit-scrollbar) {
+  @media (prefers-color-scheme: light) {
+    html:not([data-theme="dark"]) .epi-panel { scrollbar-color: rgba(0,0,0,0.28) transparent; }
+  }
 }
 
 .epi-panel__head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }

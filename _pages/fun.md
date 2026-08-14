@@ -22,7 +22,7 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h14l-8 16"></path><path d="M3 20.5 L4.5 19" stroke-opacity="0.5"></path><path d="M20 8.5 L21.5 7" stroke-opacity="0.5"></path><path d="M19 16 L20.5 14.5" stroke-opacity="0.5"></path></svg>
     </div>
     <div class="xp-card__body">
-      <h2 class="xp-card__title">Fool a Neural Network</h2>
+      <h3 class="xp-card__title">Fool a Neural Network</h3>
       <p class="xp-card__desc">Add a sliver of carefully aimed noise to a digit and watch a neural network change its answer, while the image looks unchanged.</p>
     </div>
   </a>
@@ -32,7 +32,7 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2c2.5 2 3.5 5 3.5 8 0 2-0.5 3.5-1 4.5h-5c-0.5-1-1-2.5-1-4.5 0-3 1-6 3.5-8z"></path><circle cx="12" cy="9" r="1.4" fill="currentColor" stroke="none"></circle><path d="M9.5 14.5 L7 18 M14.5 14.5 L17 18"></path><path d="M10.5 15 L12 20 L13.5 15" stroke-opacity="0.5"></path></svg>
     </div>
     <div class="xp-card__body">
-      <h2 class="xp-card__title">Rocket Lander</h2>
+      <h3 class="xp-card__title">Rocket Lander</h3>
       <p class="xp-card__desc">A reinforcement-learning agent lands a rocket. Change gravity, wind, or the pad and watch it cope.</p>
     </div>
   </a>
@@ -42,7 +42,7 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="16.5" width="4" height="4" rx="1" fill="currentColor" stroke="none" opacity="0.55"></rect><rect x="9" y="16.5" width="4" height="4" rx="1" fill="currentColor" stroke="none" opacity="0.55"></rect><rect x="15.5" y="16.5" width="4" height="4" rx="1" fill="currentColor" stroke="none"></rect><path d="M17.5 14.5 Q10.5 5 4.5 14.5"></path><path d="M17.5 14.5 Q14.5 9 11 14.5" stroke-opacity="0.5"></path></svg>
     </div>
     <div class="xp-card__body">
-      <h2 class="xp-card__title">Tiny Transformer</h2>
+      <h3 class="xp-card__title">Tiny Transformer</h3>
       <p class="xp-card__desc">A tiny language model writes Shakespeare one character at a time, with its attention heads on display.</p>
     </div>
   </a>
@@ -52,7 +52,7 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="4.5" cy="19.5" r="2" fill="currentColor" stroke="none"></circle><circle cx="9.5" cy="14.5" r="2" fill="currentColor" stroke="none"></circle><circle cx="14.5" cy="9.5" r="2" fill="currentColor" stroke="none"></circle><circle cx="19.5" cy="4.5" r="2" fill="currentColor" stroke="none"></circle><circle cx="9.5" cy="19.5" r="2" stroke-opacity="0.55"></circle><circle cx="14.5" cy="19.5" r="2" stroke-opacity="0.55"></circle><circle cx="14.5" cy="14.5" r="2" stroke-opacity="0.55"></circle></svg>
     </div>
     <div class="xp-card__body">
-      <h2 class="xp-card__title">Four in a Row</h2>
+      <h3 class="xp-card__title">Four in a Row</h3>
       <p class="xp-card__desc">Play against a neural network and watch its search tree grow while it decides on a move.</p>
     </div>
   </a>
@@ -62,7 +62,7 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5 L7.5 11 L16.5 11 Z"></path><path d="M7.5 11 L5.5 19 M16.5 11 L18.5 19"></path><circle cx="12" cy="5" r="1.4" fill="currentColor" stroke="none"></circle><circle cx="5.5" cy="19" r="1.4" fill="currentColor" stroke="none"></circle><circle cx="18.5" cy="19" r="1.4" fill="currentColor" stroke="none"></circle></svg>
     </div>
     <div class="xp-card__body">
-      <h2 class="xp-card__title">Evolving Creatures</h2>
+      <h3 class="xp-card__title">Evolving Creatures</h3>
       <p class="xp-card__desc">Design a creature from dots and springs, then watch evolution teach it to walk.</p>
     </div>
   </a>
@@ -79,7 +79,7 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><rect x="9" y="2" width="6" height="6" rx="1"></rect><rect x="16" y="9" width="6" height="6" rx="1"></rect><rect x="2" y="16" width="6" height="6" rx="1"></rect><rect x="9" y="16" width="6" height="6" rx="1"></rect><rect x="16" y="16" width="6" height="6" rx="1"></rect></svg>
     </div>
     <div class="xp-card__body">
-      <h2 class="xp-card__title">Conway's Game of Life</h2>
+      <h3 class="xp-card__title">Conway's Game of Life</h3>
       <p class="xp-card__desc">A full-screen cellular automaton you can draw on. Change the rules or drop in classic patterns.</p>
     </div>
   </a>
@@ -89,7 +89,7 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="2.4"></circle><circle cx="6" cy="8" r="1.5" opacity="0.6"></circle><circle cx="18" cy="7" r="1.5" opacity="0.6"></circle><circle cx="5" cy="16" r="1.5" opacity="0.6"></circle><circle cx="17" cy="17" r="1.5" opacity="0.6"></circle><circle cx="12" cy="4.5" r="1.2" opacity="0.35"></circle><circle cx="20" cy="12" r="1.2" opacity="0.35"></circle><circle cx="4" cy="12" r="1.2" opacity="0.35"></circle><circle cx="12" cy="20" r="1.2" opacity="0.35"></circle></svg>
     </div>
     <div class="xp-card__body">
-      <h2 class="xp-card__title">Epidemic</h2>
+      <h3 class="xp-card__title">Epidemic</h3>
       <p class="xp-card__desc">Every cell is a person. Start an outbreak, tune how it spreads, then vaccinate and watch herd immunity.</p>
     </div>
   </a>
@@ -99,7 +99,7 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="9" y1="3" x2="7" y2="21"></line><line x1="17" y1="3" x2="15" y2="21"></line><line x1="4" y1="9" x2="20" y2="9"></line><line x1="3.5" y1="15" x2="19.5" y2="15"></line></svg>
     </div>
     <div class="xp-card__body">
-      <h2 class="xp-card__title">Hashes &amp; Collisions</h2>
+      <h3 class="xp-card__title">Hashes &amp; Collisions</h3>
       <p class="xp-card__desc">Watch SHA-256's avalanche effect, then find a real CRC32 collision in a fraction of a second.</p>
     </div>
   </a>
@@ -109,7 +109,7 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="13" r="6"></circle><line x1="9" y1="13" x2="13.5" y2="9"></line><circle cx="13.5" cy="9" r="3" stroke-opacity="0.7"></circle><line x1="13.5" y1="9" x2="16.4" y2="8.2"></line><circle cx="16.4" cy="8.2" r="1.3" fill="currentColor" stroke="none"></circle><path d="M16.4 8.2 c 3.4 1.6 4 6 1.4 9.4" stroke-opacity="0.45"></path></svg>
     </div>
     <div class="xp-card__body">
-      <h2 class="xp-card__title">Fourier Drawing Machine</h2>
+      <h3 class="xp-card__title">Fourier Drawing Machine</h3>
       <p class="xp-card__desc">Draw any shape and a chain of rotating circles traces it back.</p>
     </div>
   </a>
@@ -119,7 +119,7 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><rect x="2.5" y="15" width="2.8" height="6" rx="0.6" opacity="0.5"></rect><rect x="7" y="14" width="2.8" height="7" rx="0.6" opacity="0.5"></rect><rect x="11.5" y="5" width="2.8" height="16" rx="0.6"></rect><rect x="16" y="14.5" width="2.8" height="6.5" rx="0.6" opacity="0.5"></rect><rect x="20.5" y="15" width="2.8" height="6" rx="0.6" opacity="0.5"></rect></svg>
     </div>
     <div class="xp-card__body">
-      <h2 class="xp-card__title">Timing Attack</h2>
+      <h3 class="xp-card__title">Timing Attack</h3>
       <p class="xp-card__desc">Recover a hidden token character by character, using nothing but how long each guess takes to reject.</p>
     </div>
   </a>
@@ -129,7 +129,7 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="5" r="1.7" opacity="0.35"></circle><circle cx="12" cy="5" r="1.7" opacity="0.35"></circle><circle cx="19" cy="5" r="1.7" opacity="0.35"></circle><circle cx="5" cy="12" r="1.7" opacity="0.35"></circle><circle cx="12" cy="12" r="1.7"></circle><circle cx="19" cy="12" r="1.7" opacity="0.6"></circle><circle cx="5" cy="19" r="1.7" opacity="0.35"></circle><circle cx="12" cy="19" r="1.7" opacity="0.6"></circle><circle cx="19" cy="19" r="1.7" opacity="0.35"></circle></svg>
     </div>
     <div class="xp-card__body">
-      <h2 class="xp-card__title">Base Rates</h2>
+      <h3 class="xp-card__title">Base Rates</h3>
       <p class="xp-card__desc">Test 10,000 people at once and see why a positive result on an accurate test is usually a false alarm.</p>
     </div>
   </a>
@@ -139,7 +139,7 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="7" y="7" width="10" height="10" rx="1.5"></rect><path d="M10 7V4 M14 7V4 M10 20v-3 M14 20v-3 M7 10H4 M7 14H4 M20 10h-3 M20 14h-3"></path></svg>
     </div>
     <div class="xp-card__body">
-      <h2 class="xp-card__title">The Visible Computer</h2>
+      <h3 class="xp-card__title">The Visible Computer</h3>
       <p class="xp-card__desc">A small 8-bit computer drawn as a living circuit board you can program.</p>
     </div>
   </a>
@@ -156,7 +156,7 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"></circle><ellipse cx="12" cy="12" rx="9.5" ry="4.6" transform="rotate(-22 12 12)"></ellipse><circle cx="20" cy="8.4" r="1.7" fill="currentColor" stroke="none"></circle></svg>
     </div>
     <div class="xp-card__body">
-      <h2 class="xp-card__title">Gravity Sandbox</h2>
+      <h3 class="xp-card__title">Gravity Sandbox</h3>
       <p class="xp-card__desc">Fling masses into orbit and watch Newtonian gravity pull them together, merge, and trace long paths.</p>
     </div>
   </a>
@@ -166,7 +166,7 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3 H4 v7 a8 8 0 0 0 16 0 V3 h-3 v7 a5 5 0 0 1 -10 0 Z"></path><path d="M4 6.5 H7"></path><path d="M17 6.5 H20"></path></svg>
     </div>
     <div class="xp-card__body">
-      <h2 class="xp-card__title">Magnetic Field</h2>
+      <h3 class="xp-card__title">Magnetic Field</h3>
       <p class="xp-card__desc">Drop bar magnets and watch their field lines weave; opposite poles snap together, like poles repel.</p>
     </div>
   </a>
@@ -176,7 +176,7 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 L8 12 L15 18"></path><circle cx="12" cy="3" r="1.2" fill="currentColor" stroke="none"></circle><circle cx="8" cy="12" r="2" fill="currentColor" stroke="none"></circle><circle cx="15" cy="18" r="2.4" fill="currentColor" stroke="none"></circle></svg>
     </div>
     <div class="xp-card__body">
-      <h2 class="xp-card__title">Double Pendulum</h2>
+      <h3 class="xp-card__title">Double Pendulum</h3>
       <p class="xp-card__desc">Two pendulums start a hair apart and end up with nothing in common. Chaos, on screen.</p>
     </div>
   </a>
@@ -186,7 +186,7 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="15" r="5.5" stroke-opacity="0.5"></circle><circle cx="9" cy="15" r="1.1" fill="currentColor" stroke="none"></circle><circle cx="13" cy="11.3" r="1.4" fill="currentColor" stroke="none"></circle><path d="M13 11.3 L19 4.8" stroke-opacity="0.6" stroke-dasharray="2 2"></path><path d="M19.5 3.2 l0.7 1.6 1.6 0.7 -1.6 0.7 -0.7 1.6 -0.7 -1.6 -1.6 -0.7 1.6 -0.7 Z" fill="currentColor" stroke="none"></path></svg>
     </div>
     <div class="xp-card__body">
-      <h2 class="xp-card__title">Mission to Anywhere</h2>
+      <h3 class="xp-card__title">Mission to Anywhere</h3>
       <p class="xp-card__desc">Plan a trip to any planet or any real star, and see what relativity does to the clocks.</p>
     </div>
   </a>
@@ -203,7 +203,7 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"></path><path d="M6 15c3-1 5.5-6.5 9-9"></path><circle cx="15" cy="6" r="1.6" fill="currentColor" stroke="none"></circle></svg>
     </div>
     <div class="xp-card__body">
-      <h2 class="xp-card__title">Bonds &amp; Interest Rates</h2>
+      <h3 class="xp-card__title">Bonds &amp; Interest Rates</h3>
       <p class="xp-card__desc">Why a bond's price falls when rates rise. Drag the rate and watch today's price move.</p>
     </div>
   </a>
@@ -213,7 +213,7 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="6" width="3.5" height="15" rx="1"></rect><rect x="8.5" y="9.5" width="3.5" height="11.5" rx="1"></rect><rect x="14" y="13" width="3.5" height="8" rx="1"></rect><rect x="19.5" y="16.5" width="3.5" height="4.5" rx="1"></rect></svg>
     </div>
     <div class="xp-card__body">
-      <h2 class="xp-card__title">Where Loan Payments Go</h2>
+      <h3 class="xp-card__title">Where Loan Payments Go</h3>
       <p class="xp-card__desc">How each payment splits between interest and principal, and why paying extra early saves a lot.</p>
     </div>
   </a>
@@ -223,7 +223,7 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3 L21 11.4"></path><path d="M3 21 L21 12.6"></path><path d="M3 12 L21 12" stroke-opacity="0.45"></path></svg>
     </div>
     <div class="xp-card__body">
-      <h2 class="xp-card__title">Diversification &amp; Risk</h2>
+      <h3 class="xp-card__title">Diversification &amp; Risk</h3>
       <p class="xp-card__desc">Why holding many investments narrows outcomes while keeping the upside, and how fees skim the top.</p>
     </div>
   </a>
@@ -240,7 +240,7 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2v14a2 2 0 0 0 2 2h14"></path><path d="M18 22V8a2 2 0 0 0-2-2H2"></path></svg>
     </div>
     <div class="xp-card__body">
-      <h2 class="xp-card__title">Image Studio</h2>
+      <h3 class="xp-card__title">Image Studio</h3>
       <p class="xp-card__desc">Cut out backgrounds, resize to a target file size, crop, rotate, strip EXIF, or make a favicon pack. All in your browser.</p>
     </div>
   </a>
@@ -250,7 +250,7 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h7l4 4v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"></path><path d="M14 3v4h4"></path><rect x="9" y="13" width="6" height="3.4" rx="0.5" fill="currentColor" stroke="none"></rect></svg>
     </div>
     <div class="xp-card__body">
-      <h2 class="xp-card__title">PDF Toolbench</h2>
+      <h3 class="xp-card__title">PDF Toolbench</h3>
       <p class="xp-card__desc">Merge, split, reorder, rotate, redact, sign, and fill PDFs. Private and in-browser; nothing is uploaded.</p>
     </div>
   </a>
@@ -260,7 +260,7 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="6.5" height="6.5" rx="1"></rect><rect x="14.5" y="3" width="6.5" height="6.5" rx="1"></rect><rect x="3" y="14.5" width="6.5" height="6.5" rx="1"></rect><rect x="13.5" y="13.5" width="2.6" height="2.6" fill="currentColor" stroke="none"></rect><rect x="18.4" y="13.5" width="2.6" height="2.6" fill="currentColor" stroke="none"></rect><rect x="16" y="16.2" width="2.6" height="2.6" fill="currentColor" stroke="none"></rect><rect x="13.5" y="18.9" width="2.6" height="2.6" fill="currentColor" stroke="none"></rect><rect x="18.4" y="18.9" width="2.6" height="2.6" fill="currentColor" stroke="none"></rect></svg>
     </div>
     <div class="xp-card__body">
-      <h2 class="xp-card__title">QR Studio</h2>
+      <h3 class="xp-card__title">QR Studio</h3>
       <p class="xp-card__desc">Generate and scan static QR codes that never expire. In your browser; nothing is uploaded.</p>
     </div>
   </a>
@@ -270,7 +270,7 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3" width="8" height="18" rx="1.5"></rect><rect x="13.5" y="3" width="8" height="18" rx="1.5"></rect><line x1="5" y1="7.5" x2="8" y2="7.5" stroke-opacity="0.45"></line><line x1="5" y1="12" x2="8" y2="12"></line><line x1="5" y1="16.5" x2="8" y2="16.5" stroke-opacity="0.45"></line><line x1="16" y1="7.5" x2="19" y2="7.5" stroke-opacity="0.45"></line><line x1="16" y1="12" x2="19" y2="12" stroke-opacity="0.45"></line><line x1="16" y1="16.5" x2="19" y2="16.5"></line></svg>
     </div>
     <div class="xp-card__body">
-      <h2 class="xp-card__title">Diff Checker</h2>
+      <h3 class="xp-card__title">Diff Checker</h3>
       <p class="xp-card__desc">Compare two texts, files, or PDFs and see exactly what changed. In your browser; nothing is uploaded.</p>
     </div>
   </a>
@@ -358,7 +358,10 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
 .xp-card__art--live svg { display: none; }
 
 .xp-card__body { padding: 0.65rem 0.85rem 0.8rem; }
-.xp-card__title { margin: 0 0 0.3rem; font-size: 1rem; font-weight: 700; line-height: 1.25; }
+/* Card titles are h3 (sections are h2) so heading navigation tells them apart;
+   the padding + hairline keep the exact look the theme's .page__content h2 rule
+   used to give them. */
+.xp-card__title { margin: 0 0 0.3rem; padding-bottom: 0.5em; border-bottom: 1px solid #3e3e3e; font-size: 1rem; font-weight: 700; line-height: 1.25; }
 .xp-card__desc { margin: 0; font-size: 0.85rem; line-height: 1.45; opacity: 0.82; }
 
 /* Light-theme accent on hover, applied in BOTH the manual and auto contexts. */

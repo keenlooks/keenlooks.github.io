@@ -59,6 +59,7 @@ class ContentExtractor:
                             "date": metadata.get("date", ""),
                             "citation": metadata.get("citation", ""),
                             "permalink": metadata.get("permalink", ""),
+                            "paperurl": metadata.get("paperurl", ""),
                             "authors": metadata.get("authors", ""),
                             "abstract": metadata.get("abstract", "")
                         })
@@ -141,9 +142,12 @@ class ContentExtractor:
 
     def generate_system_prompt(self):
         """Generate a comprehensive system prompt"""
-        # Format publications with full details
+        # Format publications with full details (URL = the page's exact permalink on the
+        # live site; the chatbot must never invent its own)
         publications = "\n\n".join([
             f"Title: {pub['title']}\n" + \
+            (f"URL: {self.website_url}{pub['permalink']}\n" if pub.get('permalink') else "") + \
+            (f"Paper PDF: {self.website_url}{pub['paperurl']}\n" if pub.get('paperurl') else "") + \
             (f"Authors: {pub['authors']}\n" if pub.get('authors') else "") + \
             (f"Venue: {pub['venue']}\n" if pub.get('venue') else "") + \
             (f"Date: {pub['date']}\n" if pub.get('date') else "") + \
@@ -158,11 +162,25 @@ class ContentExtractor:
             for proj in self.content["projects"]
         ])
 
-        # Format talks
+        # Format talks (same exact-URL rule as publications)
         talks = "\n\n".join([
-            f"Talk: {talk['title']}\nDate: {talk.get('date', 'N/A')}\n{talk['content']}"
+            f"Talk: {talk['title']}\n" + \
+            (f"URL: {self.website_url}{talk['metadata'].get('permalink')}\n" if talk.get('metadata', {}).get('permalink') else "") + \
+            f"Date: {talk.get('date', 'N/A')}\n{talk['content']}"
             for talk in self.content["talks"]
         ])
+
+        # The complete list of individual publication/talk page URLs that exist on the
+        # site. The production chatbot used to fabricate plausible-looking permalinks
+        # that 404ed; this list plus the instruction below is the guard.
+        publication_urls = "\n".join(
+            f"        - \"{pub['title']}\": {self.website_url}{pub['permalink']}"
+            for pub in self.content["publications"] if pub.get('permalink')
+        )
+        talk_urls = "\n".join(
+            f"        - \"{talk['title']}\": {self.website_url}{talk['metadata'].get('permalink')}"
+            for talk in self.content["talks"] if talk.get('metadata', {}).get('permalink')
+        )
 
         # Define research areas directly
         research_areas = """
@@ -211,7 +229,7 @@ class ContentExtractor:
         - Create [links](url) to relevant sections of keanelucas.com
         - Use proper headings with # when organizing information
         - Use bullet points and numbered lists for organized information
-        - Use \`code\` formatting for technical terms
+        - Use `code` formatting for technical terms
         - Use > for quotations
         - Create tables when comparing information
 
@@ -220,7 +238,20 @@ class ContentExtractor:
         - Talks: /talks/
         - CV: /cv/
 
-        If possible, however, link directly to the relevant page on the website.
+        These are the ONLY individual publication and talk pages that exist on keanelucas.com.
+
+        Publication pages:
+{publication_urls}
+
+        Talk pages:
+{talk_urls}
+
+        When you link to a specific publication or talk, copy its URL from the list above
+        verbatim. NEVER construct, guess, abbreviate, or otherwise modify a keanelucas.com
+        URL: any URL not listed above does not exist and will return a 404 error. If the
+        page you want is not in the list, link to /publications/ or /talks/ instead, or
+        leave the link out. The same rule applies to paper PDFs and external links
+        (red.anthropic.com posts): only use URLs that appear verbatim in this context.
 
         Also, you're encouraged to use emojis to make your responses more engaging! 🚀
 

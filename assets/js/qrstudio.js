@@ -211,7 +211,10 @@
       btnPng.disabled = btnSvg.disabled = false;
     } catch (e) {
       qr = null;
-      meta.textContent = 'Too much data for one QR code at this error-correction level. Shorten the content or drop the level to L.';
+      /* "drop the level" is useless advice when L is already selected */
+      meta.textContent = $('qs-ec').value === 'L'
+        ? 'Too much data for one QR code even at the lowest error-correction level. Shorten the content.'
+        : 'Too much data for one QR code at this error-correction level. Shorten the content or drop the level to L.';
       btnPng.disabled = btnSvg.disabled = true;
     }
     payloadEl.textContent = p.text;

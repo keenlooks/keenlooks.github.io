@@ -53,6 +53,10 @@
   var s, action = 0, status = 'fly', statusT = 0, fuel = 0;
   var W = 0, H = 0, dpr = 1, raf = null, acc = 0, lastT = 0;
   var drag = null, padDrag = false;
+  /* prefers-reduced-motion: start paused on a static frame; New rocket, the
+     autopilot toggle, or grabbing the rocket/pad resumes. Physics untouched. */
+  var reduceMq = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
+  var paused = !!(reduceMq && reduceMq.matches);
 
   function reset() {
     s = { x: 0.5 + (Math.random() - 0.5) * 0.4, y: 0.92, vx: (Math.random() - 0.5) * 0.2, vy: -0.05, th: (Math.random() - 0.5) * 0.3, w: 0 };
@@ -365,11 +369,41 @@
     drawScene(t);
     if (showBrain) drawBrain();
   }
-  function start() { if (!raf) { lastT = 0; raf = requestAnimationFrame(frame); } }
+  function start() { if (!raf && !paused) { lastT = 0; raf = requestAnimationFrame(frame); } }
+  /* one full render with no animation loop (reduced-motion landing frame) */
+  function drawStatic() {
+    if (!W || !H) { resize(); if (!W || !H) return; }
+    lastO = obs(s, padX); policy(lastO);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    drawScene(performance.now());
+    if (showBrain) drawBrain();
+  }
+  function resume() { if (!paused) return; paused = false; start(); }
+  if (reduceMq) {
+    var onReduce = function () {
+      if (reduceMq.matches) { paused = true; if (raf) { cancelAnimationFrame(raf); raf = null; } drawStatic(); }
+      else resume();
+    };
+    if (reduceMq.addEventListener) reduceMq.addEventListener('change', onReduce);
+    else if (reduceMq.addListener) reduceMq.addListener(onReduce);
+  }
+  /* a paused frame must still follow a manual theme flip */
+  if (window.MutationObserver) {
+    new MutationObserver(function () { if (paused && !raf) drawStatic(); })
+      .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  }
 
   /* ---- interaction: drag the rocket (fling) or the pad ---- */
   function rel(e) { var r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
   function wyFromScreen(py) { return GROUND_Y + (groundPix() - py) / (groundPix() - topPix()) * (1 - GROUND_Y); }
+  /* move the pad from a pointer x, keeping the slider AND its label in sync
+     (dispatching input reuses the slider's own handler, same as editable-values) */
+  function setPad(px) {
+    padX = Math.min(0.80, Math.max(0.20, px / worldW()));
+    var pe = id('land-pad');
+    if (pe) { pe.value = padX.toFixed(2); pe.dispatchEvent(new Event('input', { bubbles: true })); }
+    else if (elPadV) elPadV.textContent = padX.toFixed(2);
+  }
   function rocketHit(px, py) {
     var S = rocketScale(), cx = sx(s.x), cy = sy(s.y) - S * 1.1;   // rough body centre
     return Math.abs(px - cx) < S * 1.4 && Math.abs(py - cy) < S * 1.7;  // generous grab box covering the whole rocket
@@ -380,8 +414,9 @@
       drag = { kind: 'rocket', lx: p.x, ly: p.y, vx: 0, vy: 0 };
       status = 'fly'; statusT = 0; s.vx = 0; s.vy = 0; s.w = 0;
     } else if (p.y > groundPix() - 30) {                  // anywhere near/below the ground line moves the pad
-      padDrag = true; padX = Math.min(0.80, Math.max(0.20, p.x / worldW())); var pe = id('land-pad'); if (pe) pe.value = Math.round(padX * 100);
+      padDrag = true; setPad(p.x);
     } else return;
+    if (paused) resume();                                 /* reduced-motion: a fling/pad drag is an explicit ask for motion */
     try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
     e.preventDefault();
   });
@@ -392,7 +427,7 @@
       s.x = Math.min(1, Math.max(0, p.x / worldW()));
       s.y = Math.min(1.15, Math.max(GROUND_Y, wyFromScreen(p.y)));
       s.th = 0; s.w = 0;
-    } else if (padDrag) { padX = Math.min(0.80, Math.max(0.20, p.x / worldW())); var pe2 = id('land-pad'); if (pe2) pe2.value = Math.round(padX * 100); }
+    } else if (padDrag) { setPad(p.x); }
   });
   function endDrag() {
     if (drag && drag.kind === 'rocket') {
@@ -413,10 +448,10 @@
   function fmtWind(v) { return (v > 0 ? '→ ' : v < 0 ? '← ' : '') + Math.abs(v).toFixed(2); }
   if (elG) elG.addEventListener('input', function () { g = +elG.value; if (elGV) elGV.textContent = g.toFixed(2); });
   if (elWind) elWind.addEventListener('input', function () { wind = +elWind.value; if (elWindV) elWindV.textContent = fmtWind(wind); });
-  if (elPad) elPad.addEventListener('input', function () { padX = +elPad.value / 100; if (elPadV) elPadV.textContent = (padX).toFixed(2); });
-  if (btnReset) btnReset.addEventListener('click', reset);
-  if (elAuto) elAuto.addEventListener('change', function () { autopilot = elAuto.checked; updateTouchControls(); });
-  if (elBrain) elBrain.addEventListener('change', function () { showBrain = elBrain.checked; });
+  if (elPad) elPad.addEventListener('input', function () { padX = +elPad.value; if (elPadV) elPadV.textContent = (padX).toFixed(2); if (paused && !raf) drawStatic(); });
+  if (btnReset) btnReset.addEventListener('click', function () { reset(); if (paused) resume(); });
+  if (elAuto) elAuto.addEventListener('change', function () { autopilot = elAuto.checked; updateTouchControls(); if (paused) resume(); });
+  if (elBrain) elBrain.addEventListener('change', function () { showBrain = elBrain.checked; if (paused && !raf) drawStatic(); });
 
   /* panel collapse + first-run hint (shared helper) */
   if (window.GadgetUI) {
@@ -464,7 +499,10 @@
       'touch-action:none;-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px);' +
       'display:flex;align-items:center;justify-content:center;-webkit-user-select:none;user-select:none;}' +
       '.land-touch button:active{background:rgba(127,127,127,0.38);}' +
-      '.land-touch svg{width:26px;height:26px;display:block;}';
+      '.land-touch svg{width:26px;height:26px;display:block;}' +
+      /* narrow phones: centering would slide rotate-left under the fixed
+         bottom-left back/theme buttons, so hug the right edge instead */
+      '@media (max-width:520px){.land-touch{left:auto;right:12px;transform:none;}}';
     document.head.appendChild(st);
     touchWrap = document.createElement('div');
     touchWrap.className = 'land-touch';
@@ -499,11 +537,12 @@
   }
   updateTouchControls();
 
-  var rt; window.addEventListener('resize', function () { clearTimeout(rt); rt = setTimeout(resize, 150); });
+  var rt; window.addEventListener('resize', function () { clearTimeout(rt); rt = setTimeout(function () { resize(); if (paused && !raf) drawStatic(); }, 150); });
   document.addEventListener('visibilitychange', function () { if (document.hidden) { if (raf) { cancelAnimationFrame(raf); raf = null; } } else start(); });
 
   if (elGV) elGV.textContent = g.toFixed(2);
   if (elWindV) elWindV.textContent = fmtWind(wind);
   if (elPadV) elPadV.textContent = padX.toFixed(2);
-  resize(); reset(); start();
+  resize(); reset();
+  if (paused) drawStatic(); else start();
 })();

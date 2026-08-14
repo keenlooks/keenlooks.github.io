@@ -19,16 +19,6 @@ description: "An interactive full-screen double pendulum by Keane Lucas: drag th
       <button id="pend-collapse" class="pend-collapse" type="button" aria-label="Hide / show controls" title="Hide / show controls">&ndash;</button>
     </div>
     <div class="pend-panel__body" id="pend-panel-body">
-      <p class="pend-blurb">
-        Two rods and two masses, moving under gravity. The blue pendulum and the grey
-        <strong>twin</strong> start about <strong>0.001 radians</strong> apart (roughly 0.06&deg;).
-        They stay in step for a few seconds, and then their motions separate completely.
-        Identical rules and nearly identical starting points still lead to totally different
-        paths. The plot along the bottom shows how far apart the two pendulums' angles are over
-        time, and the moment they split happens at a different time on each run.
-        <strong>Drag either bob</strong> to set a new starting pose.
-      </p>
-
       <label class="pend-slider"><span>Speed: <strong id="pend-speed-val" class="editable-val" data-range="pend-speed">1.00&times;</strong></span>
         <input id="pend-speed" type="range" min="0" max="2" step="0.05" value="1"></label>
 
@@ -43,6 +33,16 @@ description: "An interactive full-screen double pendulum by Keane Lucas: drag th
       </div>
 
       <p class="pend-status-line"><span id="pend-status"></span></p>
+
+      <p class="pend-blurb">
+        Two rods and two masses, moving under gravity. The blue pendulum and the grey
+        <strong>twin</strong> start about <strong>0.001 radians</strong> apart (roughly 0.06&deg;).
+        They stay in step for a few seconds, and then their motions separate completely.
+        Identical rules and nearly identical starting points still lead to totally different
+        paths. The plot along the bottom shows how far apart the two pendulums' angles are over
+        time, and the moment they split happens at a different time on each run.
+        <strong>Drag either bob</strong> to set a new starting pose.
+      </p>
     </div>
   </div>
 </div>
@@ -98,6 +98,61 @@ html[data-theme="light"] .pend-panel { background: rgba(255,255,255,0.97); borde
 @media screen and (max-width: 768px) {
   /* the corner buttons are raised to bottom: 4rem here, so give them more room */
   .pend-panel { max-height: calc(100vh - 12.5rem); max-height: calc(100dvh - 12.5rem); }
+}
+
+/* ---- scroll cues (voyage pattern): the panel is height-capped and scrolls,
+   and on short viewports the overlay scrollbar hid that. Two cues: a thin
+   scrollbar that stays drawn while scrollable, and a soft bottom fade driven
+   by a scroll timeline (off when the panel fits, gone at the end). ---- */
+@media (pointer: fine) {
+  .pend-panel::-webkit-scrollbar { width: 9px; }
+  .pend-panel::-webkit-scrollbar-track { background: transparent; }
+  .pend-panel::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.26); border-radius: 5px; }
+  .pend-panel:hover::-webkit-scrollbar-thumb,
+  .pend-panel:focus-within::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.46); }
+}
+@supports not selector(::-webkit-scrollbar) {
+  .pend-panel { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.30) transparent; }
+}
+@keyframes pend-scrollcue { from { opacity: 1; } to { opacity: 0; } }
+.pend-panel::after {
+  content: ''; display: block; pointer-events: none;
+  position: sticky; bottom: 0; height: 1.55rem;
+  /* negative TOP margin matching the height: a negative bottom margin would
+     add phantom scroll height and switch the cue on over panels that fit */
+  margin: -1.55rem -1rem 0;
+  background: linear-gradient(to bottom, rgba(12,12,12,0), rgba(12,12,12,0.40));
+  opacity: 0;
+  /* longhands + `nearest` on purpose: the shorthand resets animation-timeline,
+     and scroll(self) resolves against the pseudo-element */
+  animation-name: pend-scrollcue;
+  animation-duration: auto;
+  animation-timing-function: linear;
+  animation-fill-mode: both;
+  animation-timeline: scroll(nearest block);
+  animation-range: calc(100% - 2.5rem) 100%;
+}
+.pend-panel--collapsed::after { display: none; }
+/* light theme fades to a soft DARK shadow, never white-on-white */
+html[data-theme="light"] .pend-panel::after { background: linear-gradient(to bottom, rgba(30,32,38,0), rgba(30,32,38,0.30)); }
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .pend-panel::after { background: linear-gradient(to bottom, rgba(30,32,38,0), rgba(30,32,38,0.30)); }
+}
+@media (pointer: fine) {
+  html[data-theme="light"] .pend-panel::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.24); }
+  html[data-theme="light"] .pend-panel:hover::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.44); }
+}
+@media (pointer: fine) and (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .pend-panel::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.24); }
+  html:not([data-theme="dark"]) .pend-panel:hover::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.44); }
+}
+@supports not selector(::-webkit-scrollbar) {
+  html[data-theme="light"] .pend-panel { scrollbar-color: rgba(0,0,0,0.28) transparent; }
+}
+@supports not selector(::-webkit-scrollbar) {
+  @media (prefers-color-scheme: light) {
+    html:not([data-theme="dark"]) .pend-panel { scrollbar-color: rgba(0,0,0,0.28) transparent; }
+  }
 }
 
 .pend-panel__head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }

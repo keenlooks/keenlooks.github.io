@@ -11,11 +11,9 @@ description: "Interactive explainer by Keane Lucas: a bond is a fixed future pay
 In the simplest form, buying a bond is really just buying the promise of a <strong>fixed payout at a fixed time</strong>. What you'd pay
 for that future payout <em>today</em> can be calculated as that future payout, discounted back to the present by the current going interest
 rate.
+</p>
 
-So... why do bond prices go down when the Fed raises rates? Basically, when the Fed raises its policy rate, yields on a risk-free asset like U.S. Treasuries rise too, and every other borrower has to offer more to stay competitive (usually more than Treasuries, since they can't print their own money like the U.S. government can, so they are by definition not as "risk-free"). 
-
-If you have a bond (which is again really just a future payout of a specific amount of money), and you want to sell it, then the fair market price of your bond now depends on the (now higher) current going interest rate. This essentially just increases the slope on the curve below, which (as you can see when the slope increases while the future payout stays fixed) means the price you can sell your bond for today has to go down to match the new, higher interest rate.
-
+<p class="bond-intro">
 TL;DR: the future payout never changes, so when rates rise, the same
 future-dollars are worth fewer now-dollars. Drag the rate to see the effect on the plot.
 </p>
@@ -54,7 +52,7 @@ future-dollars are worth fewer now-dollars. Drag the rate to see the effect on t
           <input id="bond-coupon" type="range" min="0" max="12" step="0.1" value="5">
         </label>
       </div>
-      <p class="bond-hint">In coupon mode: <strong>click a year</strong> to add a payout, click a payout to edit it (× or 0 deletes), and <strong>drag</strong> it to a different time. <strong>Click an x-axis year</strong> to anchor the timeline to a calendar date. &ldquo;Standard bond&rdquo; rebuilds the default.</p>
+      <p class="bond-hint">In coupon mode: <strong>click a year</strong> to add a payout, click a payout to edit it (× or 0 deletes), and <strong>drag</strong> it to a different time. <strong>Click an x-axis year</strong> to anchor the timeline to a calendar date. &ldquo;Standard bond&rdquo; rebuilds the default, as do the face, coupon, and maturity sliders, so payouts you placed by hand are replaced when you move them.</p>
     </div>
 
     <label class="bond-check">
@@ -72,6 +70,14 @@ future-dollars are worth fewer now-dollars. Drag the rate to see the effect on t
     </div>
   </div>
 </div>
+
+<p class="bond-intro">
+So... why do bond prices go down when the Fed raises rates? Basically, when the Fed raises its policy rate, yields on a risk-free asset like U.S. Treasuries rise too, and every other borrower has to offer more to stay competitive (usually more than Treasuries, since they can't print their own money like the U.S. government can, so they are by definition not as "risk-free").
+</p>
+
+<p class="bond-intro">
+If you have a bond (which is again really just a future payout of a specific amount of money), and you want to sell it, then the fair market price of your bond now depends on the (now higher) current going interest rate. This essentially just increases the slope on the curve above, which (as you can see when the slope increases while the future payout stays fixed) means the price you can sell your bond for today has to go down to match the new, higher interest rate.
+</p>
 
 <p class="bond-foot">
   Why "the payout is fixed but worth less"? Because the curve from <em>today's price</em> up to the

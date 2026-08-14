@@ -172,6 +172,11 @@
     }
   }
   canvas.addEventListener('pointerdown', function (e) {
+    /* take focus off any panel control: preventDefault below suppresses the
+       browser's own focus transfer, and a still-focused button would re-fire
+       on the next Space press instead of pausing */
+    if (document.activeElement && document.activeElement !== document.body &&
+        document.activeElement.blur) document.activeElement.blur();
     var c = cellCoords(e.clientX, e.clientY);
     if (c.x < 0 || c.y < 0 || c.x >= worldCols || c.y >= worldRows) return;
     painting = true;
@@ -376,7 +381,7 @@
 
   /* collapse / expand the controls + first-run hint (shared helper) */
   if (window.GadgetUI) {
-    var hint = GadgetUI.firstRunHint('life', 'Draw on the grid, then press play.');
+    var hint = GadgetUI.firstRunHint('life', 'Click or drag to draw cells.');
     GadgetUI.initPanel({
       panel: 'life-panel', toggle: 'life-collapse',
       collapsedClass: 'life-panel--collapsed',
@@ -410,6 +415,9 @@
   refreshMinCell();
   initWorld();
   resizeCanvas();
-  if (!loadFromHash()) randomize(); /* a shared pattern in the URL replaces the soup */
+  /* a shared pattern in the URL replaces the soup — and starts PAUSED, so the
+     recipient actually sees the board that was shared (Play is the affordance) */
+  if (loadFromHash()) setRunning(false);
+  else randomize();
   raf = requestAnimationFrame(loop);
 })();

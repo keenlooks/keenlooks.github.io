@@ -213,6 +213,11 @@
   function pointerCount() { var n = 0; for (var k in pointers) n++; return n; }
 
   canvas.addEventListener('pointerdown', function (e) {
+    /* take focus off any panel control: preventDefault below suppresses the
+       browser's own focus transfer, and a still-focused button would re-fire
+       on the next Space press instead of pausing */
+    if (document.activeElement && document.activeElement !== document.body &&
+        document.activeElement.blur) document.activeElement.blur();
     var p = rel(e); pointers[e.pointerId] = { x: p.x, y: p.y };
     canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
     if (pointerCount() === 2) {        // start pinch
@@ -350,7 +355,8 @@
   if (elMass) elMass.addEventListener('input', function () { spawnMass = +elMass.value; if (elMassV) elMassV.textContent = Math.round(spawnMass); });
   if (elTrails) elTrails.addEventListener('change', function () { trails = elTrails.checked; if (!trails) for (var i = 0; i < bodies.length; i++) bodies[i].trail = []; });
   if (elWells) elWells.addEventListener('change', function () { wells = elWells.checked; });
-  if (btnPause) btnPause.addEventListener('click', function () { paused = !paused; btnPause.textContent = paused ? 'Play' : 'Pause'; });
+  function togglePause() { paused = !paused; if (btnPause) btnPause.textContent = paused ? 'Play' : 'Pause'; }
+  if (btnPause) btnPause.addEventListener('click', togglePause);
   if (btnClear) btnClear.addEventListener('click', function () { bodies = []; resetView(); });   /* Clear = empty space AND home camera */
   var btnView = id('grav-resetview');
   if (btnView) btnView.addEventListener('click', resetView);
@@ -441,6 +447,19 @@
       create = null;
     });
   }
+
+  /* keyboard: Space = pause/resume, R = reset the view (ignored while typing;
+     parity with the sibling gadgets) */
+  window.addEventListener('keydown', function (e) {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (window.GadgetUI && GadgetUI.isTyping(e)) return;
+    if (e.key === ' ') {
+      /* a focused button already activates on Space — don't double-toggle */
+      if (e.target && (e.target.tagName || '').toLowerCase() === 'button') return;
+      e.preventDefault(); togglePause();
+    }
+    else if (e.key === 'r' || e.key === 'R') resetView();
+  });
 
   // ---- theme + resize + visibility --------------------------------------
   var rt;

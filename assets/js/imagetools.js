@@ -122,6 +122,8 @@
       loaded = true; cropRect = null; cropping = false; fineAngle = 0; history = []; fmtSwitch = null; editSeq++;
       var u = id('it-undo'); if (u) u.disabled = true;
       var cb = id('it-cutout'); if (cb) cb.disabled = false;
+      var db = id('it-download'); if (db) { db.disabled = false; db.removeAttribute('title'); }
+      var fb = id('it-favicon'); if (fb) { fb.disabled = false; fb.removeAttribute('title'); }
       var rh = id('it-rot-hint'); if (rh) rh.textContent = '· drag the dot above the image to rotate';
       drop.classList.add('it-drop--has');
       requestAnimationFrame(function () { render(); updateInfo(); });   /* render after layout settles */
@@ -361,6 +363,11 @@
     }
     return { blob: blob, w: src.width, h: src.height, encodeFailed: encodeFailed };
   }
+  /* nothing to export until an image loads — start both buttons disabled like
+     Undo and Cut out, so they say so instead of silently doing nothing */
+  [id('it-download'), id('it-favicon')].forEach(function (b) {
+    if (b && !loaded) { b.disabled = true; b.title = 'Drop an image in first'; }
+  });
   id('it-download').addEventListener('click', async function () {
     if (!loaded) return;
     var st = id('it-status'); st.textContent = 'Encoding…';
@@ -384,7 +391,12 @@
     var my = ++infoSeq;
     var r = await buildExport();
     if (my !== infoSeq) return;   /* a newer request superseded this one */
+    /* a failed encode must overwrite the line too — a stale estimate from the
+       previous settings reads as if the current target were reachable */
     if (r && r.blob) id('it-estimate').textContent = 'Output: ' + r.w + '×' + r.h + ' · ~' + fmtBytes(r.blob.size);
+    else id('it-estimate').textContent = (r && r.encodeFailed)
+      ? 'This image is too large for your browser to re-encode.'
+      : 'Cannot reach ' + (+elTarget.value) + ' KB even at lowest quality.';
   }
   /* recompute the estimate when controls change */
   ['it-format', 'it-mode', 'it-qual', 'it-maxdim', 'it-target'].forEach(function (k) {

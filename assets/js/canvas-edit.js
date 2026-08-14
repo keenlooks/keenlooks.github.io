@@ -6,7 +6,10 @@
    onCommit, onDelete}) with the number's position in CANVAS CSS pixels. We show
    a text input (numeric keyboard on mobile) and, if onDelete is given, a "×"
    button. Enter / tapping away commits (parses the number, strips $ and commas)
-   and calls onCommit(value | null); × calls onDelete(); Escape cancels.
+   and calls onCommit(value | null); × calls onDelete(); Escape cancels and
+   calls onCancel if given (so a gadget that just ADDED the point can remove it
+   again; editors on existing points simply omit onCancel). The overlay is
+   clamped inside the canvas box so it never overflows the page on phones.
 
    Focus is deferred (setTimeout) so a real tap/click's default action — which
    moves focus to <body> — doesn't instantly blur+commit the input.
@@ -38,11 +41,17 @@
       var w = o.width || 74;
       input.style.width = w + 'px';
       del.style.display = o.onDelete ? 'inline-block' : 'none';
-      var totalW = w + (o.onDelete ? 29 : 0);
-      wrap.style.left = (canvas.offsetLeft + o.x - totalW / 2) + 'px';
-      wrap.style.top = (canvas.offsetTop + o.y - 14) + 'px';
       input.value = (o.value == null ? '' : o.value);
       wrap.style.display = 'inline-flex';
+      // measure the real rendered width (input padding/border + × button), then
+      // clamp inside the canvas box so the overlay never overflows the page
+      var totalW = wrap.offsetWidth || (w + (o.onDelete ? 29 : 0));
+      var left = canvas.offsetLeft + o.x - totalW / 2;
+      var maxL = canvas.offsetLeft + canvas.clientWidth - totalW - 2;
+      if (left > maxL) left = maxL;
+      if (left < canvas.offsetLeft + 2) left = canvas.offsetLeft + 2;
+      wrap.style.left = left + 'px';
+      wrap.style.top = (canvas.offsetTop + o.y - 14) + 'px';
       setTimeout(function () { input.focus(); input.select(); }, 0);
     }
     function commit() {
@@ -56,11 +65,18 @@
       var cb = cur.onDelete; cur = null; wrap.style.display = 'none';
       if (cb) cb();
     }
+    /* Escape: close without committing, and let the opener undo a just-added
+       point via onCancel (cur is nulled FIRST so the follow-on blur no-ops). */
+    function cancel() {
+      if (!cur) return;
+      var cb = cur.onCancel; cur = null; wrap.style.display = 'none';
+      if (cb) cb();
+    }
     function hide() { cur = null; wrap.style.display = 'none'; }
 
     input.addEventListener('keydown', function (e) {
       if (e.key === 'Enter') { e.preventDefault(); commit(); }
-      else if (e.key === 'Escape') { e.preventDefault(); hide(); }
+      else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
     });
     input.addEventListener('blur', commit);
     // keep focus on the input when pressing ×, so blur doesn't commit before the delete fires

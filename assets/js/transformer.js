@@ -251,6 +251,7 @@
   if (!attnCtx) return;
 
   var elPrompt = byId('tt-prompt'), btnGo = byId('tt-go');
+  var btnGo2 = byId('tt-go2');   /* stage copy, shown by CSS below 600px only */
   var elTemp = byId('tt-temp'), elTempV = byId('tt-temp-val');
   var elSpeed = byId('tt-speed'), elSpeedV = byId('tt-speed-val');
   var elLen = byId('tt-len'), elLenV = byId('tt-len-val');
@@ -408,6 +409,7 @@
     btnGo.title = gen.running ? 'Pause generation'
       : (gen.finished || gen.promptUsed !== (elPrompt ? elPrompt.value : gen.promptUsed)
         ? 'Start from the prompt' : (gen.genCount > 0 ? 'Continue generating' : 'Start from the prompt'));
+    if (btnGo2) { btnGo2.textContent = btnGo.textContent; btnGo2.title = btnGo.title; }
   }
 
   function filterPrompt(s) {
@@ -583,9 +585,11 @@
   });
 
   /* ---- controls ---- */
-  if (btnGo) btnGo.addEventListener('click', function () {
+  function toggleRun() {
     if (gen.running) stopGen(false); else startRun();
-  });
+  }
+  if (btnGo) btnGo.addEventListener('click', toggleRun);
+  if (btnGo2) btnGo2.addEventListener('click', toggleRun);
   if (elPrompt) elPrompt.addEventListener('keydown', function (e) {
     if (e.key === 'Enter') {
       e.preventDefault();

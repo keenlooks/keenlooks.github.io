@@ -32,7 +32,7 @@ description: "An interactive reinforcement-learning demo by Keane Lucas: a small
       <label class="land-slider"><span>Wind: <strong id="land-wind-val" class="editable-val" data-range="land-wind">0.00</strong></span>
         <input id="land-wind" type="range" min="-0.25" max="0.25" step="0.01" value="0"></label>
       <label class="land-slider"><span>Pad position: <strong id="land-pad-val" class="editable-val" data-range="land-pad">0.50</strong></span>
-        <input id="land-pad" type="range" min="20" max="80" step="1" value="50"></label>
+        <input id="land-pad" type="range" min="0.20" max="0.80" step="0.01" value="0.50"></label>
 
       <div class="land-checks">
         <label class="land-check"><input id="land-auto" type="checkbox" checked> Autopilot (the agent flies)</label>

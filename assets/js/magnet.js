@@ -230,8 +230,17 @@
       ctx.strokeStyle = lineColor(0.85); ctx.lineWidth = 1.6; ctx.stroke();
     }
     if (compass.show) drawCompass();
-    if (status) status.textContent = magnets.length + (magnets.length === 1 ? ' magnet' : ' magnets');
+    if (status) {
+      var msg = magnets.length + (magnets.length === 1 ? ' magnet' : ' magnets');
+      if (statusFlash && performance.now() < statusFlash.until) msg = statusFlash.text;
+      else statusFlash = null;
+      status.textContent = msg;
+    }
   }
+
+  /* a short-lived status override (draw() rewrites the line every frame) */
+  var statusFlash = null;
+  function flashStatus(text) { statusFlash = { text: text, until: performance.now() + 1300 }; }
 
   /* ---- tap-to-select strength chips: a touch-friendly stand-in for the wheel ---- */
   function ensureChips() {
@@ -281,6 +290,11 @@
     return -1;
   }
   canvas.addEventListener('pointerdown', function (e) {
+    /* take focus off any panel control: preventDefault below suppresses the
+       browser's own focus transfer, and a still-focused button would re-fire
+       on the next Space press */
+    if (document.activeElement && document.activeElement !== document.body &&
+        document.activeElement.blur) document.activeElement.blur();
     var p = rel(e); pointers[e.pointerId] = p;
     canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
     // the compass is on top: grab it before anything else (left button only)
@@ -303,6 +317,7 @@
       selectedMag = null; tap = null;                      // background tap deselects
     } else {
       selectedMag = null; tap = null;                      // background tap deselects (at the magnet cap)
+      flashStatus(MAX + ' magnets (max)');                 // say why the click added nothing
     }
     e.preventDefault();
   });

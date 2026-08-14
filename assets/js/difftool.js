@@ -371,7 +371,14 @@
     noteEl.hidden = !msg;
   }
 
-  function setStatus(msg) { statusEl.textContent = msg || ''; }
+  /* One-shot status line. A status set with keepOnce=true (file loads) survives the
+     compare that the load itself triggers; everything else is cleared by the next
+     compare so an old "Unified diff copied" can never describe a newer result. */
+  var statusKeep = false;
+  function setStatus(msg, keepOnce) {
+    statusEl.textContent = msg || '';
+    statusKeep = !!keepOnce;
+  }
 
   function updateStats() {
     if (!lastMeta) { statsEl.textContent = ''; return; }
@@ -387,6 +394,8 @@
   }
 
   function runCompare(force) {
+    if (statusKeep) statusKeep = false;
+    else setStatus('');
     var rawA = taA.value, rawB = taB.value;
     if (rawA.length > HARD_MAX || rawB.length > HARD_MAX) {
       setNote('One of the inputs is about ' + fmtMB(Math.max(rawA.length, rawB.length)) +
@@ -567,7 +576,7 @@
       extractPdfText(file).then(function (res) {
         setPane(which, res.text, file.name);
         pdfNoteEl.hidden = false;
-        setStatus('Extracted text from ' + res.pages + (res.pages === 1 ? ' page' : ' pages') + ' of ' + file.name + '.');
+        setStatus('Extracted text from ' + res.pages + (res.pages === 1 ? ' page' : ' pages') + ' of ' + file.name + '.', true);
       }).catch(function (err) {
         setStatus('Could not read ' + file.name + ' as a PDF' + (err && err.message ? ' (' + err.message + ')' : '') + '.');
       });
@@ -579,10 +588,13 @@
     }
     file.text().then(function (text) {
       if (text.indexOf('\u0000') !== -1) {
-        setStatus(file.name + ' looks like a binary file; diffing it as text anyway.');
-      } else {
-        setStatus('Loaded ' + file.name + '.');
+        /* Binary content (NUL bytes) is refused outright: rendering ~1MB of binary
+           garbage in a textarea can freeze the tab, and diffing it as text has no
+           real use. .docx/.xlsx land here too (they are binary zips). */
+        setStatus(file.name + ' looks like a binary file, so it was not loaded. This tool compares text files and PDFs.');
+        return;
       }
+      setStatus('Loaded ' + file.name + '.', true);
       setPane(which, text, file.name);
     }).catch(function () {
       setStatus('Could not read ' + file.name + '.');

@@ -108,6 +108,7 @@
 
   var worker = null;
   var mainSearchTimer = null;
+  var undoWaitT = -1e9;   /* when an undo was refused mid-animation */
 
   function scriptUrls() {
     var el = document.querySelector('script[src*="fourinarow.js"]');
@@ -178,7 +179,10 @@
     st.miniCache = {};
     st.miniPix = {};
     st.postHuman = null;
-    setStatus('Thinking…');
+    /* an undo refused a moment ago (piece still falling) keeps its note */
+    var waitNote = (performance.now() - undoWaitT) < 1000;
+    undoWaitT = -1e9;
+    setStatus(waitNote ? 'Thinking… Wait for the move, then undo.' : 'Thinking…');
     var sims = SIMS[st.strength];
     /* messages queue behind 'init' in order, so posting while the worker is
        still booting is fine; only a null worker (failed boot) falls back */
@@ -306,6 +310,7 @@
 
   function newGame(keepSides) {
     stopSearch();
+    undoWaitT = -1e9;
     st.gameId++;
     st.seq++;
     st.moves = [];
@@ -336,7 +341,15 @@
   }
 
   function undo() {
-    if (st.moves.length === 0 || st.phase === 'animating') return;
+    if (st.moves.length === 0) return;
+    if (st.phase === 'animating' || st.phase === 'thinking') {
+      /* mid-move it would be a silent dead click; say why instead. The
+         animating case is over in ~0.4 s, so remember it and let
+         requestAiMove keep the note visible through the think. */
+      if (st.phase === 'animating') undoWaitT = performance.now();
+      setStatus('Wait for the move, then undo.');
+      return;
+    }
     stopSearch();
     st.gameId++;      /* fresh tree — never reuse across an undo */
     st.seq++;
@@ -1651,10 +1664,19 @@
   document.addEventListener('keydown', function (e) {
     if (window.GadgetUI && window.GadgetUI.isTyping(e)) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
-    /* a focused button/link owns Enter and Space; isTyping does not cover them */
     var tag = ((e.target && e.target.tagName) || '').toUpperCase();
-    if (tag === 'BUTTON' || tag === 'A' || tag === 'SUMMARY' || tag === 'LABEL') return;
     var k = e.key;
+    /* a focused button/link owns Enter and Space (activation), and a focused
+       slider or checkbox owns Enter, Space and the arrows; every other key
+       stays live for the board, so 1-7/u/n keep working after a button click */
+    if (tag === 'BUTTON' || tag === 'A' || tag === 'SUMMARY' || tag === 'LABEL') {
+      if (k === 'Enter' || k === ' ') return;
+    } else if (tag === 'INPUT' || tag === 'SELECT') {
+      if (k === 'Enter' || k === ' ' ||
+          k === 'ArrowLeft' || k === 'ArrowRight' ||
+          k === 'ArrowUp' || k === 'ArrowDown' ||
+          k === 'Home' || k === 'End' || k === 'PageUp' || k === 'PageDown') return;
+    }
     if (k >= '1' && k <= '7') { humanPlays(k.charCodeAt(0) - 49); return; }
     if (k === 'ArrowLeft' || k === 'ArrowRight') {
       st.usingKeys = true;

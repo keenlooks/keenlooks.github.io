@@ -225,6 +225,11 @@
   /* ---- drag a bob to repose ---- */
   function rel(e) { var r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
   canvas.addEventListener('pointerdown', function (e) {
+    /* take focus off any panel control: preventDefault below suppresses the
+       browser's own focus transfer, and a still-focused button would re-fire
+       on the next Space press instead of pausing */
+    if (document.activeElement && document.activeElement !== document.body &&
+        document.activeElement.blur) document.activeElement.blur();
     var p = rel(e), t = tip(main);
     canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
     if (Math.hypot(p.x - t.x2, p.y - t.y2) < 26) drag = { bob: 2 };
@@ -284,9 +289,11 @@
       /* dimension guard (epidemic-style): mobile fires resize on URL-bar
          show/hide and the on-screen keyboard — a height-only nudge must not
          wipe the run. A real resize still resets (the px-space trails and
-         plot layout depend on it). */
+         plot layout depend on it), and it must re-sync the twin like a drag
+         release does: resetting only the timers measured an already-diverged
+         twin against t = 0 and reported "diverged after 0.0 s". */
       if (W === ow && Math.abs(H - oh) < 120) return;
-      resetTimers();
+      syncTwin();
     }, 150);
   });
   document.addEventListener('visibilitychange', function () { if (document.hidden) { if (raf) { cancelAnimationFrame(raf); raf = null; } } else start(); });

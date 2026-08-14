@@ -136,6 +136,12 @@
     ctx.closePath(); ctx.fillStyle = color; ctx.fill();
   }
 
+  // y-axis corner label, longest first; draw() picks the longest that fits
+  var CORNER = [
+    'value of $10,000 (log scale): shaded band = where this blend could land',
+    'value of $10,000 (log scale): band = where the blend could land',
+    '$10,000 growing (log scale)'
+  ];
   function draw() {
     if (!W || !H) resize();
     if (!W || !H) return;
@@ -183,10 +189,13 @@
     ctx.fillStyle = c.muted; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
     ctx.fillText('Years held (1995–2024)', (M.l + (W - M.r)) / 2, H - 5);
 
-    // corner labels
+    // corner labels; the y-axis cue is shortened progressively so it never
+    // runs past the plot's right edge at phone widths
     ctx.textAlign = 'left'; ctx.textBaseline = 'top';
     ctx.fillStyle = c.muted; ctx.font = '11px "Source Sans 3", system-ui, sans-serif';
-    ctx.fillText('value of $10,000: shaded band = where this blend could land', M.l + 4, M.t + 2);
+    var availC = (W - M.r) - (M.l + 4) - 4, cl = CORNER[CORNER.length - 1];
+    for (var ci = 0; ci < CORNER.length; ci++) { if (ctx.measureText(CORNER[ci]).width <= availC) { cl = CORNER[ci]; break; } }
+    ctx.fillText(cl, M.l + 4, M.t + 2);
     ctx.fillStyle = c.accent; ctx.font = '600 12px "Source Sans 3", system-ui, sans-serif';
     ctx.fillText('blend of ' + state.N + (state.N === 1 ? ' industry' : ' industries'), M.l + 4, M.t + 18);
   }
@@ -196,6 +205,12 @@
   function updateNote() {
     if (!elNote || !state.fan) return;
     var lo = state.fan.p5[STEPS], hi = state.fan.p95[STEPS], word = state.N === 1 ? 'industry' : 'industries';
+    // at N = all the band is a single line, so a "range" would read $X to $X
+    if (state.N >= nInd) {
+      elNote.innerHTML = 'Holding <strong>all ' + nInd + '</strong> industries, there is only one blend to hold, so $10,000 over these 30 years lands at about <strong>' + usd(hi)
+        + '</strong>. The band has squeezed to a single line: nothing depends on which ones you pick, which is the idea the chart below sums up.';
+      return;
+    }
     elNote.innerHTML = 'Holding <strong>' + state.N + '</strong> ' + word
       + ', $10,000 over these 30 years lands somewhere in the shaded band, about <strong>' + usd(lo) + '</strong>–<strong>' + usd(hi)
       + '</strong> (middle 90%), depending on which ones you pick. Slide up and the band squeezes toward a single line: the variance falls while the typical outcome barely moves, which is the idea the chart below sums up.';

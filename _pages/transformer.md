@@ -14,6 +14,10 @@ description: "An interactive transformer demo by Keane Lucas: a small character-
     <div id="tt-text" class="tt-text"
          aria-label="Generated text. Click any character to see the attention snapshot recorded when it was written."></div>
 
+    <div class="tt-go-row">
+      <button id="tt-go2" class="tt-btn tt-btn--primary" type="button">Generate</button>
+    </div>
+
     <div class="tt-bars-wrap">
       <p class="tt-caption">next character · click a bar to force it</p>
       <div id="tt-bars" class="tt-bars" aria-label="Top ten next-character candidates with probabilities"></div>
@@ -242,6 +246,16 @@ html[data-theme="light"] .tt-slider input[type="range"] { accent-color: #34568a;
    starts clear of the collapsed header. */
 @media (max-width: 599px) {
   .tt-stage { padding-top: 8.75rem; }
+}
+/* With the panel collapsed on a phone, Generate would be hidden behind the +
+   toggle, so the stage carries its own copy of the button under the text.
+   Hidden from 600px up, where the open panel already shows Generate. */
+.tt-go-row { display: none; }
+@media (max-width: 599px) {
+  .tt-go-row {
+    display: flex; justify-content: center;
+    width: 100%; max-width: 1000px; margin: 0 auto; flex: 0 0 auto;
+  }
 }
 @media (max-width: 768px) {
   /* the chat widget is hidden on phones for .life-app pages, but the corner

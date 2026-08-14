@@ -332,6 +332,7 @@ html[data-theme="light"] .it-rotfield input[type="range"] { accent-color: #34568
   border-radius: 6px; padding: 0.5em 0.8em; transition: background 0.15s ease;
 }
 .it-btn:hover { background: rgba(127,127,127,0.26); }
+.it-btn:disabled { opacity: 0.45; cursor: default; }
 .it-btn--on { background: #82a6cc; border-color: #82a6cc; color: #fff; }
 /* `.it-btn:hover` out-specifies `.it-btn--on`, which washed the selected
    state out of a pressed toggle (Crop, and the cutout's Keep/Remove pair).

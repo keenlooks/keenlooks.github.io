@@ -10,12 +10,12 @@ document.addEventListener('DOMContentLoaded', function() {
         <div id="chat-widget" class="chat-widget-container closed">
             <div class="chat-header">
                 <div class="chat-header-buttons">
-                    <button class="fullscreen-button" title="Toggle fullscreen">
+                    <button class="fullscreen-button" title="Toggle fullscreen" aria-label="Toggle fullscreen">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
                         </svg>
                     </button>
-                    <button class="reset-button" title="Reset chat">
+                    <button class="reset-button" title="Reset chat" aria-label="Reset chat">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
                             <path d="M3 3v5h5"/>
@@ -23,7 +23,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     </button>
                 </div>
                 <span class="chat-title">Ask About My Research</span>
-                <button class="minimize-button">+</button>
+                <button class="minimize-button" aria-label="Open chat">+</button>
             </div>
             <div class="chat-content">
                 <div id="chat-messages"></div>
@@ -560,15 +560,59 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
+    function minimizeChat() {
+        const widget = document.getElementById('chat-widget');
+        const minimizeButton = widget.querySelector('.minimize-button');
+        widget.classList.remove('open');
+        widget.classList.add('closed');
+        minimizeButton.textContent = '+';
+        minimizeButton.setAttribute('aria-label', 'Open chat');
+        // Don't leave focus trapped on a now-hidden control
+        const active = document.activeElement;
+        if (active && widget.contains(active) && active !== minimizeButton) active.blur();
+    }
+
     header.addEventListener('click', function() {
         const widget = document.getElementById('chat-widget');
         const minimizeButton = widget.querySelector('.minimize-button');
         const isOpen = widget.classList.contains('open');
-        
-        widget.classList.toggle('open');
-        widget.classList.toggle('closed');
-        minimizeButton.textContent = isOpen ? '+' : '−';
+
+        if (isOpen) {
+            minimizeChat();
+            return;
+        }
+        widget.classList.remove('closed');
+        widget.classList.add('open');
+        minimizeButton.textContent = '−';
+        minimizeButton.setAttribute('aria-label', 'Minimize chat');
+        // Put the cursor in the input on desktop (also lets Escape close the
+        // panel right away); skip on phones so the keyboard doesn't pop up.
+        if (window.matchMedia('(min-width: 769px)').matches) {
+            /* setTimeout(0): a real click's default action can move focus to
+               <body> after this handler and undo a synchronous focus() */
+            setTimeout(() => userInput.focus(), 0);
+        }
     });
+
+    // Escape minimizes the open chat (leaving fullscreen first). Scoped to when
+    // focus is inside the widget so pages with their own Escape behavior
+    // (gadgets, canvas editors) keep it when the user is working in the page.
+    // Capture phase + stopPropagation keeps a chat-scoped Escape from also
+    // triggering those page handlers.
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        const widget = document.getElementById('chat-widget');
+        if (!widget || !widget.classList.contains('open')) return;
+        const active = document.activeElement;
+        const inWidget = widget.contains(e.target) || (active && widget.contains(active));
+        if (!inWidget) return;
+        e.stopPropagation();
+        if (widget.classList.contains('fullscreen')) {
+            widget.classList.remove('fullscreen');
+            return;
+        }
+        minimizeChat();
+    }, true);
 
     // Prevent chat from minimizing when clicking inside
     document.getElementById('chat-widget').addEventListener('click', (e) => {

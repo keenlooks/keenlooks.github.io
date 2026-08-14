@@ -124,6 +124,12 @@
   }
 
   // ---- single-payout view -----------------------------------------------
+  // longest first; drawSingle picks the longest one that fits the plot width
+  var AXIS_HINTS = [
+    'click a year on the bottom axis to set a calendar date',
+    'click an axis year to set a date',
+    'click a year below'
+  ];
   function drawSingle(c) {
     yMax = SINGLE_FV * 1.10;
     drawGrid(c, fmtUSD);
@@ -148,6 +154,14 @@
     dot(pxp, pyp, c.accent, c.panel);
     ctx.fillStyle = c.text; ctx.font = '700 14px "Source Sans 3", system-ui, sans-serif';
     ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText('Price today: ' + fmtUSD(p), pxp + 12, pyp);
+    // The x-axis tick row is clickable in this view too (it anchors the
+    // timeline to a calendar year); hint at it so that editor isn't a surprise.
+    // Shortened progressively so it never runs past the plot (phone widths).
+    ctx.fillStyle = c.muted; ctx.font = '11px "Source Sans 3", system-ui, sans-serif';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+    var availH = (W - M.r) - (M.l + 8) - 4, ah = AXIS_HINTS[AXIS_HINTS.length - 1], hk;
+    for (hk = 0; hk < AXIS_HINTS.length; hk++) { if (ctx.measureText(AXIS_HINTS[hk]).width <= availH) { ah = AXIS_HINTS[hk]; break; } }
+    ctx.fillText(ah, M.l + 8, H - M.b - 8);
   }
   function dot(x, y, fill, ring) {
     ctx.beginPath(); ctx.arc(x, y, 6.5, 0, Math.PI * 2); ctx.fillStyle = ring; ctx.fill();
@@ -337,13 +351,16 @@
     for (var i = 0; i < s.payouts.length; i++) { var d = Math.abs(xPx(s.payouts[i].t) - x); if (d < bd) { bd = d; best = i; } }
     return best;
   }
-  function openPayoutEditor(idx) {
+  function openPayoutEditor(idx, isNew) {
     if (!overlay || !s.payouts[idx]) return;
     var p = s.payouts[idx], vb = bondValueAt(p.t - 1e-4, displayRate);
     overlay.open({
       x: xPx(p.t), y: yPx(vb) - 20, value: Math.round(p.amt), width: 80,
       onCommit: function (v) { if (v == null || v <= 0) s.payouts.splice(idx, 1); else p.amt = v; draw(); },
-      onDelete: function () { s.payouts.splice(idx, 1); draw(); }
+      onDelete: function () { s.payouts.splice(idx, 1); draw(); },
+      // Escape on a JUST-ADDED payout removes it again (a misclick should not
+      // leave a stray $100 payout behind); editing an existing one keeps it.
+      onCancel: isNew ? function () { s.payouts.splice(idx, 1); draw(); } : null
     });
   }
   function nearestTick(x) {
@@ -376,7 +393,7 @@
     var t = Math.max(0.1, Math.min(s.years, Math.round(pxToYear(x) * 10) / 10));   // land where clicked
     s.payouts.push({ t: t, amt: DEFAULT_PAY });
     draw();
-    openPayoutEditor(s.payouts.length - 1);
+    openPayoutEditor(s.payouts.length - 1, true);   // Esc removes it again
   });
   window.addEventListener('pointermove', function (e) {
     if (!drag) return;

@@ -766,6 +766,10 @@
     busy = b;
     if (toolbar) toolbar.classList.toggle('pt-busy', b);
     if (drop) drop.classList.toggle('pt-busy', b);
+    // the export buttons take a REAL disabled while busy (pointer-events:none on the
+    // toolbar does not stop keyboard activation, and a queued rapid second click on
+    // Download would build the same PDF twice); updateToolbar restores them after
+    if (b) [btnDownload, btnExtract, btnSplit].forEach(function (x) { if (x) x.disabled = true; });
     if (!b) { progressDone(); updateToolbar(); }
   }
 
@@ -1486,7 +1490,9 @@
     var st = rangeState();
     if (btnExtract) {
       var exIdx = extractIdx();
-      btnExtract.disabled = exIdx.length === 0;
+      // busy keeps the export buttons disabled even when a mid-operation
+      // renderGrid/updateToolbar runs (setBusy(false) re-runs this to restore them)
+      btnExtract.disabled = exIdx.length === 0 || busy;
       // same verb as the main button, scope is the only difference: "Download all (12)"
       // vs "Download selected" / "Download 3 pages" (selection or the typed range)
       btnExtract.textContent = exIdx.length ? ('Download ' + exIdx.length + ' page' + (exIdx.length > 1 ? 's' : '')) : 'Download selected';
@@ -1496,9 +1502,9 @@
     }
     // Split always has a fallback (the typed range, else the whole document), so an
     // invalid range must not disable it — only having zero pages at all should
-    if (btnSplit) btnSplit.disabled = !has;
+    if (btnSplit) btnSplit.disabled = !has || busy;
     if (btnDownload) {
-      btnDownload.disabled = !has;
+      btnDownload.disabled = !has || busy;
       btnDownload.textContent = has ? ('Download all (' + pages.length + ')') : 'Download all';
     }
     if (btnSelAll) btnSelAll.textContent = (sel === pages.length && pages.length > 0) ? 'Select none' : 'Select all';
@@ -1998,8 +2004,13 @@
     return function (d, t) { return progress(d, t, verb + ' page ' + d + ' of ' + t + '…'); };
   }
 
+  // a tiny PDF can finish building inside a double-click's gap, so the busy lock alone
+  // still lets the second click start an identical second build — swallow re-clicks
+  // that land within a second of the previous build finishing
+  var lastDlDone = 0;
   btnDownload.addEventListener('click', function () {
     if (!pages.length || busy) return;
+    if (Date.now() - lastDlDone < 1000) return;
     setBusy(true);
     progress(0, pages.length, 'Building PDF…');
     buildPdf(pages, buildTick('Building')).then(function (bytes) {
@@ -2007,7 +2018,7 @@
       downloadBytes(bytes, name);
       setStatus('Saved ' + name + ' (' + fmtSize(bytes.length) + ').' + flattenNote(), flattenKind());
     }).catch(function (e) { setStatus('Error: ' + (e && e.message || e), 'err'); })
-      .then(function () { setBusy(false); });
+      .then(function () { lastDlDone = Date.now(); setBusy(false); });
   });
 
   btnExtract.addEventListener('click', function () {

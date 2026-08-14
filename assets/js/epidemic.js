@@ -174,7 +174,11 @@
       if (panelBox && panelBox.left > W * 0.55 && panelBox.left < x1 && panelBox.bottom > cb - ch - 18) {
         x1 = panelBox.left - 14;
       }
-      var peak = 1;
+      /* the y-scale floors at 5% of the population: normalizing to the
+         curve's own peak drew a 1-cell fizzle as a full-height mountain,
+         the opposite of the herd-immunity story. Big outbreaks still fill
+         the height; tiny ones now draw honestly tiny. */
+      var peak = Math.max(1, cols * rows * 0.05);
       for (i = 0; i < history.length; i++) if (history[i] > peak) peak = history[i];
       var dxs = Math.min(4, (x1 - x0) / history.length);
       ctx.beginPath();
@@ -216,11 +220,25 @@
   function start() { if (!raf) raf = requestAnimationFrame(loop); }
 
   /* ---- click / drag to paint (infect, vaccinate, or right-drag to clear) ---- */
+  /* the closest susceptible cell to (cx, cy) — a whole-grid scan is cheap */
+  function nearestSusceptible(cx, cy) {
+    var best = -1, bd = Infinity;
+    for (var y = 0; y < rows; y++) {
+      for (var x = 0; x < cols; x++) {
+        if (grid[y * cols + x] !== 0) continue;
+        var dx = x - cx, dy = y - cy, d = dx * dx + dy * dy;
+        if (d < bd) { bd = d; best = y * cols + x; }
+      }
+    }
+    return best;
+  }
+
   function paintAt(clientX, clientY, erase) {
     var doErase = erase || paintMode === 'erase';    // right-drag always erases; the Erase mode makes left-drag/touch erase too
     var r = canvas.getBoundingClientRect();
     var cx = Math.floor((clientX - r.left) / cell), cy = Math.floor((clientY - r.top) / cell);
     var rad = (paintMode !== 'infect' || doErase) ? 2 : 1;    // a bigger brush for painting regions
+    var infected = 0;
     for (var dy = -rad; dy <= rad; dy++) {
       for (var dx = -rad; dx <= rad; dx++) {
         var x = cx + dx, y = cy + dy;
@@ -228,20 +246,35 @@
         var i = y * cols + x, v = grid[i];
         if (doErase) { grid[i] = 0; }                // back to plain susceptible
         else if (paintMode === 'vaccinate') { if (v === 0) grid[i] = -2; }
-        else { if (v === 0) grid[i] = durDays; }     // infect (only susceptible cells)
+        else { if (v === 0) { grid[i] = durDays; infected++; } }   // infect (only susceptible cells)
       }
     }
-    over = false;
+    /* "Click to reignite" must actually reignite: at high vaccination the
+       whole brush often lands on vaccinated cells, so seed the nearest
+       susceptible cell instead of doing nothing */
+    if (over && !doErase && paintMode === 'infect' && !infected) {
+      var ni = nearestSusceptible(cx, cy);
+      if (ni >= 0) { grid[ni] = durDays; infected++; }
+    }
+    if (doErase || paintMode === 'vaccinate' || infected) over = false;
   }
   canvas.addEventListener('pointerdown', function (e) {
+    /* take focus off any panel control: preventDefault below suppresses the
+       browser's own focus transfer, and a still-focused button (say, Save
+       image) would re-fire on the next Space press instead of pausing */
+    if (document.activeElement && document.activeElement !== document.body &&
+        document.activeElement.blur) document.activeElement.blur();
     painting = { erase: e.button === 2 };
     paintAt(e.clientX, e.clientY, painting.erase);
     try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
     e.preventDefault();
   });
   canvas.addEventListener('pointermove', function (e) { if (painting) paintAt(e.clientX, e.clientY, painting.erase); });
-  canvas.addEventListener('pointerup', function () { painting = null; });
-  canvas.addEventListener('pointercancel', function () { painting = null; });
+  /* recount when a paint stroke ends: while paused the sim never steps, so
+     without this the status (and its aria-live mirror) stayed stale */
+  function endPaint() { if (painting) { painting = null; recount(); } }
+  canvas.addEventListener('pointerup', endPaint);
+  canvas.addEventListener('pointercancel', endPaint);
   canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
 
   /* Bring the live vaccinated count to a target fraction of the whole grid, by

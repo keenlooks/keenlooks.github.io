@@ -44,7 +44,14 @@
             startYear: DEF.startYear, lumpAmount: DEF.lumpAmount, lumps: [] };
   var DEFAULT_LUMP = 1000;
   var overlay = window.makeNumberOverlay ? window.makeNumberOverlay(canvas) : null;
-  var drag = null;              // {idx, startX, moved} while dragging a placed payment
+  var drag = null;              // {idx, startX, moved, maxMonth} while dragging a placed payment
+  var notice = null, noticeT;   // transient on-canvas message {text, x, y, until}
+  function showNotice(text, x, y) {
+    notice = { text: text, x: x, y: y, until: Date.now() + 2400 };
+    update();
+    clearTimeout(noticeT);
+    noticeT = setTimeout(function () { notice = null; update(); }, 2450);
+  }
   s.startYearCal = null;        // calendar year for year 0 (null = show "years from today")
   function tickLabel(yr) { return s.startYearCal != null ? String(s.startYearCal + yr) : String(yr); }
 
@@ -184,19 +191,23 @@
     lineFor(base.series, c.baseline, 2, null);
     lineFor(scn.series, c.accent, 2.6, c.accentFill);
 
-    // one-time payment markers (placed by clicking)
+    // one-time payment markers (placed by clicking). Dragging can no longer
+    // strand one past payoff, but a slider change (e.g. raising the extra
+    // payment) still can: those are greyed and tagged so the chart never shows
+    // an accent marker the numbers ignore.
     for (var li = 0; li < s.lumps.length; li++) {
       var lx = xPx(s.lumps[li].month / 12);
-      ctx.strokeStyle = c.guide; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+      var inert = s.lumps[li].month >= payoffWithout(li);
+      ctx.strokeStyle = inert ? c.grid : c.guide; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
       ctx.beginPath(); ctx.moveTo(lx, M.t); ctx.lineTo(lx, H - M.b); ctx.stroke();
       ctx.setLineDash([]);
       // downward triangle at top
-      ctx.fillStyle = c.accent;
+      ctx.fillStyle = inert ? c.muted : c.accent;
       ctx.beginPath(); ctx.moveTo(lx - 5, M.t - 9); ctx.lineTo(lx + 5, M.t - 9); ctx.lineTo(lx, M.t - 1); ctx.closePath(); ctx.fill();
       // amount label in the top margin
-      ctx.fillStyle = c.text; ctx.font = '600 11px "Source Sans 3", system-ui, sans-serif';
+      ctx.fillStyle = inert ? c.muted : c.text; ctx.font = '600 11px "Source Sans 3", system-ui, sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(usdK(s.lumps[li].amount), lx, 10);
+      ctx.fillText(usdK(s.lumps[li].amount) + (inert ? ' (no effect)' : ''), lx, 10);
       ctx.font = '12px "Source Sans 3", system-ui, sans-serif';
     }
 
@@ -234,6 +245,22 @@
     ctx.strokeStyle = c.accent; ctx.lineWidth = 2.6;
     ctx.beginPath(); ctx.moveTo(gx2, gy2 + 18); ctx.lineTo(gx2 + 22, gy2 + 18); ctx.stroke();
     ctx.fillStyle = c.text; ctx.fillText(lg[1], gx2 + 28, gy2 + 18);
+
+    // transient notice (e.g. a click past the payoff point), drawn last so it
+    // sits on top; cleared by a timeout in showNotice
+    if (notice && Date.now() < notice.until) {
+      ctx.font = '600 12px "Source Sans 3", system-ui, sans-serif';
+      var ntw = ctx.measureText(notice.text).width;
+      var nx = Math.max(M.l + ntw / 2 + 8, Math.min(W - M.r - ntw / 2 - 8, notice.x));
+      var ny = Math.max(M.t + 26, Math.min(H - M.b - 16, notice.y));
+      ctx.globalAlpha = 0.93; ctx.fillStyle = c.panel;
+      ctx.fillRect(nx - ntw / 2 - 7, ny - 12, ntw + 14, 24);
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = c.axis; ctx.lineWidth = 1;
+      ctx.strokeRect(nx - ntw / 2 - 7, ny - 12, ntw + 14, 24);
+      ctx.fillStyle = c.text; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(notice.text, nx, ny);
+    }
   }
 
   // ---- principal/interest comparison bars (HTML) -------------------------
@@ -281,7 +308,7 @@
   }
 
   // ---- chart click: place / remove one-time payments ---------------------
-  function openLumpEditor(idx) {
+  function openLumpEditor(idx, isNew) {
     if (!overlay || !s.lumps[idx]) return;
     overlay.open({
       x: xPx(s.lumps[idx].month / 12), y: 10, value: Math.round(s.lumps[idx].amount), width: 80,
@@ -290,7 +317,10 @@
         else s.lumps[idx].amount = v;
         update();
       },
-      onDelete: function () { s.lumps.splice(idx, 1); update(); }
+      onDelete: function () { s.lumps.splice(idx, 1); update(); },
+      // Escape on a JUST-ADDED payment removes it again (a misclick should not
+      // leave a stray $1k payment behind); editing an existing one keeps it.
+      onCancel: isNew ? function () { s.lumps.splice(idx, 1); update(); } : null
     });
   }
   // Click an x-axis tick to anchor the timeline to a calendar year; ticks then
@@ -312,6 +342,16 @@
     return best;
   }
   function clampMonth(m) { return Math.max(1, Math.min(s.years * 12, m)); }
+  // A payment does something only if it lands before the month the loan pays
+  // off WITHOUT it (at or past that month the balance is already $0). This is
+  // the exact test: the scenario payoff moves with the payment, so testing
+  // against it mislabels a payment that itself finishes the loan.
+  function payoffWithout(idx) {
+    var others = s.lumps.filter(function (l, i) { return i !== idx; });
+    return simulate(s.extra, Math.round(s.startYear * 12), others).payoffMonths;
+  }
+  // last month a dragged payment can land on and still count
+  function dragMaxMonth(idx) { return Math.max(1, payoffWithout(idx) - 1); }
 
   canvas.addEventListener('pointerdown', function (e) {
     if (!W || !H) return;
@@ -323,23 +363,38 @@
     if (y >= H - M.b + 2 && y <= H - M.b + 26) { e.preventDefault(); openDateEditor(nearestTick(x)); return; }
     // click near an existing payment -> begin a drag (a click without dragging edits its amount)
     for (var k = 0; k < s.lumps.length; k++) {
-      if (Math.abs(xPx(s.lumps[k].month / 12) - x) < 14) { drag = { idx: k, startX: x, moved: false }; e.preventDefault(); return; }
+      if (Math.abs(xPx(s.lumps[k].month / 12) - x) < 14) { drag = { idx: k, startX: x, moved: false, maxMonth: dragMaxMonth(k) }; e.preventDefault(); return; }
     }
     if (y < M.t - 12 || y > H - M.b + 4) return;
     var month = clampMonth(pxToMonth(x));
-    // ignore clicks past the point the loan is already paid off — a payment then does nothing
-    if (month >= simulate(s.extra, Math.round(s.startYear * 12), s.lumps).payoffMonths) return;
+    // a payment past the payoff point does nothing: say so instead of silently ignoring the click
+    if (month >= simulate(s.extra, Math.round(s.startYear * 12), s.lumps).payoffMonths) {
+      e.preventDefault();
+      showNotice('The loan is already paid off by then.', x, y);
+      return;
+    }
     e.preventDefault();
     s.lumps.push({ month: month, amount: DEFAULT_LUMP });
     update();
-    openLumpEditor(s.lumps.length - 1);                 // immediately type the amount
+    openLumpEditor(s.lumps.length - 1, true);           // immediately type the amount (Esc removes it again)
   });
   window.addEventListener('pointermove', function (e) {
     if (!drag) return;
     var rect = canvas.getBoundingClientRect(), x = e.clientX - rect.left;
     if (!drag.moved && Math.abs(x - drag.startX) < 4) return;   // tiny move = still a click
     drag.moved = true;
-    if (s.lumps[drag.idx]) { s.lumps[drag.idx].month = clampMonth(pxToMonth(x)); update(); }
+    if (s.lumps[drag.idx]) {
+      var m = clampMonth(pxToMonth(x));
+      // the drag stops at payoff: a payment can't land after the loan is gone,
+      // so the chart never shows a marker the numbers ignore
+      if (m > drag.maxMonth) {
+        m = drag.maxMonth;
+        // drawn below the legend block so the two never overlap mid-drag
+        showNotice('The loan is paid off by then, so it stops here.', xPx(m / 12), M.t + 88);
+      }
+      s.lumps[drag.idx].month = m;
+      update();
+    }
   });
   window.addEventListener('pointerup', function () {
     if (!drag) return;
