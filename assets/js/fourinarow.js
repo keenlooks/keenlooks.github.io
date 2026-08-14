@@ -1839,3 +1839,26 @@
   }
   requestAnimationFrame(frame);
 })();
+
+/* ---- guided first-run tour (design pass F3) --------------------------------
+   Registered from OUTSIDE the page module on purpose: targets come from the
+   read-only window.__c4 hooks, so the pinned game code above stays untouched.
+   gadget-tour.js also reroutes the ? button here (see its firstRunHint shim). */
+(function () {
+  if (!window.GadgetUI || !window.GadgetUI.tour) return;
+  function box(name) {
+    try {
+      var b = window.__c4 && window.__c4.boxes;
+      return b ? b[name] : null;
+    } catch (e) { return null; }
+  }
+  window.GadgetUI.tour('fourinarow', [
+    { text: 'You are blue. Tap a column to drop a disc.',
+      rect: function () { return box('board'); }, side: 'right' },
+    { text: 'The gold robot shows what it is thinking while it plays.',
+      rect: function () { return box('think') || box('robot') || box('board'); },
+      side: 'top' },
+    { text: 'The panel sets how hard it thinks.',
+      rect: '#c4-panel', side: 'left' }
+  ], { avoid: ['#c4-panel'] });
+})();

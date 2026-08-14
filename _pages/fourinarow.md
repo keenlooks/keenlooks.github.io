@@ -5,6 +5,7 @@ permalink: /fourinarow/
 author_profile: false
 excerpt: "Play the classic four-in-a-row game against a neural network refined by self-play, and watch it think: the search tree grows in real time as it considers lines."
 description: "Play four in a row against an AlphaZero-style neural network by Keane Lucas. The AI runs entirely in your browser, and its thinking is visible: a live search tree, its raw instinct versus what the search concludes, and a win-probability bar."
+og_image: /images/og/fourinarow.png
 ---
 
 <div class="c4-app life-app">
@@ -177,6 +178,7 @@ html[data-theme="light"] .c4-check input { accent-color: #34568a; }
 </style>
 
 <script defer src="{{ '/assets/js/gadget-ui.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
+<script defer src="{{ '/assets/js/gadget-tour.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/share-hash.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/fourinarow-core.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/fourinarow-model.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>

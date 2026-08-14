@@ -1,0 +1,252 @@
+/* ==========================================================================
+   Command palette (design pass F1) — .cmdk modal + the masthead search button
+
+   Dark is the compiled base; light comes through the dual-context pattern
+   (html[data-theme="light"] + prefers-color-scheme) like everything else.
+   Plate styling matches the gadget control-panel family (life-panel).
+   ========================================================================== */
+
+/* ---- masthead magnifier button ---------------------------------------- */
+
+.masthead__menu {
+  position: relative;
+}
+
+/* Reserve the far-right slot for the search button; the greedy-nav's own
+   hamburger (absolute right:0 inside the nav) then lands just left of it. */
+.greedy-nav {
+  margin-right: 2.4rem;
+}
+
+#palette-btn {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  opacity: 0.7;
+  cursor: pointer;
+  transition: opacity 0.2s;
+
+  &:hover,
+  &:focus-visible {
+    opacity: 1;
+  }
+
+  svg {
+    display: block;
+  }
+}
+
+/* Voyage's dark-sky light mode re-inks the masthead links by hand; the
+   search button sits on the same sky, so it follows the same ink. */
+body.voy-darksky #palette-btn {
+  color: #d6d6d6;
+}
+
+/* ---- palette modal ----------------------------------------------------- */
+
+.cmdk {
+  position: fixed;
+  inset: 0;
+  z-index: 12000; /* above the chat widget (10000) and every page modal */
+}
+
+.cmdk[hidden] {
+  display: none !important; /* [hidden] must beat any display rule */
+}
+
+.cmdk__scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.cmdk__panel {
+  position: absolute;
+  left: 50%;
+  top: 13vh;
+  transform: translateX(-50%);
+  width: min(34rem, calc(100vw - 2rem));
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(18, 18, 18, 0.97);
+  -webkit-backdrop-filter: blur(6px);
+          backdrop-filter: blur(6px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  animation: cmdk-in 0.14s ease-out;
+}
+
+@keyframes cmdk-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(-6px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+.cmdk .cmdk__input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.7em 0.95em;
+  margin: 0;
+  font-family: inherit;
+  font-size: 1.05rem;
+  line-height: 1.4;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.28);
+  border-radius: 0;
+  box-shadow: none;
+
+  &:focus,
+  &:focus-visible {
+    outline: none; /* the dialog is the focus context; the caret shows */
+    border-bottom-color: rgba(130, 166, 204, 0.55);
+  }
+
+  &::placeholder {
+    color: inherit;
+    opacity: 0.45;
+  }
+}
+
+.cmdk__list {
+  max-height: min(24rem, 55vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0.3em 0.35em 0.4em;
+}
+
+.cmdk__sec {
+  padding: 0.6em 0.65em 0.2em;
+  font-size: 0.72em;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.55;
+}
+
+.cmdk .cmdk__item {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0.42em 0.65em;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+
+  &:visited {
+    color: inherit;
+  }
+}
+
+.cmdk .cmdk__item--sel {
+  background: rgba(130, 166, 204, 0.16);
+}
+
+.cmdk__item-t {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cmdk__item-d {
+  display: block;
+  font-size: 0.8em;
+  opacity: 0.6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cmdk__empty {
+  padding: 1em 0.9em;
+  opacity: 0.7;
+}
+
+.cmdk__hint {
+  padding: 0.5em 0.95em;
+  font-size: 0.75em;
+  opacity: 0.55;
+  border-top: 1px solid rgba(127, 127, 127, 0.25);
+}
+
+/* ---- phone sheet (<=480px): near-full-width, under the masthead -------- */
+
+@media screen and (max-width: 480px) {
+  .cmdk__panel {
+    top: 3.6rem;
+    left: 0.5rem;
+    right: 0.5rem;
+    transform: none;
+    width: auto;
+  }
+
+  @keyframes cmdk-in {
+    from { opacity: 0; transform: translateY(-6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .cmdk__list {
+    max-height: calc(100vh - 12rem);
+    max-height: calc(100dvh - 12rem);
+  }
+}
+
+/* ---- reduced motion ---------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .cmdk__panel {
+    animation: none;
+  }
+}
+
+/* ---- light theme (dual context) ---------------------------------------- */
+
+@mixin cmdk-light {
+  .cmdk__scrim {
+    background: rgba(20, 20, 20, 0.3);
+  }
+
+  .cmdk__panel {
+    background: rgba(255, 255, 255, 0.98);
+    border-color: rgba(0, 0, 0, 0.12);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+  }
+
+  .cmdk .cmdk__input:focus {
+    border-bottom-color: rgba(52, 86, 138, 0.5);
+  }
+
+  .cmdk .cmdk__item--sel {
+    background: rgba(52, 86, 138, 0.1);
+  }
+}
+
+html[data-theme="light"] {
+  @include cmdk-light;
+}
+
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) {
+    @include cmdk-light;
+  }
+}

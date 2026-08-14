@@ -5,6 +5,7 @@ permalink: /creatures/
 author_profile: false
 excerpt: "Soft-body creatures race to the right, the farthest travelers breed, and within a few minutes wobbling blobs learn to run."
 description: "An interactive evolution sandbox by Keane Lucas: a population of soft-body creatures with spring muscles evolves live in your browser. Every twelve seconds the farthest travelers breed, and generation by generation wobbling blobs turn into creatures that genuinely run. Inspired by Karl Sims' Evolved Virtual Creatures."
+og_image: /images/og/creatures.png
 ---
 
 <div class="cre-app life-app">
@@ -290,6 +291,7 @@ html[data-theme="light"] .cre-slider input[type="range"] { accent-color: #34568a
 </style>
 
 <script defer src="{{ '/assets/js/gadget-ui.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
+<script defer src="{{ '/assets/js/gadget-tour.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/share-hash.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/creatures-core.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/creatures.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>

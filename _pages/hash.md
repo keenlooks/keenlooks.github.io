@@ -2,6 +2,7 @@
 layout: single
 title: "Hash Avalanche"
 permalink: /hash/
+og_image: /images/og/hash.png
 author_profile: false
 excerpt: "Watch SHA-256's avalanche effect: change one character, flip half the bits."
 description: "An interactive SHA-256 avalanche-effect visualizer by Keane Lucas: the digest is drawn as a 16×16 grid of bits, and changing a single character of the message flips roughly half of them, the property that makes cryptographic hashes useful."

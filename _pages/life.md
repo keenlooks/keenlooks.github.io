@@ -2,6 +2,7 @@
 layout: single
 title: "Conway's Game of Life"
 permalink: /life/
+og_image: /images/og/life.png
 author_profile: false
 excerpt: "An interactive, full-screen Conway's Game of Life."
 description: "A full-screen, interactive version of Conway's Game of Life: draw cells with your mouse or finger, change the speed, and edit the birth and survival rules that govern it."

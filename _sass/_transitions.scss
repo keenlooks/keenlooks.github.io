@@ -1,0 +1,95 @@
+/* ==========================================================================
+   Page + theme transitions (design pass F2 + F4)
+
+   F2: cross-document View Transitions — soft ~200ms crossfades between pages.
+   F4: theme toggle sweep — the new theme reveals as a circle growing out of
+       the toggle button (same-document view transition, driven by the inline
+       toggle script in _includes/head/custom.html).
+
+   Browsers without View Transitions (Firefox) ignore all of this and keep
+   today's behavior exactly. Reduced motion turns both off at the bottom.
+   ========================================================================== */
+
+/* --- F2: soft page navigation fades --------------------------------------- */
+
+/* Opt this origin into cross-document view transitions (same-origin
+   navigations only; reloads are excluded by the spec). */
+@view-transition {
+  navigation: auto;
+}
+
+/* The masthead snapshots as its own group so the nav reads as staying put
+   while the page content crossfades beneath it. Nothing else gets a name.
+   (.masthead is already position:relative + z-index:20, so the stacking
+   context this property creates changes nothing outside transitions.) */
+.masthead {
+  view-transition-name: masthead;
+}
+
+/* Tune the default crossfade to ~200ms. */
+::view-transition-old(root),
+::view-transition-new(root),
+::view-transition-old(masthead),
+::view-transition-new(masthead) {
+  animation-duration: 0.2s;
+  animation-timing-function: ease;
+}
+
+/* --- F4: theme toggle circle sweep ----------------------------------------
+   Gated by the temporary html class `vt-theme`, which the toggle script adds
+   just before document.startViewTransition and removes when the transition
+   settles. Navigation fades never carry that class, so none of these rules
+   can ever apply to F2 (and vice versa: the 0.2s tuning above is overridden
+   here by full `animation` shorthands).
+   --vtx / --vty / --vtr are set inline on <html> from the button's rect. */
+
+/* One surface during the sweep: drop the masthead's own snapshot group so
+   the growing circle covers the nav along with everything else. The class is
+   present before the old-state capture, so both snapshots agree. */
+html.vt-theme .masthead {
+  view-transition-name: none;
+}
+
+/* The old theme holds still underneath (no fade: the default crossfade would
+   dim it), the new theme is revealed by a growing circle on top. Blend mode
+   back to normal — the default plus-lighter is only right for a crossfade. */
+html.vt-theme::view-transition-old(root),
+html.vt-theme::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+html.vt-theme::view-transition-new(root) {
+  animation: vt-theme-sweep 0.42s ease-out both;
+}
+
+/* Let mid-sweep clicks reach the page: the transition overlay otherwise
+   captures hit-testing for the whole 420ms, which made the toggle's own
+   double-click skip path unreachable by mouse. Theme sweeps only. */
+html.vt-theme::view-transition {
+  pointer-events: none;
+}
+
+@keyframes vt-theme-sweep {
+  from { clip-path: circle(0px at var(--vtx, 2.75rem) var(--vty, 100%)); }
+  to   { clip-path: circle(var(--vtr, 142vmax) at var(--vtx, 2.75rem) var(--vty, 100%)); }
+}
+
+/* --- Reduced motion: no fades, no sweep ------------------------------------
+   The toggle script also checks this and falls back to the instant flip;
+   this is the CSS belt-and-suspenders for both features. */
+@media (prefers-reduced-motion: reduce) {
+  @view-transition {
+    navigation: none;
+  }
+  ::view-transition-group(root),
+  ::view-transition-image-pair(root),
+  ::view-transition-old(root),
+  ::view-transition-new(root),
+  ::view-transition-group(masthead),
+  ::view-transition-image-pair(masthead),
+  ::view-transition-old(masthead),
+  ::view-transition-new(masthead) {
+    animation: none !important;
+  }
+}

@@ -2,6 +2,7 @@
 layout: single
 title: "Diversification, low fees, and time equals free money"
 permalink: /diversification/
+og_image: /images/og/diversification.png
 author_profile: false
 excerpt: "An interactive look at how holding many investments narrows the range of outcomes, cutting the worst cases while keeping most of the upside, and how fees skim off the top."
 description: "Interactive diversification explainer by Keane Lucas using real 1995–2024 industry returns (Ken French Data Library): as you hold more industries, the spread of 10-year outcomes funnels inward, and a red line shows how much annual fees skim off."

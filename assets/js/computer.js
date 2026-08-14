@@ -601,9 +601,18 @@
         }
       }
     }
-    srcView.addEventListener('click', function () { stopMachine('Edited: machine stopped.'); });
+    /* focus the textarea after the swap so the next keystroke types into the
+       source instead of falling on <body> (where "/" opens the site palette) */
+    srcView.addEventListener('click', function () {
+      stopMachine('Edited: machine stopped.');
+      if (srcTa && !srcTa.hidden) srcTa.focus();
+    });
     srcView.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); stopMachine('Edited: machine stopped.'); }
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        stopMachine('Edited: machine stopped.');
+        if (srcTa && !srcTa.hidden) srcTa.focus();
+      }
     });
 
     /* Tab inserts two spaces (documented in the reference) */
@@ -2040,5 +2049,55 @@
     document.addEventListener('DOMContentLoaded', boot);
   } else {
     boot();
+  }
+})();
+
+/* ---- guided first-run tour (design pass F3) --------------------------------
+   Registered from OUTSIDE the page module: targets are the page's own DOM
+   panes, so the pinned machine code above stays untouched. On the 1-column
+   phone layout a pane can be display:none behind a tab, so each target falls
+   back to its tab button. The ? button here opens the instruction reference
+   (pinned behavior), so the tour's re-run entry is a small button at the top
+   of that reference instead. */
+(function () {
+  function reg() {
+    if (!window.GadgetUI || !window.GadgetUI.tour) return;
+    function vis(el) { return !!(el && el.offsetWidth && el.offsetHeight); }
+    function rectOf(el) { return vis(el) ? el.getBoundingClientRect() : null; }
+    function paneOr(id, tab) {
+      return rectOf(document.getElementById(id)) ||
+        rectOf(document.querySelector('.comp-tab[data-tab="' + tab + '"]'));
+    }
+    var t = window.GadgetUI.tour('computer', [
+      { text: 'A real, tiny computer. The panel on the left holds the program it runs.',
+        rect: function () { return paneOr('pane-code', 'code'); }, side: 'right' },
+      { text: 'The board lights up as it works. Slow the speed down to watch each step.',
+        rect: function () { return paneOr('pane-machine', 'machine'); }, side: 'bottom' },
+      { text: 'Try the examples, or change the code and press Assemble.',
+        rect: function () {
+          return rectOf(document.querySelector('.comp-codebar')) ||
+            paneOr('pane-code', 'code');
+        }, side: 'bottom' }
+    ]);
+    var refBody = document.getElementById('comp-ref-body');
+    if (t && refBody) {
+      var p = document.createElement('p');
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'comp-btn';
+      b.textContent = 'Show the quick tour';
+      b.addEventListener('click', function () {
+        var x = document.getElementById('comp-ref-close');
+        if (x) x.click();
+        t.start(true);
+      });
+      p.appendChild(b);
+      refBody.insertBefore(p, refBody.firstChild);
+    }
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', reg);
+  } else {
+    reg();
   }
 })();

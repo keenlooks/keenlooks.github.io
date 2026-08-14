@@ -2,6 +2,7 @@
 layout: single
 title: "Epidemic"
 permalink: /epidemic/
+og_image: /images/og/epidemic.png
 author_profile: false
 excerpt: "A stochastic SIR outbreak on a grid: poke it, tune it, vaccinate it, and watch the curve."
 description: "An interactive epidemic simulator by Keane Lucas: every cell is a person, infections spread to neighbors with a probability you control, and a live epidemic curve draws along the bottom. Raise the vaccinated share and watch herd immunity stop outbreaks before they spread."

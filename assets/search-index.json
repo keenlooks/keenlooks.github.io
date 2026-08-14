@@ -1,0 +1,56 @@
+---
+layout: null
+sitemap: false
+---
+{%- comment -%}
+  Command palette search index (design pass F1). Jekyll builds this into a
+  plain JSON array of {title, url, kind, desc, keys} entries covering the
+  site's pages, the Fun/tool pages, publications, and talks. Fetched lazily
+  by assets/js/palette.js on the palette's first open.
+  Excluded: 404, redirect stubs (no title), anything with `search: false`
+  or `sitemap: false` front matter, and the empty theme archive pages.
+{%- endcomment -%}
+{%- assign skip = "/404.html,/terms/,/sitemap/,/page-archive/,/categories/,/tags/,/year-archive/,/collection-archive/,/teaching/,/portfolio/" | split: "," -%}
+{%- assign funtools = "/life/,/gravity/,/magnets/,/pendulum/,/epidemic/,/hash/,/adversarial/,/lander/,/transformer/,/fourier/,/bayes/,/timing/,/fourinarow/,/creatures/,/computer/,/voyage/,/bonds/,/loans/,/diversification/,/imagetools/,/pdftools/,/qr/,/diff/" | split: "," -%}
+{%- assign out = "" -%}
+{%- assign first = true -%}
+{%- for p in site.html_pages -%}
+  {%- if p.title == nil or p.title == "" -%}{%- continue -%}{%- endif -%}
+  {%- if p.search == false -%}{%- continue -%}{%- endif -%}
+  {%- if p.sitemap == false -%}{%- continue -%}{%- endif -%}
+  {%- if p.redirect_to -%}{%- continue -%}{%- endif -%}
+  {%- if skip contains p.url -%}{%- continue -%}{%- endif -%}
+  {%- comment -%} jekyll-optional-front-matter + titles-from-headings turn the
+      vendored libs' VENDOR-LICENSES.md files into titled pages; keep any
+      /assets/ page out of the index. {%- endcomment -%}
+  {%- if p.url contains "/assets/" -%}{%- continue -%}{%- endif -%}
+  {%- assign kind = "page" -%}
+  {%- if funtools contains p.url -%}{%- assign kind = "fun" -%}{%- endif -%}
+  {%- assign d = p.excerpt | default: p.description | default: "" | strip_html | strip_newlines | truncate: 140 -%}
+  {%- capture item -%}{"title":{{ p.title | jsonify }},"url":{{ p.url | jsonify }},"kind":{{ kind | jsonify }},"desc":{{ d | jsonify }},"keys":""}{%- endcapture -%}
+  {%- unless first -%}{%- assign out = out | append: "," -%}{%- endunless -%}
+  {%- assign first = false -%}
+  {%- assign out = out | append: item -%}
+{%- endfor -%}
+{%- for p in site.publications -%}
+  {%- if p.title == nil or p.title == "" -%}{%- continue -%}{%- endif -%}
+  {%- if p.search == false -%}{%- continue -%}{%- endif -%}
+  {%- assign d = p.venue_short | default: p.venue | default: "" | strip_html | strip_newlines | truncate: 100 -%}
+  {%- capture k -%}{{ p.authors | strip_html }} {{ p.venue | strip_html }} {{ p.date | date: "%Y" }}{%- endcapture -%}
+  {%- capture item -%}{"title":{{ p.title | jsonify }},"url":{{ p.url | jsonify }},"kind":"pub","desc":{{ d | jsonify }},"keys":{{ k | strip_newlines | jsonify }}}{%- endcapture -%}
+  {%- unless first -%}{%- assign out = out | append: "," -%}{%- endunless -%}
+  {%- assign first = false -%}
+  {%- assign out = out | append: item -%}
+{%- endfor -%}
+{%- for p in site.talks -%}
+  {%- if p.title == nil or p.title == "" -%}{%- continue -%}{%- endif -%}
+  {%- if p.search == false -%}{%- continue -%}{%- endif -%}
+  {%- capture d -%}{{ p.venue }}{%- if p.date -%}, {{ p.date | date: "%Y" }}{%- endif -%}{%- endcapture -%}
+  {%- assign d = d | strip_html | strip_newlines | truncate: 100 -%}
+  {%- capture k -%}{{ p.venue | strip_html }} {{ p.location }} {{ p.type }} {{ p.date | date: "%Y" }}{%- endcapture -%}
+  {%- capture item -%}{"title":{{ p.title | jsonify }},"url":{{ p.url | jsonify }},"kind":"talk","desc":{{ d | jsonify }},"keys":{{ k | strip_newlines | jsonify }}}{%- endcapture -%}
+  {%- unless first -%}{%- assign out = out | append: "," -%}{%- endunless -%}
+  {%- assign first = false -%}
+  {%- assign out = out | append: item -%}
+{%- endfor -%}
+[{{ out }}]

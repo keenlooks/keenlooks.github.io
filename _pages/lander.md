@@ -2,6 +2,7 @@
 layout: single
 title: "Rocket Lander"
 permalink: /lander/
+og_image: /images/og/lander.png
 author_profile: false
 excerpt: "A reinforcement-learning agent lands a rocket. Change gravity, wind, or the pad and watch it cope."
 description: "An interactive reinforcement-learning demo by Keane Lucas: a small policy network, trained from scratch, flies a rocket down to a landing pad. Change gravity, wind, or the pad, or fling the rocket, and watch the agent adapt in real time."

@@ -2,6 +2,7 @@
 layout: single
 title: "Resize an Image to an Exact File Size in Your Browser"
 permalink: /imagetools/
+og_image: /images/og/imagetools.png
 author_profile: false
 excerpt: "Remove a background or resize an image to a target file size, crop, rotate, strip metadata, and generate a favicon pack, all running privately in your browser with nothing uploaded."
 description: "Remove a background without uploading the photo anywhere: brush what to keep and what to remove, and it runs in your browser. Also resize an image to an exact file size (like 500 KB), crop, rotate, convert JPEG/PNG/WebP, strip EXIF metadata, and generate a favicon pack as a .zip. Nothing is uploaded."

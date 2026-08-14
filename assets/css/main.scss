@@ -41,4 +41,7 @@
 @import "vendor/magnific-popup/magnific-popup";
 @import "print";
 
+@import "transitions"; // view transitions + theme sweep (design pass F2/F4)
+@import "palette";     // command palette (design pass F1)
+
 @import "color-scheme-light"; // prefers-color-scheme: light overrides (must stay last)

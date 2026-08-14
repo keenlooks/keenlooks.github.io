@@ -2,6 +2,7 @@
 layout: single
 title: "Where Your Loan Payments Actually Go"
 permalink: /loans/
+og_image: /images/og/loans.png
 author_profile: false
 excerpt: "An interactive look at how loan payments split between interest and principal, and how paying extra toward a loan (especially early) saves you real money over time."
 description: "Interactive loan amortization explainer by Keane Lucas: see how each payment splits between interest and principal, and how making extra payments (and starting them sooner) cuts total interest and pays a loan off faster."

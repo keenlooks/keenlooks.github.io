@@ -2,6 +2,7 @@
 layout: single
 title: "Fourier Drawing Machine"
 permalink: /fourier/
+og_image: /images/og/fourier.png
 author_profile: false
 excerpt: "Draw any shape and a chain of rotating circles traces it back."
 description: "An interactive Fourier drawing machine by Keane Lucas: sketch any shape and a stack of rotating circles, sized by the discrete Fourier transform of your stroke, redraws it. More circles means a closer fit."

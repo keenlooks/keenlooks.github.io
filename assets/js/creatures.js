@@ -1377,3 +1377,40 @@
   syncModeUI();
   start();
 })();
+
+/* ---- guided first-run tour (design pass F3) --------------------------------
+   Registered from OUTSIDE the page module: targets come from the read-only
+   window.__cre hooks, so the pinned build/evolve code above stays untouched.
+   The `when` gate keeps the tour to build mode; in evolve mode the ? button
+   falls back to the original evolve hint (gadget-tour.js firstRunHint shim). */
+(function () {
+  if (!window.GadgetUI || !window.GadgetUI.tour || !window.__cre) return;
+  var cre = window.__cre;
+  function bodyBox() {
+    var n = cre.nodeCount();
+    if (!n) return null;
+    var x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    for (var i = 0; i < n; i++) {
+      var p = cre.nodePx(i);
+      if (p[0] < x0) x0 = p[0];
+      if (p[0] > x1) x1 = p[0];
+      if (p[1] < y0) y0 = p[1];
+      if (p[1] > y1) y1 = p[1];
+    }
+    return { x: x0 - 16, y: y0 - 16, w: (x1 - x0) + 32, h: (y1 - y0) + 32 };
+  }
+  function edgeBox() {
+    if (!cre.springCount()) return bodyBox();
+    var p = cre.edgePx(0);
+    return { x: p[0] - 26, y: p[1] - 26, w: 52, h: 52 };
+  }
+  window.GadgetUI.tour('creatures', [
+    { text: 'Tap to add a dot. Tap two dots to connect them.',
+      rect: bodyBox, side: 'top' },
+    { text: 'Tap a line to cycle it: muscle, bone, gone.',
+      rect: edgeBox, side: 'top' },
+    { text: 'Press Evolve and watch generations learn to walk.',
+      rect: '#cre-evolve', side: 'top' }
+  ], { when: function () { return cre.mode() === 'build'; },
+       avoid: ['#cre-panel', '#cre-buildbar'] });
+})();

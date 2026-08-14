@@ -48,6 +48,9 @@
 <!-- Conway's Game of Life: subtle animated background (deferred; non-blocking) -->
 <script defer src="{{ base_path }}/assets/js/gol-bg.js?v={{ site.time | date: '%s' }}"></script>
 
+<!-- Command palette: Ctrl+K / "/" site search (design pass F1) -->
+<script defer src="{{ base_path }}/assets/js/palette.js?v={{ site.time | date: '%s' }}"></script>
+
 <!-- Light/dark theme toggle (defaults to OS setting; visitor choice saved in localStorage) -->
 <script>
   (function () {
@@ -115,11 +118,63 @@
       btn.id = 'theme-toggle';
       btn.type = 'button';
       render(btn);
-      btn.addEventListener('click', function () {
-        var next = (effectiveTheme() === 'light') ? 'dark' : 'light';
-        document.documentElement.setAttribute('data-theme', next);
-        try { localStorage.setItem('theme', next); } catch (e) {}
+
+      /* Theme flip with a soft circular sweep out of this button (design pass
+         F4). Same-document view transition, scoped in CSS by the temporary
+         html class `vt-theme` (see _sass/_transitions.scss) so it can never
+         apply to the cross-document navigation fades (F2). Fallbacks keep
+         today's instant flip byte for byte: no startViewTransition (Firefox),
+         reduced motion, or a second click while a sweep is in flight. */
+      var curVt = null;
+      var wantTheme = null;
+      function applyWant() {
+        if (wantTheme === null) return;
+        var t = wantTheme;
+        wantTheme = null;
+        document.documentElement.setAttribute('data-theme', t);
+        try { localStorage.setItem('theme', t); } catch (e) {}
         render(btn);
+      }
+      btn.addEventListener('click', function () {
+        var cur = (wantTheme !== null) ? wantTheme : effectiveTheme();
+        wantTheme = (cur === 'light') ? 'dark' : 'light';
+        var reduced = false;
+        try { reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) {}
+        if (!document.startViewTransition || reduced) { applyWant(); return; }
+        if (curVt) {
+          /* Rapid second click: finish the in-flight sweep instantly and flip
+             right away, so nothing queues up or wedges. */
+          try { curVt.skipTransition(); } catch (e) {}
+          applyWant();
+          return;
+        }
+        var root = document.documentElement;
+        var r = btn.getBoundingClientRect();
+        var cx = r.left + r.width / 2;
+        var cy = r.top + r.height / 2;
+        var rad = Math.ceil(Math.hypot(
+          Math.max(cx, window.innerWidth - cx),
+          Math.max(cy, window.innerHeight - cy)));
+        root.style.setProperty('--vtx', cx.toFixed(1) + 'px');
+        root.style.setProperty('--vty', cy.toFixed(1) + 'px');
+        root.style.setProperty('--vtr', rad + 'px');
+        root.classList.add('vt-theme');
+        var done = function () {
+          root.classList.remove('vt-theme');
+          curVt = null;
+        };
+        try {
+          if (window.ViewTransition && ViewTransition.prototype && ('types' in ViewTransition.prototype)) {
+            curVt = document.startViewTransition({ update: applyWant, types: ['theme'] });
+          } else {
+            curVt = document.startViewTransition(applyWant);
+          }
+          if (curVt.ready && curVt.ready.catch) curVt.ready.catch(function () {});
+          curVt.finished.then(done, done);
+        } catch (e) {
+          done();
+          applyWant();
+        }
       });
       document.body.appendChild(btn);
 

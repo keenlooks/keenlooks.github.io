@@ -2,6 +2,7 @@
 layout: single
 title: "Diff Checker"
 permalink: /diff/
+og_image: /images/og/diff.png
 author_profile: false
 excerpt: "Compare two texts, files, or PDFs privately in your browser. Nothing is uploaded."
 description: "A private, in-browser diff checker by Keane Lucas: compare two pieces of text, two files, or the extracted text of two PDFs, side by side or unified, with word-level change highlights. Everything runs locally; nothing you paste or drop is uploaded."

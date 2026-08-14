@@ -2,6 +2,7 @@
 layout: single
 title: "QR Studio"
 permalink: /qr/
+og_image: /images/og/qr.png
 author_profile: false
 excerpt: "Generate and scan QR codes in your browser. The codes are static, so the data lives in the pattern itself, with no redirect service, and a printed code keeps working forever."
 description: "A private, in-browser QR utility by Keane Lucas: generate static QR codes for links, text, Wi-Fi, contact cards, email, phone, and SMS, download them as PNG or SVG, and scan codes from an image or your camera. Static codes carry the data themselves, no redirect service involved, so a printed code never expires. Nothing is uploaded."

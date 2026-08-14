@@ -2,6 +2,7 @@
 layout: single
 title: "Gravity Sandbox"
 permalink: /gravity/
+og_image: /images/og/gravity.png
 author_profile: false
 excerpt: "A full-screen 2D n-body gravity playground: pick a mass, click to drop a body, or drag it to fling it into orbit, and watch everything pull on everything else."
 description: "An interactive full-screen 2D gravity sandbox by Keane Lucas: pick a mass, click to drop a body, or drag to fling it into orbit. Newtonian gravity pulls everything together and colliding bodies merge. Trace orbits and visualize each body's gravity well."

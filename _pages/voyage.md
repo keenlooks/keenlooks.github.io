@@ -2,6 +2,7 @@
 layout: single
 title: "Mission to Anywhere"
 permalink: /voyage/
+og_image: /images/og/voyage.png
 author_profile: false
 excerpt: "Pick any planet or any real star in the sky, and see what the trip honestly takes, including what relativity does to the clocks."
 description: "An interactive full-screen trip planner by Keane Lucas: real JPL planet positions and porkchop transfer windows, a real star catalog with true positions and colors, exoplanets from NASA's archive, and honest relativistic travel times, energy costs and clocks for a constant-acceleration starship."

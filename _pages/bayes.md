@@ -2,6 +2,7 @@
 layout: single
 title: "When a 99% Accurate Test Is Usually Wrong"
 permalink: /bayes/
+og_image: /images/og/bayes.png
 author_profile: false
 excerpt: "An interactive look at base rates and Bayes' rule: test 10,000 people at once and watch why a positive result on an accurate test can still usually be a false alarm."
 description: "Interactive base-rate and Bayes' rule visualizer by Keane Lucas: a grid of 10,000 person dots with adjustable prevalence, sensitivity, and specificity, plus a security-alert framing showing why rare conditions make accurate tests usually wrong."

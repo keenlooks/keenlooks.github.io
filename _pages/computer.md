@@ -5,6 +5,7 @@ permalink: /computer/
 author_profile: false
 excerpt: "A complete 8-bit computer in your browser: write assembly, then watch every value move between registers, memory, and the ALU while your program draws to a tiny screen."
 description: "The Visible Computer by Keane Lucas: the KL-8 is an original 8-bit machine that runs in the browser. Write assembly in a real editor, assemble it, and watch the datapath animate every fetch, decode, and execute while your program draws on a 32 by 32 pixel screen and reads the keyboard."
+og_image: /images/og/computer.png
 ---
 
 <div id="comp-app" class="comp-app life-app" data-cols="3" data-tab="code">
@@ -431,6 +432,7 @@ html[data-theme="light"] .gadget-hint { background: rgba(255,255,255,0.94); }
 </style>
 
 <script defer src="{{ '/assets/js/gadget-ui.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
+<script defer src="{{ '/assets/js/gadget-tour.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/share-hash.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/computer-core.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/computer.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>

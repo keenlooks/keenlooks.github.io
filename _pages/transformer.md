@@ -2,6 +2,7 @@
 layout: single
 title: "Tiny Transformer"
 permalink: /transformer/
+og_image: /images/og/transformer.png
 author_profile: false
 excerpt: "A tiny GPT writes Shakespeare one character at a time in your browser, with every probability and attention head on display."
 description: "An interactive transformer demo by Keane Lucas: a small character-level GPT, trained on Tiny Shakespeare, runs entirely in your browser with no ML library. Watch the next-character probabilities, force its choices, and inspect the attention heads behind every character it writes."

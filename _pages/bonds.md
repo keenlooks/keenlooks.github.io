@@ -2,6 +2,7 @@
 layout: single
 title: "Why Bond Prices Fall When Rates Rise"
 permalink: /bonds/
+og_image: /images/og/bonds.png
 author_profile: false
 excerpt: "An interactive look at why a bond's price drops when interest rates go up."
 description: "Interactive explainer by Keane Lucas: a bond is a fixed future payout, so when interest rates rise, that same future payout is worth less today, and the bond's price falls. Drag the rate and watch."

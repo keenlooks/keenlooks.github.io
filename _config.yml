@@ -153,6 +153,7 @@ exclude:
   - make_adversarial_model.py
   - make_favicons.py
   - make_fourinarow_model.py
+  - make_og_cards.py
   - make_voyage_data.py
   - make_lander_model.py
   - make_transformer_model.py

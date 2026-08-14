@@ -2,6 +2,7 @@
 layout: single
 title: "Double Pendulum"
 permalink: /pendulum/
+og_image: /images/og/pendulum.png
 author_profile: false
 excerpt: "Chaos you can grab: two pendulums start 0.001 radians apart and end up nowhere near each other."
 description: "An interactive full-screen double pendulum by Keane Lucas: drag the bobs to set a pose and let go. A grey twin starts one thousandth of a radian away, so you can watch how long the two stay together before chaos pulls their paths apart."

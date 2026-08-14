@@ -2,6 +2,7 @@
 layout: single
 title: "Magnetic Field Visualizer"
 permalink: /magnets/
+og_image: /images/og/magnets.png
 author_profile: false
 excerpt: "A full-screen sandbox: drop bar magnets, watch their field lines, and let them snap and repel."
 description: "An interactive full-screen magnetic-field sandbox by Keane Lucas: place bar magnets of different strengths, drag and rotate them, and watch the field lines they trace. Opposite poles attract and snap into a stronger magnet; like poles push apart. Optional iron filings, and a toggle to freeze the dynamics for a static field study."

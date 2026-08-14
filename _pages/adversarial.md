@@ -2,6 +2,7 @@
 layout: single
 title: "Fool a Neural Network"
 permalink: /adversarial/
+og_image: /images/og/adversarial.png
 author_profile: false
 excerpt: "Add a small, carefully chosen amount of noise to a digit and watch a neural network change its mind: adversarial examples, running live in your browser."
 description: "An interactive adversarial-example demo by Keane Lucas: a small MNIST classifier runs entirely in your browser, and the Fast Gradient Sign Method nudges every pixel just enough to flip its prediction while the image looks unchanged to you. Draw your own digits and attack them too."

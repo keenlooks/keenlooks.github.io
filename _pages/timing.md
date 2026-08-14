@@ -2,6 +2,7 @@
 layout: single
 title: "Recovering a Secret From Timing Alone"
 permalink: /timing/
+og_image: /images/og/timing.png
 author_profile: false
 excerpt: "A timing-attack demo: recover a hidden token one character at a time, using nothing but how long a comparison takes."
 description: "Interactive timing-attack demo by Keane Lucas: a hidden 8-character token is recovered one character at a time from response times alone against a naive character-by-character compare, while a constant-time compare leaks nothing. Explains why string comparison that bails at the first mismatch is dangerous, and why crypto libraries insist on constant-time primitives."

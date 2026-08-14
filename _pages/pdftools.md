@@ -2,6 +2,7 @@
 layout: single
 title: "PDF Toolbench: merge, redact, sign, OCR & compress PDFs in your browser"
 permalink: /pdftools/
+og_image: /images/og/pdftools.png
 author_profile: false
 excerpt: "Merge, split, reorder, redact, sign, fill, OCR, copy clean text, watermark, compress, and password-protect PDFs privately, in your browser."
 description: "Free private PDF tools that run entirely in your browser: merge and split PDFs, reorder and rotate pages, fill forms, add signatures, redact so hidden text is truly removed, make scanned PDFs searchable with OCR, add watermarks and page numbers, export pages as images, compress, and password-protect with AES-256. Your files are never uploaded."
