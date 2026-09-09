@@ -584,11 +584,16 @@
     function textTokens(texts, eff, back, base) {
       var out = [];
       (texts || []).forEach(function (t) {
-        var lineH = (t.size || 14) * 1.2;
-        String(t.text || '').split('\n').forEach(function (line, i) {
+        // one token per VISUAL line: once a box can wrap, its hard newlines are no
+        // longer the drawn lines, line spacing moves each y, and alignment moves each
+        // line's own left edge. PT.textLines is the layout law's own answer to all three.
+        PT.textLines(t, eff.w, eff.h).forEach(function (ln) {
+          var line = String(ln.text || '');
           if (!line.trim()) return;
-          var b = PT.textBoxFrac({ text: line, size: t.size, font: t.font }, eff.w, eff.h);
-          var r = PURE.rotateRects([{ x: t.x, y: t.y + i * lineH / eff.h, w: b.w, h: b.h }], back)[0];
+          var r = PURE.rotateRects([{ x: ln.x, y: ln.y, w: ln.w, h: ln.h }], back)[0];
+          // fontSize stays the LINE ADVANCE (size * lh), not the glyph size, so
+          // PURE.groupLines keeps its clustering tolerance and rotated-stamp ratios
+          var lineH = ln.h * eff.h;
           out.push({
             text: line, x0: r.x, y0: r.y, x1: r.x + r.w, y1: r.y + r.h,
             fontSize: lineH / base.h, fontSizeX: lineH / base.w

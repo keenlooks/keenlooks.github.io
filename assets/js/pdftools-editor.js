@@ -1,24 +1,35 @@
 /* Unified full-screen page editor for the PDF Toolbench. One page preview with tools:
-   Move, Text (click to place, font/size/color), Sign (draw/upload/saved + place), Redact
-   (draw boxes — they commit IMMEDIATELY as page annotations; a one-time dialog explains
-   that pages with boxes are flattened to images on download, which is when the covered
-   content is actually removed). Inline form-field inputs (text, checkbox, dropdown, radio
-   groups) are shown when the page has AcroForm widgets. All edits live on the page model
-   (pg.texts / pg.sigs / pg.redacts / pg.raster) and on docs[i].formValues, so thumbnails
-   and export pick them up, and every edit takes an undo snapshot (Ctrl+Z / the Undo
-   buttons). Depends on window.__PT. External file → // comments fine. */
+   Move, Text (click to place, then format it: font/size/line spacing/alignment, and
+   bold/italic/underline/strikethrough/color/highlight on a selection), Sign (draw/upload/
+   saved + click where it goes), Redact (draw boxes — they commit IMMEDIATELY as page
+   annotations; a one-time dialog explains that pages with boxes are flattened to images
+   on download, which is when the covered content is actually removed). Inline form-field
+   inputs (text, checkbox, dropdown, radio groups) are shown when the page has AcroForm
+   widgets. All edits live on the page model (pg.texts / pg.sigs / pg.redacts / pg.raster)
+   and on docs[i].formValues, so thumbnails and export pick them up, and every edit takes
+   an undo snapshot (Ctrl+Z / the Undo buttons). Depends on window.__PT.
+
+   A text box has TWO renders (spec 12.4): at rest it is a <canvas> painted by the shared
+   PURE.paintTextBox, so the preview IS the export picture; while it is being edited it is
+   a contenteditable flow of run <span>s. CSS cannot place an inline box by its alphabetic
+   baseline and the browser-font baseline offset is family AND size dependent, which is why
+   the resting picture is a canvas and not spans.
+   External file → // comments fine. */
 (function () {
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
   var PT = window.__PT; if (!PT) return;
   var ed = $('pt-ed'); if (!ed) return;
+  var PURE = PT.PURE || window.__PT_PURE || {};
 
   var scrollEl = $('pt-ed-scroll'), stage = $('pt-ed-stage'), canvas = $('pt-ed-canvas'), layer = $('pt-ed-layer');
   // never let a native drag start inside the editor (a stray text selection, or the
   // signature <img>, would otherwise hijack annotation drags via pointercancel)
   ed.addEventListener('dragstart', function (e) { e.preventDefault(); });
   var hint = $('pt-ed-hint'), pageLabel = $('pt-ed-page');
+  var textbar = $('pt-ed-textbar');
   var fontSel = $('pt-text-font'), sizeSel = $('pt-text-size'), colorInp = $('pt-text-color');
+  var lhSel = $('pt-text-lh'), hlBtn = $('pt-text-hl'), hlColor = $('pt-text-hlcolor'), autoChk = $('pt-text-auto');
 
   // size dropdown options
   [8, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 60, 72].forEach(function (s) {
@@ -29,15 +40,48 @@
   var lastOpenIdx = -1;                // the page whose thumb gets focus back on close
   var dispW = 0, dispH = 0, Wpt = 0, Hpt = 0, scale = 1;
   var selected = null;                 // selected annotation element
+  var focusedEl = null;                // the text box currently promoted to the editable flow
   var redactWarned = false;            // the one-time "how redaction works" dialog was acknowledged
   var pendingBox = null;               // { rec, el } — first-ever box, held until the dialog is confirmed
 
-  function fontFamily(f) { return f === 'Times' ? 'Georgia, "Times New Roman", serif' : f === 'Courier' ? '"Courier New", monospace' : 'Arial, Helvetica, sans-serif'; }
+  // metric-compatible browser stacks (spec 12.1 / s4): Arial, Times New Roman and Courier
+  // New share advance widths with the standard 14, so the flow the user types into breaks
+  // lines where the AFM law does. The old Georgia stack was 6 percent wider than Times.
+  var FONT_STACKS = {
+    Helvetica: 'Arial, "Liberation Sans", Helvetica, sans-serif',
+    Times: '"Times New Roman", "Liberation Serif", Times, serif',
+    Courier: '"Courier New", "Liberation Mono", Courier, monospace'
+  };
+  function fontFamily(f) { return FONT_STACKS[f] || FONT_STACKS.Helvetica; }
+  function lhOf(t) { var v = +t.lh; return (isFinite(v) && v > 0) ? v : 1.2; }
+  function alignOf(t) { return (t.align === 'center' || t.align === 'right') ? t.align : 'left'; }
+  function isText(el) { return !!(el && el.classList && el.classList.contains('pt-anno--text')); }
+  function isSig(el) { return !!(el && el.classList && el.classList.contains('pt-anno--sig')); }
+  function clamp01(v) { return Math.min(1, Math.max(0, v)); }
+
+  // ---------- the layout law (owned by pdftools.js, spec 12.1) ----------
+  function metricsTable() { return (PT.metrics ? PT.metrics() : null) || null; }
+  function layoutBox(el) {
+    var t = el.__model, fn = PURE.layoutTextBox, tab = metricsTable();
+    el.__layout = (fn && tab) ? fn(t, Wpt, Hpt, tab) : null;
+    return el.__layout;
+  }
+  // the drag / nudge clamp used to read el.offsetWidth, which stopped meaning the ink
+  // width the moment a box could carry its own width and its handles sat outside it
+  function elBox(el) {
+    if (isText(el)) {
+      var t = el.__model, L = el.__layout;
+      if (L) return { w: ((t.w != null ? t.w * Wpt : Math.max(L.boxW, 0.5 * t.size))) * scale, h: Math.max(L.boxH, t.size * lhOf(t)) * scale };
+    }
+    return { w: el.offsetWidth, h: el.offsetHeight };
+  }
 
   // ---------- open / render ----------
   function open(i, keepTool) {
     if (PT.isBusy && PT.isBusy()) return;
     var pages = PT.pages(); if (i < 0 || i >= pages.length) return;
+    demoteAll();                       // flush any live edit before the layer is rebuilt
+    disarmSig();
     if (pg) PT.markDirty(pg);          // navigating away — that page's thumbnail may be stale
     idx = i; pg = pages[i]; selected = null; lastOpenIdx = i;
     // page navigation keeps the active tool (redacting a multi-page doc shouldn't snap
@@ -49,6 +93,8 @@
   function close() {
     renderSeq++;                       // abandon any in-flight render (it must not touch a null pg)
     if (curTask) { try { curTask.cancel(); } catch (er) {} curTask = null; }
+    demoteAll();                       // write the live edit back before the empty filter reads it
+    disarmSig();
     if (pg) {
       // EVERY close path drops abandoned empty text boxes, not just the Done button —
       // an invisible {text:''} ghost would otherwise force a rotated page to flatten
@@ -85,14 +131,19 @@
   var renderSeq = 0;   // fast arrow-key navigation: only the LATEST render may append elements
   var curTask = null;  // in-flight pdf.js render task — a superseding render (or close) cancels it
   function renderPage() {
+    demoteAll();               // a live edit (ensureUpright re-renders under one) is written back first
     layer.innerHTML = '';
+    focusedEl = null; sigGhost = null;
     var mySeq = ++renderSeq;
     if (curTask) { try { curTask.cancel(); } catch (er) {} curTask = null; }
     var edW = scrollEl.clientWidth || 800;
     // reserve the side page-nav arrow gutters (46px arrows at 12px from each edge) so an
     // enabled arrow never overlaps a wide page; below ~640px the arrows are hidden in CSS
     var avW = edW - 32 - (edW >= 620 ? 120 : 0), avH = (scrollEl.clientHeight || 600) - 32;
-    return PT.effPointSize(pg).then(function (sz) {
+    // the text painters need the AFM width table; it is built once at page init
+    return Promise.resolve(PT.metricsReady).catch(function () { return null; }).then(function () {
+      return PT.effPointSize(pg);
+    }).then(function (sz) {
       Wpt = sz.w; Hpt = sz.h; var aspect = Hpt / Wpt;
       var w = (avW * aspect <= avH) ? avW : avH / aspect;
       w = Math.max(220, Math.min(w, 1500));
@@ -144,37 +195,64 @@
   $('pt-ed-done').addEventListener('click', function () { close(); });   // close() drops empty text boxes
 
   // ---------- tools ----------
+  // the text bar is shown whenever the Text tool is on OR a text box is selected (a box
+  // can be edited in Move and Sign too, ruling 12.6). Returns true when a bar's visibility
+  // changed, so the caller can re-measure the stage — renderPage sizes the canvas from
+  // scrollEl.clientHeight, and a bar that appears afterwards leaves it taller than the stage.
+  function syncBars() {
+    var showText = (tool === 'text') || (selected && isText(selected)) || !!focusedEl;
+    var was = !textbar.hidden;
+    textbar.hidden = !showText;
+    $('pt-redact-opts').hidden = tool !== 'redact';
+    $('pt-ed-signbar').hidden = tool !== 'sign';
+    return was !== !!showText;
+  }
   function setTool(t) {
-    tool = t; selected = null; deselectAll();
+    tool = t; selected = null; deselectAll(); disarmSig();
     ['move', 'text', 'sign', 'redact'].forEach(function (k) { $('pt-tool-' + k).classList.toggle('pt-tool--on', k === t); });
-    $('pt-text-opts').hidden = t !== 'text';
-    $('pt-redact-opts').hidden = t !== 'redact';
-    $('pt-ed-signbar').hidden = t !== 'sign';
+    var changed = syncBars();
     if (t === 'sign') renderSavedSigs();
     stage.classList.toggle('pt-stage--text', t === 'text');
     stage.classList.toggle('pt-stage--redact', t === 'redact');
-    // text content editable only in the text tool
-    Array.prototype.forEach.call(layer.querySelectorAll('.pt-anno__txt'), function (el) { el.contentEditable = (t === 'text'); });
-    hint.textContent = t === 'text' ? 'Click anywhere on the page to add text. Pick font, size, and color above.'
-      : t === 'sign' ? 'Draw or upload a signature, click “Place on page”, then drag it where you want. Saved signatures stay in this browser only.'
+    hint.textContent = t === 'text' ? 'Click anywhere on the page to add text. Click a text box to edit it; drag its grip to move it. Press Escape to stop typing, then the arrow keys nudge the box.'
+      : t === 'sign' ? 'Draw or upload a signature, click Place, then click where it goes on the page. Drag it later to adjust. Saved signatures stay in this browser only.'
       : t === 'redact' ? 'Drag boxes over anything to remove. Each box is kept and shown as soon as you draw it, so you can move it, click it for its ×, or press Ctrl+Z. On download the page is flattened to an image, which is what actually removes the covered text.'
-      : 'Click a text box, signature, or redaction to move or delete it. Use ‹ › or the arrow keys to change pages.';
+      : 'Click a text box to edit its words; drag its grip to move it. Click a signature or redaction to move or delete it. Use ‹ › or the arrow keys to change pages.';
+    syncTextBar();
+    return changed;
   }
-  ['move', 'text', 'sign', 'redact'].forEach(function (k) { $('pt-tool-' + k).addEventListener('click', function () { setTool(k); }); });
+  ['move', 'text', 'sign', 'redact'].forEach(function (k) {
+    $('pt-tool-' + k).addEventListener('click', function () { if (setTool(k) && pg && !ed.hidden) renderPage(); });
+  });
 
   // ---------- annotation elements ----------
-  function deselectAll() { Array.prototype.forEach.call(layer.querySelectorAll('.pt-sel'), function (e) { e.classList.remove('pt-sel'); }); removeHandles(); }
-  function removeHandles() { Array.prototype.forEach.call(layer.querySelectorAll('.pt-anno__del,.pt-anno__resize'), function (e) { e.remove(); }); }
+  function deselectAll(keep) {
+    demoteAll(keep);
+    Array.prototype.forEach.call(layer.querySelectorAll('.pt-sel'), function (e) { e.classList.remove('pt-sel'); });
+    removeHandles();
+  }
+  function removeHandles() {
+    Array.prototype.forEach.call(layer.querySelectorAll('.pt-anno__del,.pt-anno__resize,.pt-anno__grip,.pt-anno__he,.pt-anno__hw,.pt-anno__hse'), function (e) { e.remove(); });
+  }
+  // every handle keeps focus where it is (a mousedown whose default runs would focus the
+  // tabindex=0 wrapper and blur the flow, which for a still-empty box deletes it) — the
+  // Undo button's pointerdown+mousedown pair is the precedent
+  function noFocusSteal(el) {
+    ['pointerdown', 'mousedown'].forEach(function (ev) { el.addEventListener(ev, function (e) { e.preventDefault(); }); });
+  }
   function select(el) {
-    deselectAll(); selected = el; if (!el) return; el.classList.add('pt-sel');
+    deselectAll(el); selected = el; if (!el) { syncBars(); syncTextBar(); return; }
+    el.classList.add('pt-sel');
     el.__nudged = false;   // re-arm the one-snapshot-per-selection arrow-key nudge
     var del = document.createElement('button'); del.className = 'pt-anno__del'; del.type = 'button'; del.textContent = '×';
+    del.title = 'Delete'; del.setAttribute('aria-label', 'Delete this item');
     // a touch tap that CREATES a box makes the browser synthesize a post-tap click at
     // the tap point — where this × has just appeared — instantly deleting the new box.
     // Only honor a click the × itself was armed for by its own pointerdown; keyboard
     // activation (Enter/Space) has e.detail === 0 and no pointerdown, so it stays allowed.
     var armedDel = false;
-    del.addEventListener('pointerdown', function (e) { e.stopPropagation(); armedDel = true; });
+    del.addEventListener('pointerdown', function (e) { e.stopPropagation(); e.preventDefault(); armedDel = true; });
+    del.addEventListener('mousedown', function (e) { e.preventDefault(); });
     del.addEventListener('click', function (e) {
       e.stopPropagation();
       if (!armedDel && e.detail !== 0) return;
@@ -182,14 +260,63 @@
       removeAnno(el);
     });
     el.appendChild(del);
-    if (el.classList.contains('pt-anno--sig')) {
+    if (isSig(el)) {
       var rz = document.createElement('span'); rz.className = 'pt-anno__resize';
+      noFocusSteal(rz);
       rz.addEventListener('pointerdown', function (e) {
         if (e.button != null && e.button !== 0) return;   // left button / touch only
         startResize(e, el);
       });
       el.appendChild(rz);
     }
+    if (isText(el) && tool !== 'redact') buildTextHandles(el);
+    placeBadge(el);
+    syncBars(); syncTextBar();
+  }
+  // the x badge sits OUTSIDE the box now (padding-right would re-wrap a box that carries
+  // its own width). Two placement rules: flip it to the left when the box's right edge is
+  // near the stage edge, and lift it clear of the width handles on a short box.
+  function placeBadge(el) {
+    var del = el.querySelector('.pt-anno__del'); if (!del) return;
+    var b = elBox(el), t = el.__model;
+    var rightPx = (isText(el) ? t.x * dispW : el.offsetLeft) + b.w;
+    del.classList.toggle('pt-anno__del--left', rightPx > dispW - 20);
+    if (isText(el)) del.classList.toggle('pt-anno__del--high', b.h < (coarse() ? 56 : 40));
+  }
+  function coarse() { try { return window.matchMedia('(pointer: coarse)').matches; } catch (er) { return false; } }
+  function gripLift() { return coarse() ? 34 : 22; }
+  function buildTextHandles(el) {
+    var t = el.__model;
+    var grip = document.createElement('span'); grip.className = 'pt-anno__grip';
+    grip.title = 'Move this text box'; grip.setAttribute('aria-hidden', 'true');
+    // a grip drawn above a box near the top of the page lands off the stage, under the
+    // bar. The grip sits 14px above the box (30px on a coarse pointer, where it is bigger).
+    if (t.y * dispH < gripLift()) grip.classList.add('pt-anno__grip--below');
+    noFocusSteal(grip);
+    grip.addEventListener('pointerdown', function (e) {
+      if (e.button != null && e.button !== 0) return;
+      e.stopPropagation(); select(el); startDrag(e, el, t);
+    });
+    el.appendChild(grip);
+    ['he', 'hw'].forEach(function (side) {
+      var h = document.createElement('span'); h.className = 'pt-anno__' + side;
+      h.title = side === 'he' ? 'Drag to set the text width' : 'Drag to set the text width';
+      h.setAttribute('aria-hidden', 'true');
+      noFocusSteal(h);
+      h.addEventListener('pointerdown', function (e) {
+        if (e.button != null && e.button !== 0) return;
+        e.stopPropagation(); startWidthDrag(e, el, side === 'he' ? 'e' : 'w');
+      });
+      el.appendChild(h);
+    });
+    var se = document.createElement('span'); se.className = 'pt-anno__hse';
+    se.title = 'Drag to change the text size'; se.setAttribute('aria-hidden', 'true');
+    noFocusSteal(se);
+    se.addEventListener('pointerdown', function (e) {
+      if (e.button != null && e.button !== 0) return;
+      e.stopPropagation(); startSizeDrag(e, el);
+    });
+    el.appendChild(se);
   }
   function annoKind(el) {
     return el.classList.contains('pt-anno--sig') ? 'signature'
@@ -197,6 +324,7 @@
   }
   function removeAnno(el, skipSnap) {
     var m = el.__model, kind = annoKind(el);
+    if (focusedEl === el) focusedEl = null;
     if (!pg) { el.remove(); if (selected === el) selected = null; return; }   // a late blur can land after close()
     if (m) {
       var arr = kind === 'signature' ? pg.sigs : kind === 'redaction' ? pg.redacts : pg.texts;
@@ -207,7 +335,7 @@
       }
     }
     el.remove();
-    if (selected === el) selected = null;   // never clobber a selection this el doesn't own
+    if (selected === el) { selected = null; syncBars(); syncTextBar(); }   // never clobber a selection this el doesn't own
     PT.markDirty(pg);
     if (kind === 'redaction' && !(pg.redacts || []).length)
       PT.setStatus('All redactions removed from this page. It keeps its original quality on download.');
@@ -219,47 +347,603 @@
     (pg.sigs || []).forEach(function (s) { layer.appendChild(makeSigEl(s)); });
   }
 
+  /* ==================================================================================
+     Text boxes: the run model, the two renders, and the editing flow
+     ================================================================================== */
+
+  function mkRun(text, st) {
+    st = st || {};
+    return { t: text, b: !!st.b, i: !!st.i, u: !!st.u, s: !!st.s, hl: st.hl || null, c: st.c || null };
+  }
+  function runsOf(t) {
+    if (t.runs && t.runs.length) return t.runs;
+    return [mkRun(t.text || '', null)];
+  }
+  function sameStyle(a, b) {
+    return !!a.b === !!b.b && !!a.i === !!b.i && !!a.u === !!b.u && !!a.s === !!b.s
+      && (a.hl || null) === (b.hl || null) && (a.c || null) === (b.c || null);
+  }
+  function plainRuns(runs) {
+    return (runs || []).every(function (r) { return !r.b && !r.i && !r.u && !r.s && !r.hl && !r.c; });
+  }
+  function mergeRuns(runs) {
+    if (PURE.mergeRuns) return PURE.mergeRuns(runs);
+    var out = [];
+    (runs || []).forEach(function (r) {
+      if (!r.t) return;
+      var last = out[out.length - 1];
+      if (last && sameStyle(last, r)) last.t += r.t;
+      else out.push(mkRun(r.t, r));
+    });
+    return out;
+  }
+  // ONE content writer (spec 12.2): PURE.setBoxContent merges adjacent identical runs,
+  // writes t.runs (null when nothing carries style, so the box keeps the legacy export
+  // path), then sets t.text to the runs joined. No other code assigns t.text, and
+  // innerText is never read.
+  function writeContent(t, runs) {
+    if (PURE.setBoxContent) { PURE.setBoxContent(t, runs); return; }
+    var merged = mergeRuns(runs);                       // boot guard only
+    t.runs = plainRuns(merged) ? null : merged;
+    t.text = merged.map(function (r) { return r.t; }).join('');
+  }
+  // normalise every content entry point the way pdf-lib's own cleanText does: the metrics
+  // table cannot measure a tab, and a CRLF would become two model lines
+  function normText(s) { return String(s == null ? '' : s).replace(/\r\n?/g, '\n').replace(/\t/g, '    '); }
+
+  // ---- run range operations (runs are immutable: every change makes new objects) ----
+  function splitAt(runs, offsets) {
+    var cuts = {}; offsets.forEach(function (o) { cuts[o] = 1; });
+    var out = [], pos = 0;
+    runs.forEach(function (r) {
+      var start = pos, end = pos + r.t.length, marks = [start];
+      Object.keys(cuts).forEach(function (k) { var o = +k; if (o > start && o < end) marks.push(o); });
+      marks.sort(function (a, b) { return a - b; });
+      marks.push(end);
+      for (var i = 0; i < marks.length - 1; i++) if (marks[i + 1] > marks[i]) out.push(mkRun(r.t.slice(marks[i] - start, marks[i + 1] - start), r));
+      pos = end;
+    });
+    return out;
+  }
+  function mapRange(runs, start, end, fn) {
+    var parts = splitAt(runs, [start, end]), pos = 0;
+    return parts.map(function (r) {
+      var s = pos, e = pos + r.t.length; pos = e;
+      if (s >= start && e <= end && e > s) { var st = fn(r); return mkRun(r.t, st); }
+      return r;
+    });
+  }
+  function rangeFragments(runs, start, end) {
+    var parts = splitAt(runs, [start, end]), pos = 0, out = [];
+    parts.forEach(function (r) {
+      var s = pos, e = pos + r.t.length; pos = e;
+      if (s >= start && e <= end && e > s) out.push(r);
+    });
+    return out;
+  }
+  function styleAtOffset(t, off, aff) {
+    var runs = runsOf(t), pos = 0, last = runs[0] || mkRun('', null);
+    for (var i = 0; i < runs.length; i++) {
+      var s = pos, e = pos + runs[i].t.length; pos = e;
+      if (aff === 'after' ? (off > s && off <= e) : (off >= s && off < e)) return runs[i];
+      if (off >= e) last = runs[i];
+    }
+    return last;
+  }
+
+  // ---- canonical DOM for the focused flow ----
+  function applyRunStyle(sp, r) {
+    if (r.b) { sp.dataset.b = '1'; sp.style.fontWeight = 'bold'; }
+    if (r.i) { sp.dataset.i = '1'; sp.style.fontStyle = 'italic'; }
+    if (r.u) sp.dataset.u = '1';
+    if (r.s) sp.dataset.s = '1';
+    if (r.u || r.s) sp.style.textDecoration = (r.u ? 'underline' : '') + (r.u && r.s ? ' ' : '') + (r.s ? 'line-through' : '');
+    if (r.hl) { sp.dataset.hl = r.hl; sp.style.backgroundColor = r.hl; }
+    if (r.c) { sp.dataset.c = r.c; sp.style.color = r.c; }
+  }
+  function buildRunNodes(host, runs) {
+    host.textContent = '';
+    var joined = '';
+    (runs || []).forEach(function (r) {
+      if (!r.t) return;
+      joined += r.t;
+      var sp = document.createElement('span');
+      applyRunStyle(sp, r);
+      sp.appendChild(document.createTextNode(r.t));
+      host.appendChild(sp);
+    });
+    // a trailing newline has no line box of its own in white-space: pre, so the caret
+    // could not reach the empty last line; this filler is skipped by the parser
+    if (/\n$/.test(joined)) { var br = document.createElement('br'); br.setAttribute('data-fill', '1'); host.appendChild(br); }
+  }
+  var canonScratch = null;
+  function canonicalHtml(runs) {
+    if (!canonScratch) canonScratch = document.createElement('div');
+    buildRunNodes(canonScratch, runs);
+    return canonScratch.innerHTML;
+  }
+  // Chrome keeps a bare trailing <br> in an editing host to make the last line reachable;
+  // that is not drift
+  function sameHtml(live, canon) { return live === canon || live === canon + '<br>'; }
+
+  // ---- parsing the flow back to runs (walk text nodes; innerText is never read) ----
+  function deepLast(n) { while (n && n.lastChild) n = n.lastChild; return n; }
+  function isBlockEl(el) { return /^(DIV|P|LI|H[1-6]|BLOCKQUOTE|PRE)$/.test(el.tagName); }
+  function hexOf(v) {
+    if (!v) return null;
+    var s = String(v).trim();
+    var m = /^#([0-9a-f]{3})$/i.exec(s);
+    if (m) return '#' + m[1][0] + m[1][0] + m[1][1] + m[1][1] + m[1][2] + m[1][2];
+    if (/^#[0-9a-f]{6}$/i.test(s)) return s.toLowerCase();
+    m = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(s);
+    if (m) return '#' + [1, 2, 3].map(function (k) { var h = (+m[k]).toString(16); return h.length < 2 ? '0' + h : h; }).join('');
+    return null;
+  }
+  // browser-inserted <b>/<i>/<u>/<s>/<font>/style is UNTRUSTED input to normalise, never state
+  function styleAttrs(el) {
+    var st = {}, d = el.dataset || {}, tn = el.tagName, s = el.style;
+    if (d.b === '1' || tn === 'B' || tn === 'STRONG') st.b = true;
+    if (d.i === '1' || tn === 'I' || tn === 'EM') st.i = true;
+    if (d.u === '1' || tn === 'U') st.u = true;
+    if (d.s === '1' || tn === 'S' || tn === 'STRIKE' || tn === 'DEL') st.s = true;
+    if (s) {
+      if (s.fontWeight === 'bold' || parseInt(s.fontWeight, 10) >= 600) st.b = true;
+      if (s.fontStyle === 'italic' || s.fontStyle === 'oblique') st.i = true;
+      var dec = (s.textDecorationLine || s.textDecoration || '');
+      if (/underline/.test(dec)) st.u = true;
+      if (/line-through/.test(dec)) st.s = true;
+    }
+    if (d.hl) st.hl = hexOf(d.hl);
+    if (d.c) st.c = hexOf(d.c);
+    else if (tn === 'FONT' && el.getAttribute('color')) st.c = hexOf(el.getAttribute('color'));
+    return st;
+  }
+  function mergeStyle(a, b) {
+    var o = { b: a.b || b.b, i: a.i || b.i, u: a.u || b.u, s: a.s || b.s, hl: b.hl || a.hl || null, c: b.c || a.c || null };
+    return o;
+  }
+  // pieces: the flow flattened to {node, text, st, off} in document order, where node is
+  // the text node the characters came from (null for a synthesized newline)
+  function walkFlow(root) {
+    var pieces = [], pos = 0, last = deepLast(root);
+    function emit(node, text, st) { if (!text) return; pieces.push({ node: node, text: text, st: st, off: pos }); pos += text.length; }
+    function rec(n, st) {
+      for (var c = n.firstChild; c; c = c.nextSibling) {
+        if (c.nodeType === 3) emit(c, normText(c.nodeValue), st);
+        else if (c.nodeType === 1) {
+          if (c.tagName === 'BR') {
+            if (c.getAttribute('data-fill') !== '1' && c !== last) emit(null, '\n', st);
+            continue;
+          }
+          var st2 = mergeStyle(st, styleAttrs(c));
+          if (isBlockEl(c) && pos > 0) emit(null, '\n', st2);
+          rec(c, st2);
+        }
+      }
+    }
+    rec(root, {});
+    return { pieces: pieces, len: pos };
+  }
+  function piecesToRuns(pieces) {
+    return mergeRuns(pieces.map(function (p) { return mkRun(p.text, p.st); }));
+  }
+
+  // ---- caret and selection, in character offsets ----
+  function offsetOf(w, node, off) {
+    for (var i = 0; i < w.pieces.length; i++) {
+      var p = w.pieces[i];
+      if (p.node === node) return p.off + normText(node.nodeValue.slice(0, off)).length;
+    }
+    return null;
+  }
+  function selState(txt) {
+    var sel = window.getSelection();
+    if (!sel || !sel.rangeCount) return null;
+    var r = sel.getRangeAt(0);
+    if (!txt.contains(r.startContainer) || !txt.contains(r.endContainer)) return null;
+    var w = walkFlow(txt);
+    var a = r.startContainer.nodeType === 3 ? offsetOf(w, r.startContainer, r.startOffset) : boundaryOffset(w, r.startContainer, r.startOffset);
+    var b = r.endContainer.nodeType === 3 ? offsetOf(w, r.endContainer, r.endOffset) : boundaryOffset(w, r.endContainer, r.endOffset);
+    if (a == null || b == null) return null;
+    return { start: Math.min(a, b), end: Math.max(a, b), aff: (a > 0 ? 'after' : 'before'), len: w.len };
+  }
+  // a caret sitting on an ELEMENT boundary (Chrome parks it there after a rewrite): count
+  // the characters in the children before it
+  function boundaryOffset(w, el, off) {
+    var kids = el.childNodes, n = 0;
+    for (var i = 0; i < Math.min(off, kids.length); i++) n += textLenOf(w, kids[i]);
+    var before = 0;
+    for (var j = 0; j < w.pieces.length; j++) {
+      var p = w.pieces[j];
+      if (p.node && el.contains(p.node)) { before = p.off; break; }
+    }
+    return before + n;
+  }
+  function textLenOf(w, node) {
+    var n = 0;
+    w.pieces.forEach(function (p) { if (p.node && (p.node === node || (node.contains && node.contains(p.node)))) n += p.text.length; });
+    return n;
+  }
+  function domPos(txt, off, aff) {
+    var w = walkFlow(txt), pieces = w.pieces.filter(function (p) { return p.node; });
+    if (!pieces.length) return { node: txt, off: 0 };
+    for (var i = 0; i < pieces.length; i++) {
+      var p = pieces[i], s = p.off, e = p.off + p.text.length;
+      var hit = (aff === 'after') ? (off > s && off <= e) : (off >= s && off < e);
+      if (hit) return { node: p.node, off: Math.max(0, Math.min(p.node.nodeValue.length, off - s)) };
+    }
+    var lastP = pieces[pieces.length - 1];
+    if (off <= pieces[0].off) return { node: pieces[0].node, off: 0 };
+    return { node: lastP.node, off: lastP.node.nodeValue.length };
+  }
+  function setSelRange(txt, start, end, aff) {
+    var sel = window.getSelection(); if (!sel) return;
+    var a = domPos(txt, start, start > 0 ? (aff || 'after') : 'before');
+    var b = (end === start) ? a : domPos(txt, end, 'after');
+    try {
+      var r = document.createRange();
+      r.setStart(a.node, a.off); r.setEnd(b.node, b.off);
+      sel.removeAllRanges(); sel.addRange(r);
+    } catch (er) {}
+  }
+
+  // ---- the resting render: one canvas, painted by the shared painter ----
+  function lawReady() { return !!(PURE.layoutTextBox && PURE.paintTextBox && metricsTable()); }
+  // boot guard, NOT a second layout law: if the two zones land out of order on the dev
+  // server the box still shows its text (today's plain preview) instead of vanishing
+  function staticFallback(el) {
+    var t = el.__model, d = el.__cv;
+    if (d && d.tagName !== 'DIV') { d.remove(); d = null; }
+    if (!d) { d = document.createElement('div'); d.className = 'pt-anno__txt pt-anno__txt--static'; el.appendChild(d); el.__cv = d; }
+    d.style.fontSize = (t.size * scale) + 'px'; d.style.fontFamily = fontFamily(t.font);
+    d.style.color = t.color || '#111'; d.style.lineHeight = String(lhOf(t));
+    d.textContent = t.text || '';
+    d.hidden = false;
+    el.style.width = ''; el.style.height = '';
+    placeBadge(el);
+    return null;
+  }
+  function restingRender(el) {
+    if (!lawReady()) return staticFallback(el);
+    var t = el.__model, L = layoutBox(el);
+    var cv = el.__cv;
+    if (cv && cv.tagName !== 'CANVAS') { cv.remove(); cv = el.__cv = null; }
+    if (!cv) { cv = el.__cv = document.createElement('canvas'); cv.className = 'pt-anno__cv'; el.appendChild(cv); }
+    var lh = lhOf(t), inkR = 0, inkB = 0;
+    if (L) {
+      L.lines.forEach(function (ln) {
+        (ln.runs || []).forEach(function (r) { inkR = Math.max(inkR, r.x + r.w); });
+        inkB = Math.max(inkB, ln.baseline + 0.25 * t.size);
+      });
+    }
+    var boxWpt = L ? (t.w != null ? t.w * Wpt : Math.max(L.boxW, 0.5 * t.size)) : 0.5 * t.size;
+    var boxHpt = L ? Math.max(L.boxH, t.size * lh) : t.size * lh;
+    var cwPt = Math.max(boxWpt, inkR), chPt = Math.max(boxHpt, inkB);
+    var wPx = Math.max(1, cwPt * scale), hPx = Math.max(1, chPt * scale);
+    var dpr = Math.min(2, window.devicePixelRatio || 1);
+    cv.width = Math.max(1, Math.round(wPx * dpr)); cv.height = Math.max(1, Math.round(hPx * dpr));
+    cv.style.width = wPx + 'px'; cv.style.height = hPx + 'px';
+    var cx = cv.getContext('2d');
+    cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    cx.clearRect(0, 0, wPx, hPx);
+    if (L && PURE.paintTextBox) { cx.save(); try { PURE.paintTextBox(cx, t, L, scale); } catch (er) {} cx.restore(); }
+    el.style.width = (boxWpt * scale) + 'px';
+    el.style.height = (boxHpt * scale) + 'px';
+    cv.hidden = false;
+    placeBadge(el);
+    return L;
+  }
+
+  // ---- the focused flow ----
+  var composing = false;              // an IME composition owns the DOM: touch nothing
+  var pendingStyle = null;            // collapsed-caret style the next characters carry
+  var pendingAt = -1;
+  function clearPending() { pendingStyle = null; pendingAt = -1; syncTextBar(); }
+
+  function styleFlow(txt, t) {
+    var lh = lhOf(t);
+    txt.style.fontSize = (t.size * scale) + 'px';
+    txt.style.fontFamily = fontFamily(t.font);
+    txt.style.color = t.color || '#111';
+    txt.style.lineHeight = String(lh);
+    // a CSS line box puts the first baseline at half-leading + ascent while the export
+    // draws it at 0.82em; half-leading is (lh - 1)/2 em, so the correction moves with lh
+    txt.style.marginTop = (-0.13 - (lh - 1.2) / 2).toFixed(4) + 'em';
+    txt.style.textAlign = alignOf(t);
+    if (t.w != null) { txt.style.whiteSpace = 'pre-wrap'; txt.style.width = (t.w * dispW) + 'px'; }
+    else { txt.style.whiteSpace = 'pre'; txt.style.width = ''; }
+  }
+  function renderFlow(el) {
+    var txt = el.__txt, t = el.__model;
+    buildRunNodes(txt, runsOf(t));
+  }
+  function flushFlow(el) {
+    var txt = el.__txt, t = el.__model;
+    if (!txt || !pg || !txt.isConnected || composing) return null;
+    var w = walkFlow(txt);
+    writeContent(t, piecesToRuns(w.pieces));
+    return w;
+  }
+  function onFlowInput(el) {
+    var txt = el.__txt, t = el.__model;
+    // a browser NATIVE undo can replay edits into this node after the editor closed
+    // (pg null) or the layer was rebuilt (node detached) — never sync those to the model
+    if (!pg || !txt || !txt.isConnected || composing) return;
+    if (el.__armed) { el.__armed = false; if (PT.snapshot) PT.snapshot('edit text on page ' + (idx + 1)); }
+    var st = selState(txt);
+    flushFlow(el);
+    var canon = canonicalHtml(runsOf(t));
+    // skip the rewrite when the DOM is already canonical: an unrestored rewrite parks the
+    // caret on the host at offset 0 and the next keystroke lands at the start
+    if (!sameHtml(txt.innerHTML, canon)) {
+      renderFlow(el);
+      if (st) setSelRange(txt, st.start, st.end, st.aff);
+    }
+    PT.markDirty(pg);
+    syncTextBar();
+  }
+
+  function promote(el, caretOff) {
+    if (!el || !isText(el)) return;
+    if (focusedEl && focusedEl !== el) demote(focusedEl);
+    var t = el.__model;
+    if (el.__txt) { focusFlow(el, caretOff); return; }
+    if (el.__cv) el.__cv.hidden = true;
+    var txt = document.createElement('div');
+    txt.className = 'pt-anno__txt';
+    txt.contentEditable = 'true';
+    txt.setAttribute('role', 'textbox');
+    txt.setAttribute('aria-multiline', 'true');
+    txt.setAttribute('aria-label', 'Text box content');
+    styleFlow(txt, t);
+    el.__txt = txt;
+    buildRunNodes(txt, runsOf(t));
+    el.appendChild(txt);
+    el.style.width = (t.w != null) ? (t.w * dispW) + 'px' : 'auto';
+    el.style.height = 'auto';
+    focusedEl = el; savedRange = null; pendingStyle = null; pendingAt = -1;
+
+    txt.addEventListener('input', function () { onFlowInput(el); });
+    txt.addEventListener('compositionstart', function () { composing = true; });
+    txt.addEventListener('compositionend', function () { composing = false; onFlowInput(el); });
+    txt.addEventListener('beforeinput', function (e) { onBeforeInput(e, el); }, true);
+    txt.addEventListener('paste', function (e) {
+      e.preventDefault();
+      var d = e.clipboardData; insertText(el, d ? d.getData('text/plain') : '');
+    });
+    txt.addEventListener('keydown', function (e) {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+        var k = (e.key || '').toLowerCase();
+        if (k === 'b' || k === 'i' || k === 'u') { e.preventDefault(); toggleFlag(k); }
+      }
+    });
+    txt.addEventListener('blur', function (e) {
+      el.__armed = true;
+      if (el.__demoting) return;                  // this blur IS the demotion in progress
+      var rt = e.relatedTarget;
+      // a click on a toolbar control blurs the flow; the abandoned-empty-box removal must
+      // not fire then (the user is about to style the box they just placed)
+      if (rt && rt.closest && rt.closest('.pt-ed__bar, .pt-ed__textbar, .pt-ed__signbar')) { flushFlow(el); return; }
+      if (activeDragCancel) { flushFlow(el); return; }   // a handle gesture owns the box
+      demote(el);
+    });
+    focusFlow(el, caretOff);
+    syncBars(); syncTextBar();
+  }
+  function focusFlow(el, caretOff) {
+    var txt = el.__txt; if (!txt) return;
+    // a real click's default action moves focus to <body> after the handler, so focus in
+    // a setTimeout(0) — the documented canvas-overlay focus gotcha
+    setTimeout(function () {
+      if (!txt.isConnected) return;
+      try { txt.focus(); } catch (er) {}
+      var n = (el.__model.text || '').length;
+      var off = (caretOff == null) ? n : Math.max(0, Math.min(n, caretOff));
+      setSelRange(txt, off, off, off > 0 ? 'after' : 'before');
+      syncTextBar();
+    }, 0);
+  }
+  // Chrome dispatches blur SYNCHRONOUSLY while the focused node is being removed, so the
+  // flow's own blur handler re-enters this function mid-removal: __txt is nulled and the
+  // guard is set BEFORE the node leaves the DOM, or the outer removal throws
+  // ("the node to be removed is no longer a child of this node") and takes the gesture
+  // that asked for the demotion down with it.
+  function demote(el) {
+    if (!el || !el.__txt || el.__demoting) return;
+    el.__demoting = true;
+    try {
+      var t = el.__model, txt = el.__txt;
+      flushFlow(el);
+      el.__txt = null;
+      if (focusedEl === el) focusedEl = null;
+      savedRange = null;
+      clearPending();
+      if (txt.parentNode) { try { txt.parentNode.removeChild(txt); } catch (er) {} }
+      if (!el.isConnected) return;     // a teardown (undo/nav re-render removed the box)
+      if (pg && !(t.text || '').trim()) {
+        removeAnno(el, true);
+        // only drop the creation snapshot while it is still the top of the stack
+        if (el.__createSeq >= 0 && PT.snapSeq && PT.snapSeq() === el.__createSeq && PT.dropSnapshot) PT.dropSnapshot();
+        syncBars(); syncTextBar();
+        return;
+      }
+      restingRender(el);
+      syncBars(); syncTextBar();
+    } finally { el.__demoting = false; }
+  }
+  function demoteAll(keep) { if (focusedEl && focusedEl !== keep) demote(focusedEl); }
+
+  // ---- editing operations that go through the model, never through the DOM ----
+  function insertText(el, str) {
+    var t = el.__model, txt = el.__txt; if (!txt) return;
+    str = normText(str); if (!str) return;
+    if (el.__armed) { el.__armed = false; if (PT.snapshot) PT.snapshot('edit text on page ' + (idx + 1)); }
+    var st = selState(txt) || { start: (t.text || '').length, end: (t.text || '').length, aff: 'after' };
+    var runs = runsOf(t);
+    // a pending style is already a COMPLETE style derived from the caret's own run, so it
+    // replaces it rather than merging (a merge could only ever add a flag, never clear one)
+    var style = pendingStyle || styleAtOffset(t, st.start, st.start > 0 ? 'after' : 'before');
+    var head = rangeFragments(runs, 0, st.start);
+    var tail = rangeFragments(runs, st.end, (t.text || '').length);
+    writeContent(t, head.concat([mkRun(str, style)], tail));
+    renderFlow(el);
+    var at = st.start + str.length;
+    setSelRange(txt, at, at, 'after');
+    if (pendingStyle) pendingAt = at;
+    PT.markDirty(pg);
+    syncTextBar();
+  }
+  // one capture-phase handler owns every input type that would otherwise put markup, a
+  // <div>, or a browser history entry into the flow
+  function onBeforeInput(e, el) {
+    var it = e.inputType || '';
+    if (it === 'insertFromPaste' || it === 'insertFromDrop') {
+      e.preventDefault();
+      var d = e.dataTransfer || e.clipboardData;
+      insertText(el, d ? d.getData('text/plain') : '');
+      return;
+    }
+    if (it === 'insertParagraph' || it === 'insertLineBreak') { e.preventDefault(); insertText(el, '\n'); return; }
+    if (it === 'formatBold') { e.preventDefault(); toggleFlag('b'); return; }
+    if (it === 'formatItalic') { e.preventDefault(); toggleFlag('i'); return; }
+    if (it === 'formatUnderline') { e.preventDefault(); toggleFlag('u'); return; }
+    if (it === 'formatStrikeThrough') { e.preventDefault(); toggleFlag('s'); return; }
+    if (it === 'historyUndo') { e.preventDefault(); if (!(PT.isBusy && PT.isBusy())) PT.undo(); return; }
+    if (it === 'historyRedo') { e.preventDefault(); return; }
+    if (it === 'insertText' && pendingStyle) { e.preventDefault(); insertText(el, e.data || ''); return; }
+  }
+
+  // ---- applying a style ----
+  // targets, in order: a live selection inside the focused box; a collapsed caret (which
+  // sets a PENDING style the next characters carry, and never rewrites existing text); a
+  // selected box that is not focused (the whole box)
+  function styleTarget() {
+    if (focusedEl) {
+      var st = savedRange || selState(focusedEl.__txt);
+      if (st && st.end > st.start) return { el: focusedEl, start: st.start, end: st.end };
+      return { el: focusedEl, caret: true, at: st ? st.start : (focusedEl.__model.text || '').length };
+    }
+    if (selected && isText(selected)) return { el: selected, whole: true };
+    return null;
+  }
+  function currentStyle() {
+    var tg = styleTarget(); if (!tg) return null;
+    var t = tg.el.__model, runs = runsOf(t), frags;
+    if (tg.whole) frags = runs;
+    else if (tg.caret) return pendingStyle || styleAtOffset(t, tg.at, tg.at > 0 ? 'after' : 'before');
+    else frags = rangeFragments(runs, tg.start, tg.end);
+    frags = frags.filter(function (r) { return r.t.length; });
+    if (!frags.length) return mkRun('', null);
+    var all = function (k) { return frags.every(function (r) { return !!r[k]; }); };
+    var same = function (k) { var v = frags[0][k] || null; return frags.every(function (r) { return (r[k] || null) === v; }) ? v : null; };
+    return { b: all('b'), i: all('i'), u: all('u'), s: all('s'), hl: same('hl'), c: same('c') };
+  }
+  function applyStyle(patchFn, label) {
+    var tg = styleTarget(); if (!tg) return;
+    var el = tg.el, t = el.__model;
+    if (tg.caret) {
+      var cur = currentStyle() || {};
+      pendingStyle = patchFn(cur, true);
+      pendingAt = tg.at;
+      syncTextBar();
+      return;
+    }
+    styleSnapshot(label);
+    var runs = runsOf(t);
+    var start = tg.whole ? 0 : tg.start, end = tg.whole ? (t.text || '').length : tg.end;
+    writeContent(t, mapRange(runs, start, end, function (r) { return patchFn(r, false); }));
+    if (el.__txt) { renderFlow(el); setSelRange(el.__txt, start, end, 'after'); savedRange = { start: start, end: end, aff: 'after' }; }
+    else restingRender(el);
+    PT.markDirty(pg);
+    syncTextBar();
+  }
+  function toggleFlag(k) {
+    var cur = currentStyle() || {};
+    var on = !cur[k];
+    applyStyle(function (r) { var o = { b: r.b, i: r.i, u: r.u, s: r.s, hl: r.hl, c: r.c }; o[k] = on; return o; },
+      (k === 'b' ? 'bold' : k === 'i' ? 'italic' : k === 'u' ? 'underline' : 'strikethrough') + ' text');
+    rearmStyle();
+  }
+  function setColor(hex) {
+    applyStyle(function (r) { return { b: r.b, i: r.i, u: r.u, s: r.s, hl: r.hl, c: hex }; }, 'color text');
+  }
+  // forceSet: the custom colour picker always SETS, because a drag that happens to pass
+  // back through the colour already applied would otherwise clear the highlight mid-drag
+  function setHighlight(hex, forceSet) {
+    var cur = currentStyle() || {};
+    var off = !forceSet && hex && cur.hl === hex;    // the same swatch again clears it
+    applyStyle(function (r) { return { b: r.b, i: r.i, u: r.u, s: r.s, hl: off ? null : hex, c: r.c }; }, 'highlight text');
+    rearmStyle();
+  }
+  // whole-box properties (font, size, line spacing, alignment, width) always apply to the
+  // whole box: there is one size and one family per box (spec 12.1)
+  function boxTarget() {
+    if (focusedEl) return focusedEl;
+    if (selected && isText(selected)) return selected;
+    return null;
+  }
+  function applyBoxProp(fn, label) {
+    var el = boxTarget(); if (!el) return;
+    styleSnapshot(label);
+    fn(el.__model);
+    refreshBox(el);
+    PT.markDirty(pg);
+    syncTextBar();
+  }
+  function refreshBox(el) {
+    layoutBox(el);
+    if (el.__txt) {
+      styleFlow(el.__txt, el.__model);
+      el.style.width = (el.__model.w != null) ? (el.__model.w * dispW) + 'px' : 'auto';
+      el.style.height = 'auto';
+    } else restingRender(el);
+    el.style.left = (el.__model.x * dispW) + 'px'; el.style.top = (el.__model.y * dispH) + 'px';
+    placeBadge(el);
+    var grip = el.querySelector('.pt-anno__grip');
+    if (grip) grip.classList.toggle('pt-anno__grip--below', el.__model.y * dispH < gripLift());
+  }
+
   function makeTextEl(t, isNew, ownSnap) {
     var el = document.createElement('div'); el.className = 'pt-anno pt-anno--text'; el.__model = t;
     el.style.left = (t.x * dispW) + 'px'; el.style.top = (t.y * dispH) + 'px';
-    // the editable content is a separate inner node so handles (×) never become part of the text
-    var txt = document.createElement('div'); txt.className = 'pt-anno__txt'; el.__txt = txt;
-    txt.style.fontSize = (t.size * scale) + 'px'; txt.style.fontFamily = fontFamily(t.font); txt.style.color = t.color || '#111';
-    txt.contentEditable = (tool === 'text'); txt.textContent = t.text || '';
     // one undo snapshot per editing session (a new box is covered by its creation snapshot)
-    var armed = !isNew;
+    el.__armed = !isNew;
     // ownSnap: this new box took its OWN 'add text' snapshot (i.e. no flatten snapshot
     // covers it) — if the box is abandoned empty, that snapshot must be dropped or the
     // next Ctrl+Z becomes a visible no-op
-    var createSeq = (isNew && ownSnap && PT.snapSeq) ? PT.snapSeq() : -1;
-    txt.addEventListener('input', function () {
-      // a browser NATIVE undo can replay edits into this node after the editor closed
-      // (pg null) or the layer was rebuilt (node detached) — never sync those to the model
-      if (!pg || !txt.isConnected) return;
-      if (armed) { armed = false; if (PT.snapshot) PT.snapshot('edit text on page ' + (idx + 1)); }
-      t.text = txt.innerText;
-      PT.markDirty(pg);
-    });
-    txt.addEventListener('blur', function () {
-      armed = true;
-      if (!el.isConnected) return;   // a teardown blur (undo/nav re-render removed the
-                                     // box), not the user abandoning it — nothing to drop
-      if (!(t.text || '').trim()) {
-        removeAnno(el, true);
-        // only drop the creation snapshot while it is still the top of the stack
-        if (createSeq >= 0 && PT.snapSeq && PT.snapSeq() === createSeq && PT.dropSnapshot) PT.dropSnapshot();
-      }
-    });
-    el.appendChild(txt);
+    el.__createSeq = (isNew && ownSnap && PT.snapSeq) ? PT.snapSeq() : -1;
+    restingRender(el);
     annoKeyboardable(el);
-    el.addEventListener('pointerdown', function (e) {
-      if (e.button != null && e.button !== 0) return;                          // left button / touch only
-      if (e.target.classList.contains('pt-anno__del') || e.target.classList.contains('pt-anno__resize')) return;
-      if (tool === 'move') { e.preventDefault(); select(el); startDrag(e, el, t); }
-      else if (tool === 'text') { select(el); setTimeout(function () { txt.focus(); }, 0); }
-    });
+    el.addEventListener('pointerdown', function (e) { onTextPointerDown(e, el); });
     return el;
   }
+  function onTextPointerDown(e, el) {
+    if (e.button != null && e.button !== 0) return;                          // left button / touch only
+    var t = el.__model;
+    if (e.target !== el && e.target.classList && /pt-anno__(del|grip|he|hw|hse|resize)/.test(e.target.className)) return;
+    if (el.__txt && el.__txt.contains(e.target)) return;                     // the browser owns the caret inside a live flow
+    if (tool === 'redact') return;
+    // hit-test precedence: handle (above), then the border ring outside the ink box, then
+    // the text (caret), then the stage
+    var r = el.getBoundingClientRect();
+    var inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+    if (!inside) { e.preventDefault(); select(el); startDrag(e, el, t); return; }
+    var px = (e.clientX - layer.getBoundingClientRect().left) / scale - t.x * Wpt;
+    var py = (e.clientY - layer.getBoundingClientRect().top) / scale - t.y * Hpt;
+    var off = caretOffsetAt(t, px, py);
+    if (tool === 'text') { e.preventDefault(); select(el); promote(el, off); return; }
+    // Move / Sign: a drag moves the box, a click without movement edits it (ruling 12.6).
+    // The tool is NEVER changed by an edit click: switching to Text would arm the
+    // click-to-create path, which on a rotated page bakes the page to a JPEG.
+    e.preventDefault(); select(el);
+    startDrag(e, el, t, function (moved) { if (!moved) promote(el, off); });
+  }
+  function caretOffsetAt(t, px, py) {
+    var fn = PURE.hitTextBox, tab = metricsTable();
+    if (!fn || !tab) return null;
+    try { return fn(t, Wpt, Hpt, tab, px, py); } catch (er) { return null; }
+  }
+
   // keyboard path to EXISTING annotations: focusable (they join the editor Tab order via
   // [tabindex]) and focusing one selects it, so arrows nudge / Delete removes it. A
   // pointerdown-select doesn't fight this: move-tool pointerdowns preventDefault (no
@@ -281,6 +965,7 @@
     annoKeyboardable(el);
     el.addEventListener('pointerdown', function (e) {
       if (e.button != null && e.button !== 0) return;                          // left button / touch only
+      if (sigArmed) return;                                                    // the armed placement owns this click
       if (tool === 'move' || tool === 'sign') { e.preventDefault(); select(el); startDrag(e, el, s); }
     });
     return el;
@@ -292,6 +977,7 @@
     annoKeyboardable(el);
     el.addEventListener('pointerdown', function (e) {
       if (e.button != null && e.button !== 0) return;                          // left button / touch only
+      if (sigArmed) return;
       if (e.target.classList.contains('pt-anno__del')) return;
       if (tool === 'move') { e.preventDefault(); select(el); startDrag(e, el, r); }
       else if (tool === 'redact') { e.preventDefault(); select(el); }   // select → × to remove
@@ -306,7 +992,7 @@
   var activeDragCancel = null;   // set while an annotation drag/resize is in flight, so
                                  // Escape aborts the gesture (restoring the pre-drag
                                  // state) instead of deselecting while it keeps tracking
-  function startDrag(e, el, model) {
+  function startDrag(e, el, model, onUp) {
     var r = layer.getBoundingClientRect();
     var pid = e.pointerId;   // ignore any other simultaneous pointer (a resting palm)
                              // so it can't hijack this drag
@@ -322,21 +1008,25 @@
         if (PT.snapshot) { PT.snapshot('move ' + annoKind(el) + ' on page ' + (idx + 1)); mySnap = PT.snapSeq ? PT.snapSeq() : -1; }
       }
       var nx = (ev.clientX - r.left - ox) / dispW, ny = (ev.clientY - r.top - oy) / dispH;
-      model.x = Math.min(Math.max(0, nx), 1 - (el.offsetWidth / dispW) * 0.3);
-      model.y = Math.min(Math.max(0, ny), 1 - (el.offsetHeight / dispH) * 0.3);
+      var b = elBox(el);
+      model.x = Math.min(Math.max(0, nx), 1 - (b.w / dispW) * 0.3);
+      model.y = Math.min(Math.max(0, ny), 1 - (b.h / dispH) * 0.3);
       el.style.left = (model.x * dispW) + 'px'; el.style.top = (model.y * dispH) + 'px';
+      if (isText(el)) placeBadge(el);
     }
     function up(ev) {
       if (ev.pointerId !== pid) return;
       activeDragCancel = null;
       window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
       if (moved && pg === pg0 && pg) PT.markDirty(pg);
+      if (onUp && pg === pg0 && !ed.hidden) onUp(moved);
     }
     activeDragCancel = function () {
       activeDragCancel = null;
       window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
       model.x = mx0; model.y = my0;
       el.style.left = (mx0 * dispW) + 'px'; el.style.top = (my0 * dispH) + 'px';
+      if (isText(el)) placeBadge(el);
       // drop the 'move' snapshot, but only while it is still the top of the stack
       if (moved && mySnap >= 0 && PT.snapSeq && PT.snapSeq() === mySnap && PT.dropSnapshot) PT.dropSnapshot();
     };
@@ -374,21 +1064,99 @@
     };
     window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
   }
+  // width and size drags share a shape with the two above: pg0 capture, pointerId lock,
+  // right button ignored, one snapshot on the first real movement, Escape restores the
+  // pre-gesture geometry AND re-lays the box out (a geometry cancel is not just a
+  // reposition once the text re-wraps)
+  function startGeoDrag(e, el, step) {
+    e.preventDefault();
+    var t = el.__model, pid = e.pointerId, pg0 = pg, moved = false, mySnap = -1;
+    var g0 = { x: t.x, w: t.w, size: t.size };
+    var wasFocused = !!el.__txt;
+    if (wasFocused) demote(el);        // never let two different wraps fight during a gesture
+    if (!el.isConnected) return;
+    var L0 = layoutBox(el) || { boxW: t.size, boxH: t.size };
+    var sx = e.clientX, sy = e.clientY, raf = 0;
+    /* GRAB ANCHORED: the step gets the pointer's x AT POINTERDOWN, not the layer rect, so
+       every geometry change is the pointer's DELTA applied to the pre-gesture w / size / x.
+       Mapping the pointer's absolute x onto the box edge stepped the box by the grab offset
+       on the first movement, which is 7 to 14 px now that the handles sit outside the box. */
+    function paint() { raf = 0; refreshBox(el); }
+    function mv(ev) {
+      if (ev.pointerId !== pid) return;
+      if (pg !== pg0 || ed.hidden || !el.isConnected) return;
+      if (!moved) {
+        if (Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) < 3) return;
+        moved = true;
+        if (PT.snapshot) { PT.snapshot('resize text on page ' + (idx + 1)); mySnap = PT.snapSeq ? PT.snapSeq() : -1; }
+      }
+      step(ev, t, L0, g0, sx);
+      if (!raf) raf = requestAnimationFrame(paint);   // one layout per animation frame
+    }
+    function up(ev) {
+      if (ev.pointerId !== pid) return;
+      activeDragCancel = null;
+      window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
+      if (raf) { cancelAnimationFrame(raf); paint(); }
+      if (moved && pg === pg0 && pg) PT.markDirty(pg);
+    }
+    activeDragCancel = function () {
+      activeDragCancel = null;
+      window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
+      t.x = g0.x; t.w = g0.w; t.size = g0.size;
+      if (el.isConnected) refreshBox(el);
+      if (moved && mySnap >= 0 && PT.snapSeq && PT.snapSeq() === mySnap && PT.dropSnapshot) PT.dropSnapshot();
+    };
+    window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
+  }
+  function startWidthDrag(e, el, side) {
+    startGeoDrag(e, el, function (ev, t, L0, g0, sx0) {
+      var minW = Math.max(0.02, (t.size * 1.2) / Wpt);
+      // an auto-width box becomes a fixed-width box on its first width drag, seeded from
+      // the width it is drawn at
+      var w0 = (g0.w != null) ? g0.w : Math.max(minW, L0.boxW / Wpt);
+      var dx = (ev.clientX - sx0) / dispW;
+      if (side === 'e') {
+        t.x = g0.x;
+        t.w = Math.max(minW, Math.min(w0 + dx, 1 - g0.x));
+      } else {
+        var right = g0.x + w0;
+        var nx = Math.max(0, Math.min(g0.x + dx, right - minW));
+        t.x = nx; t.w = right - nx;
+      }
+    });
+  }
+  function startSizeDrag(e, el) {
+    startGeoDrag(e, el, function (ev, t, L0, g0, sx0) {
+      var w0px = Math.max(12, (g0.w != null ? g0.w * Wpt : L0.boxW) * scale);
+      var f = Math.max(0.2, Math.min(8, 1 + (ev.clientX - sx0) / w0px));
+      t.size = Math.max(6, Math.min(144, Math.round(g0.size * f)));
+      // a uniform scale: on a fixed-width box the width follows the size, on an auto box
+      // the width is the ink and there is nothing to scale
+      if (g0.w != null) t.w = Math.max(0.02, Math.min(1 - t.x, g0.w * (t.size / g0.size)));
+    });
+  }
 
   // ---------- stage interactions (create text / draw redact) ----------
   function stagePos(e) { var r = layer.getBoundingClientRect(); return { x: (e.clientX - r.left), y: (e.clientY - r.top) }; }
   // create an empty, focused text box at normalized (nx, ny) — shared by the stage
   // click and the keyboard path
   function createTextAt(nx, ny) {
-    var o = { size: parseInt(sizeSel.value, 10) || 14, font: fontSel.value, color: colorInp.value };
+    var o = {
+      size: parseInt(sizeSel.value, 10) || 14, font: fontSel.value, color: colorInp.value,
+      lh: parseFloat(lhSel && lhSel.value) || 1.2, align: currentAlign()
+    };
     var myPg = pg;
     ensureUpright().then(function (flattened) {
       if (myPg !== pg) return;   // the user navigated away while a rotated page was flattening
       // the flatten snapshot (if any) already covers this action — one Ctrl+Z undoes both
       if (!flattened && PT.snapshot) PT.snapshot('add text on page ' + (idx + 1));
-      var t = { x: nx, y: ny, text: '', size: o.size, font: o.font, color: o.color };
+      var t = PURE.newTextBox
+        ? PURE.newTextBox({ x: nx, y: ny, size: o.size, font: o.font, color: o.color, lh: o.lh, align: o.align })
+        : { x: nx, y: ny, text: '', size: o.size, font: o.font, color: o.color, w: null, lh: o.lh, align: o.align, runs: null };
       pg.texts.push(t); var el = makeTextEl(t, true, !flattened); layer.appendChild(el);
-      select(el); setTimeout(function () { el.__txt.focus(); }, 0);
+      select(el); promote(el, 0);
     }).catch(function () {
       // the upright flatten failed (render/encode error on an unusual page) — say so
       // instead of a click that silently does nothing
@@ -397,18 +1165,26 @@
   }
   stage.addEventListener('pointerdown', function (e) {
     if (e.button != null && e.button !== 0) return;                               // left button / touch only
+    if (sigArmed) return;                                                         // the capture handler owns it
     // clicks on annotations are theirs — EXCEPT the text tool over a redaction box or a
     // signature: typing a replacement label over blacked-out content (or a date/name on
     // a signature) is the natural workflow (the export renders those stacks correctly)
     var onRedactEl = e.target.classList && e.target.classList.contains('pt-anno--redact');
     var onSigEl = !!(e.target.closest && e.target.closest('.pt-anno--sig'));
-    if (e.target !== canvas && e.target !== stage && e.target !== layer && !(tool === 'text' && (onRedactEl || onSigEl))) return;
+    var overAnno = (tool === 'text' && (onRedactEl || onSigEl));
+    if (e.target !== canvas && e.target !== stage && e.target !== layer && !overAnno) return;
+    // the annotation under this click carries tabindex (annoKeyboardable) and its focus
+    // handler selects it, so the browser's default focus action would steal focus from the
+    // box we are about to create and the empty-box cleanup would delete it inside the same
+    // gesture (measured: created then removed before focusFlow's timer ran). The move-tool
+    // branches of those annotations already preventDefault for the same reason.
+    if (overAnno) e.preventDefault();
     var p = stagePos(e);
     if (tool === 'text') {
       createTextAt(p.x / dispW, p.y / dispH);
     } else if (tool === 'redact') {
       startRedactBox(e, p);
-    } else { deselectAll(); selected = null; }
+    } else { deselectAll(); selected = null; syncBars(); syncTextBar(); }
   });
 
   var activeRedactCancel = null;   // set while a redact drag is in flight, so Escape can
@@ -457,23 +1233,130 @@
     return el;
   }
 
-  // live-update selected text style from the toolbar. One snapshot per styling burst:
-  // the color picker fires 'input' continuously while dragged, so it disarms on the
-  // first event and re-arms on 'change' (picker closed) / discrete select changes.
+  /* ==================================================================================
+     The text bar
+     ================================================================================== */
+  // One snapshot per styling burst: the color pickers fire 'input' continuously while
+  // dragged, so a burst disarms on the first event and re-arms on 'change'. Any snapshot
+  // taken while a box is focused RE-ARMS that box's typing snapshot, so the typing that
+  // follows a style change still takes one of its own.
   var styleArmed = true;
-  function applyTextStyle() {
-    if (selected && selected.classList.contains('pt-anno--text')) {
-      if (styleArmed) { styleArmed = false; if (PT.snapshot) PT.snapshot('restyle text on page ' + (idx + 1)); }
-      var t = selected.__model; t.font = fontSel.value; t.size = parseInt(sizeSel.value, 10) || 14; t.color = colorInp.value;
-      selected.__txt.style.fontFamily = fontFamily(t.font); selected.__txt.style.fontSize = (t.size * scale) + 'px'; selected.__txt.style.color = t.color;
-      PT.markDirty(pg);
-    }
+  var savedRange = null;        // the character range a toolbar action works against
+  function styleSnapshot(label) {
+    if (styleArmed) { styleArmed = false; if (PT.snapshot) PT.snapshot(label + ' on page ' + (idx + 1)); }
+    if (focusedEl) focusedEl.__armed = true;
   }
   function rearmStyle() { styleArmed = true; }
-  fontSel.addEventListener('change', function () { applyTextStyle(); rearmStyle(); });
-  sizeSel.addEventListener('change', function () { applyTextStyle(); rearmStyle(); });
-  colorInp.addEventListener('input', applyTextStyle);
+  function currentAlign() {
+    return $('pt-text-ac').getAttribute('aria-pressed') === 'true' ? 'center'
+      : $('pt-text-ar').getAttribute('aria-pressed') === 'true' ? 'right' : 'left';
+  }
+  function press(el, on) { if (el) el.setAttribute('aria-pressed', on ? 'true' : 'false'); }
+  // a size or spacing the user reached by DRAGGING a handle is not one of the listed
+  // options; give it one so the control never shows a value the box does not have
+  function ensureOption(sel, value, label) {
+    var v = String(value);
+    for (var i = 0; i < sel.options.length; i++) if (sel.options[i].value === v) return;
+    var o = document.createElement('option'); o.value = v; o.textContent = label;
+    var at = null;
+    for (var j = 0; j < sel.options.length; j++) {
+      var ov = parseFloat(sel.options[j].value);
+      if (isFinite(ov) && ov > parseFloat(v)) { at = sel.options[j]; break; }
+    }
+    sel.insertBefore(o, at);
+  }
+  function syncTextBar() {
+    var el = boxTarget(), t = el && el.__model;
+    var st = currentStyle();
+    press($('pt-text-b'), st && st.b); press($('pt-text-i'), st && st.i);
+    press($('pt-text-u'), st && st.u); press($('pt-text-s'), st && st.s);
+    press(hlBtn, !!(st && st.hl));
+    if (st && st.hl) hlColor.value = st.hl;
+    if (st && st.c) colorInp.value = st.c;
+    if (t) {
+      if (fontSel.value !== t.font) fontSel.value = t.font;
+      ensureOption(sizeSel, t.size, t.size + ' pt'); sizeSel.value = String(t.size);
+      var lv = String(lhOf(t));
+      ensureOption(lhSel, lv, 'Spacing ' + lv); lhSel.value = lv;
+      autoChk.checked = (t.w == null);
+      if (!st || !st.c) colorInp.value = t.color || '#111111';
+    }
+    var a = t ? alignOf(t) : currentAlign();
+    press($('pt-text-al'), a === 'left'); press($('pt-text-ac'), a === 'center'); press($('pt-text-ar'), a === 'right');
+    autoChk.disabled = !t;
+  }
+  // the live selection is invalidated by every re-render, so toolbar actions work against
+  // a SAVED range; selects and colour inputs cannot avoid taking focus
+  document.addEventListener('selectionchange', function () {
+    if (!focusedEl || !focusedEl.__txt) return;
+    var st = selState(focusedEl.__txt);
+    if (st) savedRange = st;
+    if (pendingStyle && st && st.start !== pendingAt) clearPending();
+    syncTextBar();
+  });
+
+  fontSel.addEventListener('change', function () {
+    if (boxTarget()) { applyBoxProp(function (t) { t.font = fontSel.value; }, 'font'); rearmStyle(); }
+  });
+  sizeSel.addEventListener('change', function () {
+    if (boxTarget()) { applyBoxProp(function (t) { t.size = parseInt(sizeSel.value, 10) || 14; }, 'text size'); rearmStyle(); }
+  });
+  lhSel.addEventListener('change', function () {
+    var v = lhSel.value;
+    if (v === 'other') {
+      var cur = boxTarget() ? lhOf(boxTarget().__model) : 1.2, ans = null;
+      try { ans = window.prompt('Line spacing (0.8 to 4)', String(cur)); } catch (er) { ans = null; }
+      var n = parseFloat(ans);
+      lhSel.value = String(cur);
+      if (!isFinite(n) || n < 0.8 || n > 4) { syncTextBar(); return; }
+      if (boxTarget()) { applyBoxProp(function (t) { t.lh = n; }, 'line spacing'); rearmStyle(); }
+      return;
+    }
+    if (boxTarget()) { applyBoxProp(function (t) { t.lh = parseFloat(v) || 1.2; }, 'line spacing'); rearmStyle(); }
+  });
+  [['pt-text-al', 'left'], ['pt-text-ac', 'center'], ['pt-text-ar', 'right']].forEach(function (pair) {
+    var btn = $(pair[0]);
+    noFocusSteal(btn);
+    btn.addEventListener('click', function () {
+      if (boxTarget()) { applyBoxProp(function (t) { t.align = pair[1]; }, 'alignment'); rearmStyle(); }
+      else { press($('pt-text-al'), pair[1] === 'left'); press($('pt-text-ac'), pair[1] === 'center'); press($('pt-text-ar'), pair[1] === 'right'); }
+    });
+  });
+  [['pt-text-b', 'b'], ['pt-text-i', 'i'], ['pt-text-u', 'u'], ['pt-text-s', 's']].forEach(function (pair) {
+    var btn = $(pair[0]);
+    noFocusSteal(btn);
+    btn.addEventListener('click', function () { toggleFlag(pair[1]); });
+  });
+  var colorRaf = 0, hlRaf = 0;
+  colorInp.addEventListener('input', function () {
+    if (colorRaf) return;
+    colorRaf = requestAnimationFrame(function () { colorRaf = 0; setColor(colorInp.value); });
+  });
   colorInp.addEventListener('change', rearmStyle);
+  noFocusSteal(hlBtn);
+  hlBtn.addEventListener('click', function () {
+    var st = currentStyle();
+    if (st && st.hl) setHighlight(null); else setHighlight(hlColor.value || '#ffe14d');
+  });
+  Array.prototype.forEach.call(textbar.querySelectorAll('.pt-sw'), function (sw) {
+    noFocusSteal(sw);
+    sw.style.background = sw.getAttribute('data-hl');
+    sw.addEventListener('click', function () { hlColor.value = sw.getAttribute('data-hl'); setHighlight(sw.getAttribute('data-hl')); });
+  });
+  hlColor.addEventListener('input', function () {
+    if (hlRaf) return;
+    hlRaf = requestAnimationFrame(function () { hlRaf = 0; setHighlight(hlColor.value, true); });
+  });
+  hlColor.addEventListener('change', rearmStyle);
+  autoChk.addEventListener('change', function () {
+    var el = boxTarget(); if (!el) return;
+    var on = autoChk.checked;
+    applyBoxProp(function (t) {
+      if (on) t.w = null;
+      else { var L = el.__layout || layoutBox(el); t.w = Math.max(0.02, Math.min(1 - t.x, (L ? L.boxW : t.size * 6) / Wpt)); }
+    }, on ? 'auto width' : 'fixed width');
+    rearmStyle();
+  });
 
   // ---------- redaction dialog (one-time explainer) + download quality ----------
   var redactDialog = $('pt-dialog');
@@ -509,6 +1392,8 @@
   // After an undo the pages array is replaced with clones, so rebind and re-render.
   PT.onUndo = function () {
     if (ed.hidden) return;
+    focusedEl = null; savedRange = null; pendingStyle = null; pendingAt = -1;
+    disarmSig();
     var ps = PT.pages();
     if (!ps.length) { close(); return; }
     if (idx >= ps.length) idx = ps.length - 1;
@@ -600,7 +1485,7 @@
       URL.revokeObjectURL(url);
       var c = document.createElement('canvas'); c.width = im.naturalWidth; c.height = im.naturalHeight;
       c.getContext('2d').drawImage(im, 0, 0); sigCanvas = c; sigReady();
-      edNotice('Signature image loaded. Click “Place on page”.');
+      edNotice('Signature image loaded. Click Place, then click where it goes.');
     };
     im.onerror = function () { URL.revokeObjectURL(url); edNotice('Could not read that image.'); };
     im.src = url;
@@ -639,7 +1524,7 @@
           var c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight;
           c.getContext('2d').drawImage(img, 0, 0);
           sigCanvas = c; sigReady();
-          PT.setStatus('Signature loaded. Click “Place on page”.');
+          edNotice('Signature loaded. Click Place, then click where it goes.');
         };
         img.src = durl;
       });
@@ -661,32 +1546,100 @@
     PT.setStatus('Signature saved in this browser (it never leaves your device).');
   });
 
+  // ---------- pointer-placed signatures (ruling 12.6) ----------
   var sigPlacing = false;   // a double-click must not run the async place chain twice
                             // (it would stack two identical, invisible-duplicate signatures)
-  $('pt-sig-place').addEventListener('click', function () {
+  var sigArmed = false, sigGhost = null;
+  var placeBtn = $('pt-sig-place');
+  function ghostSize() {
+    var wpx = 0.28 * dispW;
+    return { w: wpx, h: wpx * (sigCanvas.height / sigCanvas.width) };
+  }
+  function armSig() {
+    if (!sigCanvas || sigPlacing) return;
+    sigArmed = true;
+    placeBtn.textContent = 'Click where it goes';
+    placeBtn.setAttribute('aria-pressed', 'true');
+    stage.classList.add('pt-stage--placing');
+    if (!sigGhost) {
+      sigGhost = document.createElement('img');
+      sigGhost.className = 'pt-sigghost';
+      sigGhost.alt = '';
+      try { sigGhost.src = sigCanvas.toDataURL('image/png'); } catch (er) {}
+      sigGhost.hidden = true;
+      layer.appendChild(sigGhost);
+    }
+    edNotice('Click on the page where the signature goes.');
+  }
+  function disarmSig() {
+    if (!sigArmed && !sigGhost) return;
+    sigArmed = false;
+    if (sigGhost) { sigGhost.remove(); sigGhost = null; }
+    if (placeBtn) { placeBtn.textContent = 'Place on page'; placeBtn.setAttribute('aria-pressed', 'false'); }
+    stage.classList.remove('pt-stage--placing');
+  }
+  function moveGhost(clientX, clientY) {
+    if (!sigGhost || !sigCanvas) return;
+    var r = layer.getBoundingClientRect(), g = ghostSize();
+    sigGhost.style.width = g.w + 'px'; sigGhost.style.height = g.h + 'px';
+    sigGhost.style.left = (clientX - r.left - g.w / 2) + 'px';
+    sigGhost.style.top = (clientY - r.top - g.h / 2) + 'px';
+    sigGhost.hidden = false;
+  }
+  stage.addEventListener('pointermove', function (e) { if (sigArmed) moveGhost(e.clientX, e.clientY); });
+  // while armed, a pointerdown anywhere on the stage, the layer or any annotation drops
+  // the signature and never edits text: capture phase, ahead of every other handler
+  stage.addEventListener('pointerdown', function (e) {
+    if (!sigArmed) return;
+    if (e.button != null && e.button !== 0) return;
+    e.preventDefault(); e.stopPropagation();
+    var pid = e.pointerId;
+    moveGhost(e.clientX, e.clientY);
+    function mv(ev) { if (ev.pointerId === pid) moveGhost(ev.clientX, ev.clientY); }
+    function up(ev) {
+      if (ev.pointerId !== pid) return;
+      window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', cancel);
+      var r = layer.getBoundingClientRect();
+      var nx = (ev.clientX - r.left) / dispW, ny = (ev.clientY - r.top) / dispH;
+      disarmSig();
+      placeSigAt(nx, ny);
+    }
+    function cancel(ev) { if (ev.pointerId === pid) { window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', cancel); } }
+    window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', cancel);
+  }, true);
+  // the drop point is normalized FRACTIONS of the effective page, never layer pixels:
+  // ensureUpright resolves through renderPage(), which clears the layer (destroying the
+  // ghost), bumps renderSeq and re-measures dispW/dispH/scale
+  function placeSigAt(nx, ny) {
     if (!sigCanvas || sigPlacing) return;
     sigPlacing = true;
-    var btn = $('pt-sig-place'); btn.disabled = true;
+    placeBtn.disabled = true;
     function done() { sigPlacing = false; sigReady(); }
-    // signatures need an upright page; flatten first if rotated (shared with the text tool)
     var myPg = pg;
     ensureUpright().then(function (flattened) {
       return PT.canvasToBytes(sigCanvas, 'image/png').then(function (png) {
         if (myPg !== pg) return;   // the user navigated away while the page was flattening
         if (!flattened && PT.snapshot) PT.snapshot('place signature on page ' + (idx + 1));
         var w = 0.28, h = w * (sigCanvas.height / sigCanvas.width) * (Wpt / Hpt);
-        var s = { png: png, x: 0.5 - w / 2, y: 0.6, w: w, h: h };
+        var s = { png: png, x: clamp01(nx - w / 2), y: clamp01(ny - h / 2), w: w, h: h };
         pg.sigs.push(s); var el = makeSigEl(s); layer.appendChild(el);
         PT.markDirty(pg);
         // setTool BEFORE select — setTool starts with a deselect, which used to wipe
         // the fresh selection and leave the just-placed sig with no ×/resize handles
         setTool('move'); select(el);
-        PT.setStatus('Signature placed. Drag it where you want.');
+        edNotice('Signature placed. Drag it to adjust.');
       });
     }).then(done, function () {
       if (myPg === pg) edNotice('Could not place the signature on this page.');
       done();
     });
+  }
+  placeBtn.addEventListener('click', function (e) {
+    if (!sigCanvas || sigPlacing) return;
+    // keyboard activation (Enter or Space) has e.detail === 0 and no pointer to aim
+    // with, so it keeps today's behaviour and places at the default spot at once
+    if (e.detail === 0) { placeSigAt(0.5, 0.6 + (0.28 * (sigCanvas.height / sigCanvas.width) * (Wpt / Hpt)) / 2); return; }
+    if (sigArmed) disarmSig(); else armSig();
   });
 
   // ---------- inline form-field widgets ----------
@@ -780,9 +1733,11 @@
     var step = big ? 0.05 : 0.01;
     if (key === 'ArrowLeft') m.x -= step; else if (key === 'ArrowRight') m.x += step;
     else if (key === 'ArrowUp') m.y -= step; else if (key === 'ArrowDown') m.y += step;
-    m.x = Math.min(Math.max(0, m.x), 1 - (selected.offsetWidth / dispW) * 0.3);
-    m.y = Math.min(Math.max(0, m.y), 1 - (selected.offsetHeight / dispH) * 0.3);
+    var b = elBox(selected);
+    m.x = Math.min(Math.max(0, m.x), 1 - (b.w / dispW) * 0.3);
+    m.y = Math.min(Math.max(0, m.y), 1 - (b.h / dispH) * 0.3);
     selected.style.left = (m.x * dispW) + 'px'; selected.style.top = (m.y * dispH) + 'px';
+    if (isText(selected)) placeBadge(selected);
     PT.markDirty(pg);
   }
   // keyboard path for redaction: drop a default-size box at the page center, then
@@ -801,19 +1756,24 @@
       return !el.disabled && el.tabIndex >= 0 && el.getClientRects().length;
     });
   }
-  // Ctrl+Z undoes; Escape is STAGED (cancel a redact drag → end typing → deselect →
-  // close); Delete removes the selection and arrows nudge it / change pages — gated on
-  // "not typing", NOT on body focus (a clicked tool button keeps focus, and Delete/
-  // arrows used to go dead in exactly that state)
+  // Ctrl+Z undoes (ours everywhere inside the editor, including a focused text box —
+  // native contenteditable undo would replay browser markup our parser then reads as
+  // user styling); Escape is STAGED (disarm a signature placement → cancel a redact drag
+  // → abort a drag/resize → abort a pad stroke → end typing → deselect → close); Delete
+  // removes the selection and arrows nudge it / change pages — gated on "not typing",
+  // NOT on body focus (a clicked tool button keeps focus, and Delete/arrows used to go
+  // dead in exactly that state)
   document.addEventListener('keydown', function (e) {
     if (ed.hidden) return;
     if (!redactDialog.hidden) { if (e.key === 'Escape') dialogCancel(); return; }   // core traps Tab in modals
     if (PT.modalOpen && PT.modalOpen()) return;
     var a = document.activeElement;
-    var typing = a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' || a.isContentEditable);
-    if ((e.key === 'z' || e.key === 'Z') && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
-      if (typing || (PT.isBusy && PT.isBusy())) return;   // native undo inside inputs
-      e.preventDefault(); PT.undo(); return;
+    var typing = a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' || a.isContentEditable
+      || !!(a.closest && a.closest('.pt-ed__bar, .pt-ed__textbar, .pt-ed__signbar')));
+    if ((e.key === 'z' || e.key === 'Z') && (e.ctrlKey || e.metaKey) && !e.altKey) {
+      e.preventDefault();                                   // never the browser's own undo/redo
+      if (!e.shiftKey && !(PT.isBusy && PT.isBusy())) PT.undo();
+      return;
     }
     if (e.key === 'Tab') {
       // keep focus inside the full-screen editor (it covers the whole page)
@@ -824,12 +1784,17 @@
       return;
     }
     if (e.key === 'Escape') {
+      if (sigArmed) { disarmSig(); edNotice('Signature placement cancelled.'); return; }
       if (activeRedactCancel) { activeRedactCancel(); return; }   // cancel the in-flight box only
       if (activeDragCancel) { activeDragCancel(); return; }       // abort an annotation drag/resize
       if (drawing) { abortPadStroke(); return; }                  // abort a sig-pad stroke
-      if (typing) { a.blur(); return; }                           // end the edit, keep the editor open
-      if (selected) { deselectAll(); selected = null; return; }
+      if (typing) { clearPending(); a.blur(); return; }           // end the edit, keep the editor open
+      if (selected) { deselectAll(); selected = null; syncBars(); syncTextBar(); return; }
       close(); return;
+    }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;   // Ctrl+Delete / Alt+arrows are not ours
+    if (e.key === 'Enter' && selected && isText(selected) && a === selected && !focusedEl) {
+      e.preventDefault(); promote(selected, null); return;        // Tab to a box, Enter to edit it
     }
     if ((e.key === 'Enter' || e.key === ' ') && a === stage) {
       // stage focused: create with the current tool at the page center
@@ -876,4 +1841,14 @@
 
   // expose the opener for the thumbnail Edit buttons
   PT.openEditor = open;
+  // test hook: the suites read the editor's own view of a box (spec 12.7)
+  PT.edState = function () {
+    return {
+      tool: tool, idx: idx, scale: scale, Wpt: Wpt, Hpt: Hpt, dispW: dispW, dispH: dispH,
+      selected: selected ? annoKind(selected) : null,
+      focused: !!focusedEl,
+      sigArmed: sigArmed,
+      layout: selected && isText(selected) ? selected.__layout : null
+    };
+  };
 })();

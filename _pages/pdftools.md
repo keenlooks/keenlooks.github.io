@@ -4,8 +4,8 @@ title: "PDF Toolbench: merge, redact, sign, OCR & compress PDFs in your browser"
 permalink: /pdftools/
 og_image: /images/og/pdftools.png
 author_profile: false
-excerpt: "Merge, split, reorder, redact, sign, fill, OCR, copy clean text, watermark, compress, and password-protect PDFs privately, in your browser."
-description: "Free private PDF tools that run entirely in your browser: merge and split PDFs, reorder and rotate pages, fill forms, add signatures, redact so hidden text is truly removed, make scanned PDFs searchable with OCR, add watermarks and page numbers, export pages as images, compress, and password-protect with AES-256. Your files are never uploaded."
+excerpt: "Merge, split, reorder, redact, sign, add and format text, fill, OCR, copy clean text, watermark, compress, and password-protect PDFs privately, in your browser."
+description: "Free private PDF tools that run entirely in your browser: merge and split PDFs, reorder and rotate pages, fill forms, add signatures, add text and format it with bold, italic, underline, highlight and alignment, redact so hidden text is truly removed, make scanned PDFs searchable with OCR, add watermarks and page numbers, export pages as images, compress, and password-protect with AES-256. Your files are never uploaded."
 ---
 
 <div class="pt-wrap">
@@ -14,7 +14,7 @@ description: "Free private PDF tools that run entirely in your browser: merge an
 
   <p class="pt-intro">
     A PDF utility that runs entirely in your browser. Merge files, reorder, rotate, and delete pages,
-    pull out a range, add text or a signature, fill in forms, redact a page so the hidden text is
+    pull out a range, add text and format it, add a signature, fill in forms, redact a page so the hidden text is
     actually gone, make a scanned PDF searchable with OCR, copy the text out cleaned up for pasting
     into an AI chat, add watermarks or page numbers, export pages as images, strip metadata, shrink
     the file, or lock it with a password. Everything runs locally on your device, your PDFs are
@@ -125,6 +125,23 @@ description: "Free private PDF tools that run entirely in your browser: merge an
       reversed, and scanned pages need "Make searchable" first since there is no text to read yet.
       Text you added with the Text tool is included; values you typed into form fields are not.
       Nothing is uploaded; it reads the text already open in your browser.</p>
+    </details>
+    <details>
+      <summary>How do I add and format text?</summary>
+      <p>Open a page for editing, choose the Text tool, and click where the text should go. Type, then
+      use the bar above the page to shape it: font, size, line spacing, alignment, bold, italic,
+      underline, strikethrough, text color, and highlight. Select part of the text and the change
+      applies to just that part; with the cursor sitting in the text and nothing selected, it applies
+      to what you type next. Drag the grip above a box to move it, the side handles to give it a width
+      so the text wraps, and the corner handle to change the size. Click into any text box later, with
+      any tool except Redact, to edit the words again.</p>
+      <p>The twelve fonts are the ones built into the PDF format itself (Helvetica, Times, and Courier,
+      each in regular, bold, italic, and bold italic), so nothing is downloaded and the text stays
+      real, selectable, searchable PDF text. A highlight is a translucent rectangle drawn behind the
+      words, and some viewers flatten it to a plain tint. Formatting pasted from somewhere else is
+      dropped to plain text on purpose, so what you see in the box is what lands in the file. The text
+      is turned into pixels only if the page itself is flattened, which happens for a redaction, a
+      watermark, page numbers, OCR, or a rotation.</p>
     </details>
     <details>
       <summary>What happens to my files?</summary>
@@ -389,19 +406,10 @@ description: "Free private PDF tools that run entirely in your browser: merge an
     <button id="pt-ed-undo" class="pt-btn" type="button" disabled title="Undo (Ctrl+Z)">↶ Undo</button>
     <span class="pt-ed__page" id="pt-ed-page"></span>
     <span class="pt-ed__tools">
-      <button id="pt-tool-move" class="pt-btn pt-tool pt-tool--on" type="button" title="Move / select (V)">↖ Move</button>
-      <button id="pt-tool-text" class="pt-btn pt-tool" type="button" title="Add text (T)">T Text</button>
+      <button id="pt-tool-move" class="pt-btn pt-tool pt-tool--on" type="button" title="Move / select">↖ Move</button>
+      <button id="pt-tool-text" class="pt-btn pt-tool" type="button" title="Add text">T Text</button>
       <button id="pt-tool-sign" class="pt-btn pt-tool" type="button" title="Add a signature">✎ Sign</button>
       <button id="pt-tool-redact" class="pt-btn pt-tool" type="button" title="Black out content so it is really removed from the file">▮ Redact</button>
-    </span>
-    <span class="pt-ed__opts" id="pt-text-opts" hidden>
-      <select id="pt-text-font" title="Font">
-        <option value="Helvetica">Helvetica</option>
-        <option value="Times">Times</option>
-        <option value="Courier">Courier</option>
-      </select>
-      <select id="pt-text-size" title="Font size"></select>
-      <input id="pt-text-color" type="color" value="#111111" title="Text color">
     </span>
     <span class="pt-ed__opts" id="pt-redact-opts" hidden>
       <label class="pt-ed__optlabel" for="pt-redact-dpi">Download quality</label>
@@ -418,6 +426,45 @@ description: "Free private PDF tools that run entirely in your browser: merge an
     </span>
   </div>
 
+  <div class="pt-ed__textbar" id="pt-ed-textbar" hidden>
+    <select id="pt-text-font" title="Font" aria-label="Font">
+      <option value="Helvetica">Helvetica</option>
+      <option value="Times">Times</option>
+      <option value="Courier">Courier</option>
+    </select>
+    <select id="pt-text-size" title="Font size" aria-label="Font size"></select>
+    <select id="pt-text-lh" title="Line spacing" aria-label="Line spacing">
+      <option value="1">Spacing 1</option>
+      <option value="1.15">Spacing 1.15</option>
+      <option value="1.2" selected>Spacing 1.2</option>
+      <option value="1.5">Spacing 1.5</option>
+      <option value="2">Spacing 2</option>
+      <option value="other">Spacing, other…</option>
+    </select>
+    <span class="pt-ed__group">
+      <button id="pt-text-al" class="pt-btn pt-ico" type="button" aria-pressed="true" title="Align left" aria-label="Align left"><svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" focusable="false"><path fill="currentColor" d="M1 2h14v2H1zM1 6h9v2H1zM1 10h14v2H1zM1 14h9v2H1z"/></svg></button>
+      <button id="pt-text-ac" class="pt-btn pt-ico" type="button" aria-pressed="false" title="Align center" aria-label="Align center"><svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" focusable="false"><path fill="currentColor" d="M1 2h14v2H1zM4 6h8v2H4zM1 10h14v2H1zM4 14h8v2H4z"/></svg></button>
+      <button id="pt-text-ar" class="pt-btn pt-ico" type="button" aria-pressed="false" title="Align right" aria-label="Align right"><svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" focusable="false"><path fill="currentColor" d="M1 2h14v2H1zM6 6h9v2H6zM1 10h14v2H1zM6 14h9v2H6z"/></svg></button>
+    </span>
+    <span class="pt-ed__group">
+      <button id="pt-text-b" class="pt-btn pt-ico pt-ico--b" type="button" aria-pressed="false" title="Bold (Ctrl+B)" aria-label="Bold">B</button>
+      <button id="pt-text-i" class="pt-btn pt-ico pt-ico--i" type="button" aria-pressed="false" title="Italic (Ctrl+I)" aria-label="Italic">I</button>
+      <button id="pt-text-u" class="pt-btn pt-ico pt-ico--u" type="button" aria-pressed="false" title="Underline (Ctrl+U)" aria-label="Underline">U</button>
+      <button id="pt-text-s" class="pt-btn pt-ico pt-ico--s" type="button" aria-pressed="false" title="Strikethrough" aria-label="Strikethrough">S</button>
+    </span>
+    <input id="pt-text-color" type="color" value="#111111" title="Text color" aria-label="Text color">
+    <span class="pt-ed__group">
+      <button id="pt-text-hl" class="pt-btn pt-ico" type="button" aria-pressed="false" title="Highlight" aria-label="Highlight">▨</button>
+      <button class="pt-sw" type="button" data-hl="#ffe14d" title="Highlight yellow" aria-label="Highlight yellow"></button>
+      <button class="pt-sw" type="button" data-hl="#a5e8a1" title="Highlight green" aria-label="Highlight green"></button>
+      <button class="pt-sw" type="button" data-hl="#a9d5ff" title="Highlight blue" aria-label="Highlight blue"></button>
+      <button class="pt-sw" type="button" data-hl="#ffb3d9" title="Highlight pink" aria-label="Highlight pink"></button>
+      <button class="pt-sw" type="button" data-hl="#ffc48a" title="Highlight orange" aria-label="Highlight orange"></button>
+      <input id="pt-text-hlcolor" type="color" value="#ffe14d" title="Highlight color" aria-label="Highlight color">
+    </span>
+    <label class="pt-check" title="Let the box hug its text instead of wrapping at a fixed width"><input type="checkbox" id="pt-text-auto" aria-label="Auto width" checked> Auto width</label>
+  </div>
+
   <div class="pt-ed__signbar" id="pt-ed-signbar" hidden>
     <div class="pt-tabs">
       <button id="pt-sign-tab-draw" class="pt-btn pt-tab pt-tab--on" type="button">Draw</button>
@@ -432,7 +479,7 @@ description: "Free private PDF tools that run entirely in your browser: merge an
       <button id="pt-sig-pick" class="pt-btn" type="button">Choose image…</button>
     </div>
     <button id="pt-sig-save" class="pt-btn" type="button" disabled title="Keep this signature in this browser only, ready for next time (it never leaves your device)">Save for next time</button>
-    <button id="pt-sig-place" class="pt-btn pt-btn--accent" type="button" disabled>Place on page</button>
+    <button id="pt-sig-place" class="pt-btn pt-btn--accent" type="button" disabled aria-pressed="false">Place on page</button>
     <span class="pt-signbar__saved" id="pt-sig-savedwrap" hidden>
       <span class="pt-ed__hint">Saved:</span>
       <span id="pt-sig-saved"></span>
@@ -441,7 +488,7 @@ description: "Free private PDF tools that run entirely in your browser: merge an
 
   <div class="pt-ed__scroll" id="pt-ed-scroll">
     <div class="pt-ed__stage" id="pt-ed-stage" tabindex="0" role="application"
-         aria-label="Page preview. With the Text or Redact tool active, press Enter to add one at the page center; arrow keys nudge the selected item, Delete removes it.">
+         aria-label="Page preview. With the Text or Redact tool active, press Enter to add one at the page center. Click a text box to edit its words; a selected text box has a grip above it for moving, side handles that set its width, and a corner handle that changes its size. Arrow keys nudge the selected item, Delete removes it.">
       <canvas id="pt-ed-canvas" class="pt-ed__canvas"></canvas>
       <div class="pt-ed__layer" id="pt-ed-layer"></div>
     </div>
@@ -681,6 +728,36 @@ html[data-theme="light"] .pt-tool--on { background: #34568a; border-color: #3456
 .pt-ed__opts input[type="color"] { width: 30px; height: 30px; padding: 0; border: 1px solid rgba(127,127,127,0.4); border-radius: 6px; background: none; cursor: pointer; }
 html[data-theme="light"] .pt-ed__opts select { color: #1f2430; background: #fff; border-color: rgba(0,0,0,0.2); }
 @media (prefers-color-scheme: light) { html:not([data-theme="dark"]) .pt-ed__opts select { color: #1f2430; background: #fff; border-color: rgba(0,0,0,0.2); } }
+/* Text formatting bar: a SECOND full-width strip, on the .pt-ed__signbar precedent. Ten
+   more controls packed into the primary bar would wrap it to three rows on a phone and
+   push the Done / Undo / page / nav row (the row a visitor uses to escape) off screen. */
+.pt-ed__textbar { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; padding: 0.45rem 0.8rem; border-bottom: 1px solid rgba(127,127,127,0.25); background: rgba(127,127,127,0.04); }
+.pt-ed__textbar[hidden] { display: none !important; }   /* the hidden attr loses to display:flex otherwise */
+.pt-ed__group { display: inline-flex; align-items: center; gap: 0.2rem; }
+/* the theme's _forms.scss gives every select width:100%, a 9px bottom margin and the
+   compiled DARK text color on white, and all three have to be undone in the bar */
+.pt-ed__textbar select { font: inherit; font-size: 0.9em; padding: 0.3em 0.4em; margin-bottom: 0; width: auto; border-radius: 6px; color: #e8e8e8; background: #20242c; border: 1px solid rgba(255,255,255,0.18); }
+.pt-ed__textbar select option { color: #e8e8e8; background: #20242c; }
+.pt-ed__textbar input[type="color"] { width: 28px; height: 28px; padding: 0; margin-bottom: 0; border: 1px solid rgba(127,127,127,0.4); border-radius: 6px; background: none; cursor: pointer; }
+.pt-ed__textbar .pt-check { margin-bottom: 0; }
+.pt-ed__textbar .pt-check input { margin: 0; }
+html[data-theme="light"] .pt-ed__textbar select { color: #1f2430; background: #fff; border-color: rgba(0,0,0,0.2); }
+html[data-theme="light"] .pt-ed__textbar select option { color: #1f2430; background: #fff; }
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .pt-ed__textbar select { color: #1f2430; background: #fff; border-color: rgba(0,0,0,0.2); }
+  html:not([data-theme="dark"]) .pt-ed__textbar select option { color: #1f2430; background: #fff; }
+}
+.pt-ico { min-width: 30px; padding: 0.35em 0.45em; display: inline-flex; align-items: center; justify-content: center; }
+.pt-ico--b { font-weight: 700; }
+.pt-ico--i { font-style: italic; font-family: Georgia, "Times New Roman", serif; }
+.pt-ico--u { text-decoration: underline; }
+.pt-ico--s { text-decoration: line-through; }
+.pt-ico[aria-pressed="true"], .pt-ico[aria-pressed="true"]:hover:not(:disabled) { background: #82a6cc; border-color: #82a6cc; color: #fff; }
+html[data-theme="light"] .pt-ico[aria-pressed="true"], html[data-theme="light"] .pt-ico[aria-pressed="true"]:hover:not(:disabled) { background: #34568a; border-color: #34568a; }
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .pt-ico[aria-pressed="true"], html:not([data-theme="dark"]) .pt-ico[aria-pressed="true"]:hover:not(:disabled) { background: #34568a; border-color: #34568a; }
+}
+.pt-sw { width: 22px; height: 22px; padding: 0; border-radius: 4px; border: 1px solid rgba(127,127,127,0.55); cursor: pointer; }
 .pt-ed__signbar { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; padding: 0.5rem 0.8rem; border-bottom: 1px solid rgba(127,127,127,0.25); }
 .pt-ed__signbar[hidden] { display: none; }
 .pt-signbar__src { display: inline-flex; align-items: center; gap: 0.5rem; }
@@ -711,17 +788,61 @@ html[data-theme="light"] .pt-ed__arrow { color: #1f2430; }
 /* margin-top -0.13em: the CSS line box puts the first baseline ~0.95em below the top
    (half-leading + ascent) while the export draws it at 0.82em — shift the ink up so the
    editor preview lands where drawText will put it (the wrapper position/model y are
-   untouched, so drags stay exact) */
-.pt-anno__txt { min-width: 1ch; padding: 0; line-height: 1.2; white-space: pre; outline: none; margin-top: -0.13em; }
+   untouched, so drags stay exact).
+   Kerning and ligatures are OFF: Arial, Times New Roman and Courier New share advance
+   widths with the standard 14 fonts, but only unkerned, which is also what pdf-lib's
+   emitter writes (one un-kerned Tj per line). */
+.pt-anno__txt { min-width: 1ch; padding: 0; line-height: 1.2; white-space: pre; outline: none; margin-top: -0.13em;
+  font-kerning: none; font-variant-ligatures: none; font-feature-settings: "kern" 0, "liga" 0; }
+/* the RESTING picture of a text box is a canvas painted by the same shared painter the
+   thumbnails and the export preview use: CSS places an inline box by its top edge and the
+   browser-font baseline offset is family AND size dependent (41px for Courier New against
+   45px for Arial at 48px), so run spans cannot land on the export's 0.82em baseline.
+   pointer-events: none keeps every gesture on the wrapper, and it is not selectable, so a
+   drag that starts on a resting box is always a gesture and never a text selection. */
+.pt-anno__cv { position: absolute; left: 0; top: 0; display: block; pointer-events: none; user-select: none; -webkit-user-select: none; }
+.pt-anno__cv[hidden] { display: none !important; }
+.pt-anno__txt--static { position: absolute; left: 0; top: 0; pointer-events: none; }
 .pt-anno--text.pt-sel, .pt-anno--sig.pt-sel, .pt-anno--redact.pt-sel { outline: 1px dashed #82a6cc; outline-offset: 1px; }
+/* a 6px ring OUTSIDE a selected text box drags it, while the interior places the caret.
+   The hit area is a pseudo-element, whose events target the box itself, so no second
+   element joins the drag / nudge / resize / cancel paths. */
+.pt-anno--text.pt-sel::before { content: ''; position: absolute; inset: -6px; }
 .pt-anno--sig { cursor: move; z-index: 3; }
 .pt-anno--sig img { width: 100%; height: 100%; display: block; pointer-events: none; }
-.pt-anno__del { position: absolute; top: -10px; right: -10px; width: 18px; height: 18px; line-height: 16px; text-align: center; font-size: 12px; border-radius: 50%; border: none; background: #c4574a; color: #fff; cursor: pointer; padding: 0; z-index: 2; }
-/* keep the x badge off the last characters of a short one-line text box: it intrudes
-   ~8px (13px coarse) into the top-right corner, so pad the SELECTED box past it.
-   Padding-right never moves the ink (left/top anchored) — export parity untouched. */
-.pt-anno--text.pt-sel { padding-right: 12px; }
-.pt-anno__resize { position: absolute; right: -6px; bottom: -6px; width: 12px; height: 12px; background: #82a6cc; border: 1px solid #fff; border-radius: 2px; cursor: nwse-resize; }
+/* the x badge is OUTSIDE the box now. It used to be cleared by padding-right on the
+   selected box, which was safe while a box had no width of its own; with a real width
+   that padding would shrink the content box and RE-WRAP the text on selection, in
+   different places on a phone (16px) than on a desktop (12px). --left flips it when the
+   box is near the stage edge, --high lifts it clear of the width handles on a short box.
+   Its offsets are its own size plus 2px on BOTH axes, so its inner corner lands just past
+   the dashed outline's corner and no pixel of it falls inside the box: on a right-aligned
+   line the ink runs to the box edge, and a badge reaching in clipped the last glyph. */
+.pt-anno__del { position: absolute; top: -20px; right: -20px; width: 18px; height: 18px; line-height: 16px; text-align: center; font-size: 12px; border-radius: 50%; border: none; background: #c4574a; color: #fff; cursor: pointer; padding: 0; z-index: 6; }
+.pt-anno__del--left { right: auto; left: -20px; }
+.pt-anno__del--high { top: -22px; }
+/* text-box handles: a move grip above the box, east and west width handles at mid height,
+   and a south-east corner that scales the font size. touch-action: none on each handle,
+   because the stage and layer are pinch-zoom and an unmarked handle drag would pan. */
+.pt-anno__grip { position: absolute; left: 50%; transform: translateX(-50%); top: -14px; width: 34px; height: 10px; border-radius: 5px; background: #82a6cc; border: 1px solid #fff; cursor: move; touch-action: none; z-index: 5; }
+.pt-anno__grip--below { top: auto; bottom: -14px; }
+.pt-anno__he, .pt-anno__hw { position: absolute; top: 50%; transform: translateY(-50%); width: 10px; height: 22px; border-radius: 3px; background: #82a6cc; border: 1px solid #fff; cursor: ew-resize; touch-action: none; z-index: 5; }
+/* both width handles sit WHOLLY outside the box, their inner edge just past the dashed
+   selection outline (which is drawn at outline-offset 1px), so neither ever covers the
+   first or the last character of a line. The offset is the handle's own width plus 2px,
+   symmetric east and west, at both pointer sizes. */
+.pt-anno__he { right: -12px; }
+.pt-anno__hw { left: -12px; }
+/* the size handle follows the same law as the width handles: its own size plus 2px on
+   both axes, so its inner corner lands just past the dashed outline's bottom-right corner
+   and it never covers the last character of the last line. (.pt-anno__resize below is the
+   signature handle, which sits on an image and clips no glyph, so it is unchanged.) */
+.pt-anno__hse { position: absolute; right: -14px; bottom: -14px; width: 12px; height: 12px; background: #82a6cc; border: 1px solid #fff; border-radius: 2px; cursor: nwse-resize; touch-action: none; z-index: 5; }
+.pt-anno__resize { position: absolute; right: -6px; bottom: -6px; width: 12px; height: 12px; background: #82a6cc; border: 1px solid #fff; border-radius: 2px; cursor: nwse-resize; touch-action: none; }
+/* a signature being aimed with the pointer: the ghost tracks the pointer at its center */
+.pt-sigghost { position: absolute; opacity: 0.6; pointer-events: none; z-index: 6; }
+.pt-sigghost[hidden] { display: none; }
+.pt-stage--placing { cursor: crosshair; }
 /* a committed redaction is solid black (it IS what the download will look like);
    a box still being drawn is translucent with a red edge */
 .pt-anno--redact { background: #0d0d0d; cursor: move; z-index: 1; }
@@ -742,6 +863,9 @@ html[data-theme="light"] .pt-ed__arrow { color: #1f2430; }
 /* redacting: form widgets stay visible to aim at, but must not swallow the drag —
    a box drawn over a filled field is exactly the workflow this tool exists for */
 .pt-stage--redact .pt-formwidget { pointer-events: none; }
+/* same rule for text boxes, now that clicking one edits it in every other tool: a
+   redaction drawn across added text must draw a box, not put a caret in the words */
+.pt-stage--redact .pt-anno--text { pointer-events: none; }
 /* narrow editors have no room for the reserved arrow gutters — hide the overlay
    arrows (the toolbar's ‹ › and the arrow keys still change pages) */
 @media (max-width: 639px) {
@@ -751,10 +875,21 @@ html[data-theme="light"] .pt-ed__arrow { color: #1f2430; }
    12px (resize grip). This block must come AFTER the base rules above — same
    specificity, so an earlier media block would lose the cascade. */
 @media (pointer: coarse) {
-  .pt-anno__del { width: 26px; height: 26px; line-height: 24px; font-size: 15px; top: -13px; right: -13px; }
+  .pt-anno__del { width: 26px; height: 26px; line-height: 24px; font-size: 15px; top: -28px; right: -28px; }
+  .pt-anno__del--left { right: auto; left: -28px; }
+  .pt-anno__del--high { top: -30px; }
   .pt-anno__resize { width: 24px; height: 24px; right: -12px; bottom: -12px; }
+  .pt-anno__grip { width: 44px; height: 24px; top: -30px; border-radius: 12px; }
+  .pt-anno__grip--below { top: auto; bottom: -30px; }
+  .pt-anno__he, .pt-anno__hw { width: 24px; height: 34px; border-radius: 6px; }
+  .pt-anno__he { right: -26px; }
+  .pt-anno__hw { left: -26px; }
+  .pt-anno__hse { width: 24px; height: 24px; right: -26px; bottom: -26px; }
+  .pt-anno--text.pt-sel::before { inset: -10px; }
+  .pt-ico { min-width: 36px; min-height: 36px; }
+  .pt-sw { width: 28px; height: 28px; }
+  .pt-ed__textbar input[type="color"] { width: 34px; height: 34px; }
   .pt-sigsaved__del { min-width: 24px; min-height: 24px; padding: 0.4em 0.55em; box-sizing: border-box; }
-  .pt-anno--text.pt-sel { padding-right: 16px; }
   /* the thumbnail footer row (✎ ⟳ ×) was ~24px with 8px gaps, and × sits two buttons
      from ✎ — give fingers 32px+ and more room between them */
   .pt-thumb__act {
@@ -778,8 +913,8 @@ html[data-theme="light"] .pt-ed__arrow { color: #1f2430; }
   "isAccessibleForFree": true,
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
   "author": { "@type": "Person", "name": "Keane Lucas", "url": "https://keanelucas.com" },
-  "description": "Free private PDF tools that run entirely in the browser: merge and split PDFs, reorder and rotate pages, fill forms, add signatures, true redaction, OCR to make scanned PDFs searchable, watermarks, page numbers, export pages as images, compression, and AES-256 password protection. Files are never uploaded.",
-  "featureList": "Merge PDFs, split PDFs, reorder pages, rotate pages, delete pages, duplicate pages, insert blank pages, extract page ranges, fill PDF forms, sign PDFs, redact PDFs, OCR scanned PDFs, copy clean text from a PDF, add watermarks, add page numbers, export pages as images, compress PDFs, password-protect PDFs, strip metadata, undo"
+  "description": "Free private PDF tools that run entirely in the browser: merge and split PDFs, reorder and rotate pages, fill forms, add signatures, add text and format it with bold, italic, underline, highlight and alignment, true redaction, OCR to make scanned PDFs searchable, watermarks, page numbers, export pages as images, compression, and AES-256 password protection. Files are never uploaded.",
+  "featureList": "Merge PDFs, split PDFs, reorder pages, rotate pages, delete pages, duplicate pages, insert blank pages, extract page ranges, fill PDF forms, sign PDFs, add text to a PDF, format text with bold, italic, underline, strikethrough, highlight, color, line spacing and alignment, redact PDFs, OCR scanned PDFs, copy clean text from a PDF, add watermarks, add page numbers, export pages as images, compress PDFs, password-protect PDFs, strip metadata, undo"
 }
 </script>
 

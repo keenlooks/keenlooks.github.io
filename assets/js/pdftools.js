@@ -73,7 +73,7 @@
       ocr: !!pg.ocr,
       redacts: (pg.redacts || []).map(function (r) { return { x: r.x, y: r.y, w: r.w, h: r.h }; }),
       sigs: (pg.sigs || []).map(function (s) { return { png: s.png, x: s.x, y: s.y, w: s.w, h: s.h }; }),
-      texts: (pg.texts || []).map(function (t) { return { x: t.x, y: t.y, text: t.text, size: t.size, font: t.font, color: t.color }; }),
+      texts: (pg.texts || []).map(PURE.copyTextEntry),
       wms: (pg.wms || []).map(function (w) { return { text: w.text, pos: w.pos, opacity: w.opacity, size: w.size }; }),
       ocrWords: pg.ocrWords ? pg.ocrWords.slice() : null
     };
@@ -139,7 +139,16 @@
         r.x = Math.min(r.x, Math.max(0, 1 - wNew));
         r.y = Math.min(r.y, Math.max(0, 1 - hNew));
       }
-      return { x: r.x, y: r.y, text: t.text, size: t.size, font: t.font, color: t.color };
+      var o = PURE.copyTextEntry(t);
+      o.x = r.x; o.y = r.y;
+      // w is a fraction of the effective page WIDTH: after a quarter turn the page's
+      // width is the old height, so an unchanged fraction would be a different PHYSICAL
+      // width and the box would re-wrap at a different measure. Remapping it keeps the
+      // box's physical width and its line breaks; lh, align and runs pass through.
+      if (swap && Wpt && Hpt && typeof o.w === 'number' && isFinite(o.w) && o.w > 0) {
+        o.w = Math.min(1, o.w * (Wpt / Hpt));
+      }
+      return o;
     });
   };
 
@@ -178,10 +187,17 @@
     };
   };
 
-  // strip characters the pdf-lib standard fonts (WinAnsi) can't encode
+  // strip characters the pdf-lib standard fonts (WinAnsi) can't encode. sanitizeRun is
+  // the NON-trimming form, used per text RUN: applied to a run, the trim would eat the
+  // run's leading and trailing spaces and shift every later run on that line left.
+  // sanitizeWinAnsi keeps the trim, which its watermark and OCR callers rely on.
+  PURE.sanitizeRun = function (s) {
+    if (!s) return '';
+    return String(s).replace(/[^\x20-\x7E\u00A0-\u00FF\u2013\u2014\u2018\u2019\u201C\u201D\u2022\u2026]/g, '');
+  };
   PURE.sanitizeWinAnsi = function (s) {
     if (!s) return '';
-    return String(s).replace(/[^\x20-\x7E\u00A0-\u00FF\u2013\u2014\u2018\u2019\u201C\u201D\u2022\u2026]/g, '').trim();
+    return PURE.sanitizeRun(s).trim();
   };
 
   // watermark text placement + draw (P = the PDFLib namespace). Rotation-0 math: pages
@@ -254,6 +270,531 @@
       } catch (e2) { /* one unencodable word must not break the page */ }
     });
     return drawn;
+  };
+
+  /* ==================================================================================
+     Rich text boxes: metrics, the layout law, the hit test, and the ONE shared canvas
+     painter. Spec: .claude/plans/plan-pdftools-richtext.md sections 12.1, 12.2, 12.4.
+
+     A text box entry is {x, y, text, size, font, color} plus, optionally:
+       w      fraction of the effective page WIDTH, or null/absent = auto width
+       lh     line-height multiplier (default 1.2, which is the pre-existing law)
+       align  'left' | 'center' | 'right' (default 'left')
+       runs   null/absent = legacy plain text, else [{t,b,i,u,s,hl,c}] whose t values
+              joined always equal text
+     An entry carrying none of the four lays out, paints and exports exactly as it did
+     before this build, down to the arithmetic (see baselineAt).
+     ================================================================================== */
+
+  // the three families the text tool offers
+  PURE.textFamily = function (f) { return (f === 'Times' || f === 'Courier') ? f : 'Helvetica'; };
+
+  // Face key. The plain face keeps the BARE family name, which is exactly the key the
+  // export's font cache used before this build, so a legacy box still embeds one font
+  // and shares it with the watermark/page-number/OCR Helvetica.
+  PURE.faceKey = function (family, b, i) {
+    var fam = PURE.textFamily(family);
+    return (b || i) ? (fam + '|' + (b ? 'b' : '') + (i ? 'i' : '')) : fam;
+  };
+
+  // every code point the standard fonts' WinAnsi encoding covers: ASCII, Latin-1, and
+  // the CP1252 0x80-0x9F block (euro, dagger, curly quotes, OE, ...). Anything outside
+  // this set is what drawText throws on, so it is what the table records as null.
+  PURE.winAnsiCodePoints = function () {
+    var out = [], i;
+    for (i = 0x20; i <= 0x7E; i++) out.push(i);
+    for (i = 0xA0; i <= 0xFF; i++) out.push(i);
+    var extra = [0x20AC, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030,
+                 0x0160, 0x2039, 0x0152, 0x017D, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022,
+                 0x2013, 0x2014, 0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x017E, 0x0178];
+    for (i = 0; i < extra.length; i++) out.push(extra[i]);
+    return out;
+  };
+
+  // Build the PER-CHARACTER advance table for the twelve standard faces, once.
+  // NEVER a whole-string width: pdf-lib's widthOfTextAtSize adds AFM kern pairs while
+  // its emitter writes one UNKERNED Tj per line, so only the per-character sum matches
+  // the ink the page actually draws (measured gap up to 7.1 pt on a 49 character
+  // Helvetica line at 12 pt). The browser stacks run with kerning off, so the same sum
+  // is also what the canvas painters and the editor draw.
+  // Resolves to { faces: { faceKey: { adv: {code: advance/1000 or null}, ascent, descent } }, ok }
+  // and NEVER rejects: a failed build degrades to an empty table (zero widths), which
+  // still draws every line at its own baseline.
+  PURE.buildMetrics = function (P) {
+    if (!P || !P.PDFDocument || !P.StandardFonts) return Promise.resolve({ faces: {}, ok: false });
+    var SF = P.StandardFonts;
+    var faces = [
+      ['Helvetica', 0, 0, SF.Helvetica], ['Helvetica', 1, 0, SF.HelveticaBold],
+      ['Helvetica', 0, 1, SF.HelveticaOblique], ['Helvetica', 1, 1, SF.HelveticaBoldOblique],
+      ['Times', 0, 0, SF.TimesRoman], ['Times', 1, 0, SF.TimesRomanBold],
+      ['Times', 0, 1, SF.TimesRomanItalic], ['Times', 1, 1, SF.TimesRomanBoldItalic],
+      ['Courier', 0, 0, SF.Courier], ['Courier', 1, 0, SF.CourierBold],
+      ['Courier', 0, 1, SF.CourierOblique], ['Courier', 1, 1, SF.CourierBoldOblique]
+    ];
+    var codes = PURE.winAnsiCodePoints();
+    return P.PDFDocument.create().then(function (doc) {
+      var out = { faces: {}, ok: true };
+      faces.forEach(function (f) {
+        var key = PURE.faceKey(f[0], f[1], f[2]);
+        var rec = { adv: {}, ascent: 0.718, descent: 0.207 };
+        var font = null;
+        try { font = doc.embedStandardFont(f[3]); } catch (e) { out.ok = false; }
+        if (!font) { out.faces[key] = rec; return; }
+        codes.forEach(function (c) {
+          var w = null;
+          try { w = font.widthOfTextAtSize(String.fromCharCode(c), 1000) / 1000; } catch (e2) { w = null; }
+          rec.adv[c] = (w != null && isFinite(w)) ? w : null;
+        });
+        try {
+          var asc = font.heightAtSize(1000, { descender: false }) / 1000;
+          var full = font.heightAtSize(1000) / 1000;
+          if (isFinite(asc) && asc > 0) rec.ascent = asc;
+          if (isFinite(full) && full > asc) rec.descent = full - asc;
+        } catch (e3) {}
+        out.faces[key] = rec;
+      });
+      return out;
+    }).catch(function () { return { faces: {}, ok: false }; });
+  };
+
+  // advance of one character, in ems, or null when the standard fonts cannot encode it
+  PURE.charAdvance = function (table, fontKey, code) {
+    var f = table && table.faces && table.faces[fontKey];
+    if (!f) return null;
+    var a = f.adv[code];
+    return (a == null || !isFinite(a)) ? null : a;
+  };
+  // width of a string in points for one face. Characters the table cannot encode
+  // contribute nothing, which is exactly what the drawn string does: they are dropped
+  // before drawing (the layout filters per character, see below).
+  PURE.faceWidth = function (table, fontKey, str, size) {
+    if (!str) return 0;
+    var w = 0;
+    for (var i = 0; i < str.length; i++) {
+      var a = PURE.charAdvance(table, fontKey, str.charCodeAt(i));
+      if (a != null) w += a;
+    }
+    return w * (size || 0);
+  };
+  // advance of one CHARACTER, in ems, including the tab rule: pdf-lib's own cleanText
+  // expands a tab to four spaces before drawing, so the layout measures and draws it
+  // the same way instead of dropping it as unencodable
+  PURE.cellAdvance = function (table, fontKey, ch) {
+    if (ch === '\t') {
+      var sp = PURE.charAdvance(table, fontKey, 32);
+      return sp == null ? null : sp * 4;
+    }
+    if (ch === '\n') return null;
+    return PURE.charAdvance(table, fontKey, ch.charCodeAt(0));
+  };
+  // the string one character contributes to the DRAWN text ('' when nothing can be drawn)
+  PURE.cellDraw = function (table, fontKey, ch) {
+    if (ch === '\n') return '';
+    if (ch === '\t') return PURE.charAdvance(table, fontKey, 32) == null ? '' : '    ';
+    return PURE.charAdvance(table, fontKey, ch.charCodeAt(0)) == null ? '' : ch;
+  };
+
+  PURE.faceAscent = function (table, fontKey) {
+    var f = table && table.faces && table.faces[fontKey];
+    return f ? f.ascent : 0.718;
+  };
+  PURE.faceDescent = function (table, fontKey) {
+    var f = table && table.faces && table.faces[fontKey];
+    return f ? f.descent : 0.207;
+  };
+
+  // every content entry point (typing, paste, drop, the parser) runs through this:
+  // CRLF and a bare CR become LF, and each tab becomes four spaces, matching pdf-lib's
+  // own cleanText. The metrics table cannot measure 0x09, so a tab must never survive
+  // into the model.
+  PURE.normalizeContent = function (s) {
+    return String(s == null ? '' : s).replace(/\r\n?/g, '\n').replace(/\t/g, '    ');
+  };
+
+  // normalize a colour to #rrggbb; an unparsable value falls back, so the export can
+  // never reach PDFLib.rgb(NaN) and no colour bug is ever reported as dropped characters
+  PURE.normColor = function (v, fallback) {
+    var m = /^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.exec(String(v == null ? '' : v).trim());
+    if (!m) return fallback === undefined ? null : fallback;
+    var h = m[1].toLowerCase();
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+    return '#' + h;
+  };
+
+  // the baseline of visual line i, in points below the box's top edge. Written as
+  // size*0.82 + (i*size)*lh so that at lh 1.2 it is bit-for-bit the arithmetic the
+  // three painters used before this build (a one-ULP drift would change the exported
+  // number's decimal string, and with it the legacy byte identity).
+  PURE.LINE_BASE = 0.82;
+  PURE.baselineAt = function (i, size, lh) { return size * PURE.LINE_BASE + i * size * lh; };
+
+  // ---- the ONE content writer -------------------------------------------------------
+  // Runs are IMMUTABLE: merging always builds fresh objects, so PURE.clonePage can copy
+  // the array with slice() and share the run objects across undo entries.
+  PURE.runStyleKey = function (r) {
+    return (r.b ? 'b' : '') + (r.i ? 'i' : '') + (r.u ? 'u' : '') + (r.s ? 's' : '') +
+      '|' + (r.c || '') + '|' + (r.hl || '');
+  };
+  PURE.mergeRuns = function (runs) {
+    var out = [];
+    (runs || []).forEach(function (r) {
+      var text = PURE.normalizeContent((r && r.t != null) ? r.t : '');
+      if (!text) return;
+      var norm = {
+        t: text, b: !!(r && r.b), i: !!(r && r.i), u: !!(r && r.u), s: !!(r && r.s),
+        hl: (r && r.hl) ? PURE.normColor(r.hl, null) : null,
+        c: (r && r.c) ? PURE.normColor(r.c, null) : null
+      };
+      var last = out.length ? out[out.length - 1] : null;
+      if (last && PURE.runStyleKey(last) === PURE.runStyleKey(norm)) {
+        out[out.length - 1] = {
+          t: last.t + norm.t, b: last.b, i: last.i, u: last.u, s: last.s, hl: last.hl, c: last.c
+        };
+      } else out.push(norm);
+    });
+    return out;
+  };
+  // setBoxContent(t, runs): merge adjacent identical runs, write t.runs, THEN set
+  // t.text to the runs joined, in that order. Nothing else in the app assigns t.text,
+  // which is what keeps "runs joined === text" true and with it the export's ghost
+  // check, close()'s empty filter and Copy clean text. Passing null returns the box to
+  // its legacy form and leaves t.text alone.
+  // true when nothing in the run list carries style, so the box can go back to the
+  // legacy plain form and keep the legacy export path (no rectangles, one font face)
+  PURE.runsArePlain = function (runs) {
+    return (runs || []).every(function (r) {
+      return !r.b && !r.i && !r.u && !r.s && !r.hl && !r.c;
+    });
+  };
+  PURE.setBoxContent = function (t, runs) {
+    if (!t) return t;
+    if (runs == null) { t.runs = null; return t; }
+    var merged = PURE.mergeRuns(runs);
+    t.runs = PURE.runsArePlain(merged) ? null : merged;
+    t.text = merged.map(function (r) { return r.t; }).join('');
+    return t;
+  };
+
+  // the model defaults for a NEW text box: w null = auto width (today's behaviour),
+  // lh 1.2 = today's line advance, align left, runs null = plain legacy text. A box
+  // created with these lays out, paints and exports exactly like one created before
+  // this build; it becomes a v2 box only when a style is actually applied to it.
+  PURE.newTextBox = function (o) {
+    o = o || {};
+    return {
+      x: o.x || 0, y: o.y || 0, text: o.text == null ? '' : String(o.text),
+      size: o.size || 14, font: PURE.textFamily(o.font),
+      color: PURE.normColor(o.color, '#111111'),
+      w: (o.w == null ? null : o.w), lh: (o.lh == null ? 1.2 : o.lh),
+      align: o.align || 'left', runs: o.runs || null
+    };
+  };
+
+  // copy one text entry. The four v2 fields are copied only when the entry actually
+  // carries them, so a legacy six-key box still round-trips as six keys with no
+  // undefined values, and a v2 box keeps every field it had.
+  PURE.copyTextEntry = function (t) {
+    var o = { x: t.x, y: t.y, text: t.text, size: t.size, font: t.font, color: t.color };
+    var has = Object.prototype.hasOwnProperty;
+    if (has.call(t, 'w')) o.w = t.w;
+    if (has.call(t, 'lh')) o.lh = t.lh;
+    if (has.call(t, 'align')) o.align = t.align;
+    if (has.call(t, 'runs')) o.runs = t.runs ? t.runs.slice() : null;
+    return o;
+  };
+
+  // ---- the layout law ---------------------------------------------------------------
+  // PURE.layoutTextBox(t, Wpt, Hpt, table) is PURE and SYNCHRONOUS and never reaches
+  // for pdf-lib. Everything it returns is in POINTS relative to the box origin
+  // (t.x*Wpt, t.y*Hpt). See INTERFACES.md pin C1 for the exact output shape.
+  function ltbTokenize(cells) {
+    var toks = [], cur = null;
+    for (var i = 0; i < cells.length; i++) {
+      var sp = (cells[i].ch === ' ');
+      if (!cur || cur.sp !== sp) { cur = { sp: sp, cells: [], w: 0 }; toks.push(cur); }
+      cur.cells.push(cells[i]); cur.w += cells[i].adv;
+    }
+    return toks;
+  }
+  // greedy word wrap at maxW. A word wider than the whole measure is broken by
+  // character; the spaces a line wrapped ON stay at the END of that line, where they
+  // count for nothing (no width, no decoration), so the next line never begins with them.
+  function ltbWrap(cells, maxW) {
+    if (maxW == null || !(maxW > 0)) return [{ cells: cells, width: null, trail: 0 }];
+    var toks = ltbTokenize(cells), lines = [];
+    var cur = [], curW = 0, inkW = 0, trail = 0;
+    function flat() {
+      var out = [];
+      for (var i = 0; i < cur.length; i++) out = out.concat(cur[i].cells);
+      return out;
+    }
+    function flushSoft() {
+      lines.push({ cells: flat(), width: inkW, trail: trail });
+      cur = []; curW = 0; inkW = 0; trail = 0;
+    }
+    for (var k = 0; k < toks.length; k++) {
+      var tk = toks[k];
+      if (tk.sp) { cur.push(tk); curW += tk.w; trail += tk.cells.length; continue; }
+      if (inkW > 0 && curW + tk.w > maxW) flushSoft();
+      if (curW + tk.w > maxW && tk.w > maxW) {
+        var idx = 0, cs = tk.cells;
+        while (idx < cs.length) {
+          var avail = maxW - curW, take = 0, ww = 0;
+          while (idx + take < cs.length) {
+            var a = cs[idx + take].adv;
+            if (ww + a > avail && (take > 0 || curW > 0)) break;
+            ww += a; take++;
+          }
+          if (take === 0) {
+            if (curW > 0) { flushSoft(); continue; }
+            take = 1; ww = cs[idx].adv;
+          }
+          cur.push({ sp: false, cells: cs.slice(idx, idx + take), w: ww });
+          curW += ww; inkW = curW; trail = 0;
+          idx += take;
+          if (idx < cs.length) flushSoft();
+        }
+        continue;
+      }
+      cur.push(tk); curW += tk.w; inkW = curW; trail = 0;
+    }
+    // the last visual line of a hard paragraph keeps its trailing spaces in its width
+    lines.push({ cells: flat(), width: curW, trail: 0 });
+    return lines;
+  }
+  PURE.layoutTextBox = function (t, Wpt, Hpt, table) {
+    t = t || {};
+    var size = (typeof t.size === 'number' && isFinite(t.size) && t.size > 0) ? t.size : 14;
+    var lh = (typeof t.lh === 'number' && isFinite(t.lh) && t.lh > 0) ? t.lh : 1.2;
+    var align = (t.align === 'center' || t.align === 'right') ? t.align : 'left';
+    var family = PURE.textFamily(t.font);
+    var boxColor = PURE.normColor(t.color, '#111111');
+    var wFrac = (typeof t.w === 'number' && isFinite(t.w) && t.w > 0) ? t.w : null;
+    var maxW = (wFrac != null && Wpt > 0) ? wFrac * Wpt : null;
+    var srcRuns = (t.runs && t.runs.length) ? t.runs : null;
+
+    // style table, one entry per source run (or one for a legacy box)
+    var styles = [];
+    function pushStyle(r) {
+      var b = !!(r && r.b), it = !!(r && r.i);
+      var key = PURE.faceKey(family, b, it);
+      styles.push({
+        b: b, i: it, u: !!(r && r.u), s: !!(r && r.s),
+        hl: (r && r.hl) ? PURE.normColor(r.hl, null) : null,
+        c: (r && r.c) ? PURE.normColor(r.c, boxColor) : boxColor,
+        fontKey: key, ascent: PURE.faceAscent(table, key), descent: PURE.faceDescent(table, key)
+      });
+      return styles.length - 1;
+    }
+
+    // character stream: one cell per code unit, carrying its style, its offset into
+    // t.text, its advance, and whether the standard fonts can encode it
+    var cells = [], off = 0;
+    var list = srcRuns ? srcRuns : [{ t: (t.text == null ? '' : String(t.text)) }];
+    list.forEach(function (r) {
+      var si = pushStyle(r);
+      var st = styles[si];
+      var s = String((r && r.t != null) ? r.t : '');
+      for (var i = 0; i < s.length; i++) {
+        var ch = s.charAt(i);
+        var a = PURE.cellAdvance(table, st.fontKey, ch);
+        // ch is the character (so offsets stay 1:1 with t.text), draw is what actually
+        // reaches the page (a tab draws as four spaces, an unencodable character as '')
+        cells.push({
+          ch: ch, draw: PURE.cellDraw(table, st.fontKey, ch), st: si, off: off,
+          adv: (a == null ? 0 : a * size), enc: a != null
+        });
+        off++;
+      }
+    });
+
+    // hard breaks first: a run may span a newline, and the newline is in no fragment
+    var hard = [[]], hardOff = [0];
+    cells.forEach(function (c) {
+      if (c.ch === '\n') { hard.push([]); hardOff.push(c.off + 1); return; }
+      hard[hard.length - 1].push(c);
+    });
+
+    // wrap, then cut each visual line into fragments at style boundaries
+    var raw = [], li = 0, prevEnd = 0;
+    hard.forEach(function (hl, hi) {
+      ltbWrap(hl, maxW).forEach(function (vl) {
+        var lc = vl.cells;
+        var lineOff = lc.length ? lc[0].off : (li === 0 ? hardOff[hi] : Math.max(prevEnd, hardOff[hi]));
+        var lineEnd = lc.length ? (lc[lc.length - 1].off + 1) : lineOff;
+        var trailFrom = lc.length - (vl.trail || 0);
+        var frags = [], x = 0, cur = null, lineText = '';
+        for (var i = 0; i < lc.length; i++) {
+          var c = lc[i];
+          lineText += c.ch;
+          if (!cur || cur.st !== c.st) {
+            if (cur) { frags.push(cur); x += cur.w; }
+            cur = { st: c.st, x: x, w: 0, raw: '', text: '', off: c.off, len: 0, drop: false };
+          }
+          cur.raw += c.ch; cur.len++;
+          if (c.enc) { cur.text += c.draw; if (i < trailFrom) cur.w += c.adv; }
+          else cur.drop = true;
+        }
+        if (cur) { frags.push(cur); x += cur.w; }
+        raw.push({
+          i: li, hard: hi, off: lineOff, end: lineEnd, text: lineText,
+          width: (vl.width == null) ? x : vl.width, frags: frags
+        });
+        prevEnd = lineEnd;
+        li++;
+      });
+    });
+
+    var boxW = maxW;
+    if (boxW == null) { boxW = 0; raw.forEach(function (l) { if (l.width > boxW) boxW = l.width; }); }
+
+    // second pass: alignment offset, absolute fragment x, merged highlights, decorations
+    var outLines = raw.map(function (l) {
+      var offX = align === 'center' ? (boxW - l.width) / 2 : align === 'right' ? (boxW - l.width) : 0;
+      var baseline = PURE.baselineAt(l.i, size, lh);
+      var runsOut = [], hls = [], decs = [], hlCur = null;
+      l.frags.forEach(function (f) {
+        var st = styles[f.st];
+        var fr = {
+          x: offX + f.x, w: f.w, text: f.text, raw: f.raw, off: f.off, len: f.len, drop: f.drop,
+          b: st.b, i: st.i, u: st.u, s: st.s, hl: st.hl, c: st.c,
+          fontKey: st.fontKey, ascent: st.ascent, descent: st.descent
+        };
+        runsOut.push(fr);
+        // a fragment with no drawn width (an empty run, a fully dropped run, or the
+        // spaces a line wrapped on) paints no decoration
+        if (!(fr.w > 0)) { hlCur = null; return; }
+        if (st.hl) {
+          var top = baseline - st.ascent * size, bot = baseline + st.descent * size;
+          if (hlCur && hlCur.c === st.hl && Math.abs(hlCur.x + hlCur.w - fr.x) < 1e-9) {
+            hlCur.w += fr.w;
+            if (top < hlCur.y) { hlCur.h += hlCur.y - top; hlCur.y = top; }
+            if (bot > hlCur.y + hlCur.h) hlCur.h = bot - hlCur.y;
+          } else {
+            hlCur = { x: fr.x, w: fr.w, y: top, h: bot - top, c: st.hl };
+            hls.push(hlCur);
+          }
+        } else hlCur = null;
+        if (st.u) decs.push({ kind: 'u', x: fr.x, w: fr.w, y: baseline + 0.12 * size, thickness: 0.06 * size, c: st.c });
+        if (st.s) decs.push({ kind: 's', x: fr.x, w: fr.w, y: baseline - 0.30 * size, thickness: 0.06 * size, c: st.c });
+      });
+      return {
+        i: l.i, hard: l.hard, off: l.off, end: l.end, text: l.text,
+        top: l.i * size * lh, baseline: baseline, width: l.width, x: offX,
+        runs: runsOut, hls: hls, decs: decs
+      };
+    });
+
+    return {
+      Wpt: Wpt, Hpt: Hpt, size: size, lh: lh, align: align, family: family,
+      color: boxColor, w: wFrac, boxW: boxW, boxH: outLines.length * size * lh,
+      lines: outLines
+    };
+  };
+
+  // character offset for a point (px, py) in POINTS relative to the box origin. It
+  // never reads the DOM: the resting render is a canvas with no text nodes and the
+  // focused flow wraps in a browser font, so only the layout knows where a character is.
+  PURE.hitTextBox = function (t, Wpt, Hpt, table, px, py) {
+    var lay = PURE.layoutTextBox(t, Wpt, Hpt, table);
+    var lines = lay.lines;
+    if (!lines.length) return 0;
+    var adv = lay.size * lay.lh;
+    var li = adv > 0 ? Math.floor(py / adv) : 0;
+    if (!(li >= 0)) li = 0;
+    if (li > lines.length - 1) li = lines.length - 1;
+    // a point above the first line is the start of the text, one below the last is its
+    // end: clicking in the margin above or below a box puts the caret at the near end
+    if (py < 0) return lines[0].off;
+    if (py >= lines.length * adv) return lines[lines.length - 1].end;
+    var ln = lines[li];
+    if (!ln.runs.length) return ln.off;
+    for (var i = 0; i < ln.runs.length; i++) {
+      var f = ln.runs[i];
+      if (px < f.x) return f.off;
+      var cx = f.x;
+      for (var j = 0; j < f.raw.length; j++) {
+        var a = PURE.cellAdvance(table, f.fontKey, f.raw.charAt(j));
+        var w = (a == null ? 0 : a * lay.size);
+        if (px < cx + w / 2) return f.off + j;
+        if (px < cx + w) return f.off + j + 1;
+        cx += w;
+      }
+    }
+    return ln.end;
+  };
+
+  // one entry per VISUAL line (wrap and line spacing included), in effective-page
+  // FRACTIONS: x already carries the alignment offset, w is the drawn line's width and
+  // h is the LINE ADVANCE (size*lh). Copy clean text builds its tokens from this, and
+  // reports h as the token font size so PURE.groupLines keeps its clustering ratios.
+  PURE.textLines = function (t, Wpt, Hpt, table) {
+    var lay = PURE.layoutTextBox(t, Wpt, Hpt, table);
+    var adv = lay.size * lay.lh;
+    var tx = (t && t.x) || 0, ty = (t && t.y) || 0;
+    return lay.lines.map(function (ln) {
+      return {
+        text: ln.text,
+        x: tx + (Wpt ? ln.x / Wpt : 0),
+        y: ty + (Hpt ? ln.top / Hpt : 0),
+        w: Wpt ? Math.min(1, ln.width / Wpt) : 0,
+        h: Hpt ? Math.min(1, adv / Hpt) : 0
+      };
+    });
+  };
+
+  // ONE canvas painter, shared by the grid thumbnails, drawDecor (Shrink and
+  // Pages to images) and the editor's resting render. opts: {scale, tw, th, floor};
+  // a bare number is read as the scale. `floor` is the pixel size floor: the thumbnails
+  // keep their deliberate max(3, ...) readability floor, drawDecor keeps max(1, ...).
+  // `t` is part of the pinned signature (INTERFACES PIN E1 / C4) and is deliberately not
+  // read: the box anchor comes from opts.ox/opts.oy, so a caller can paint the same box
+  // into a page canvas and into a per-box canvas without the painter guessing which.
+  PURE.paintTextBox = function (ctx, t, layout, opts) {
+    if (!ctx || !layout || !layout.lines) return;
+    var o = (typeof opts === 'number') ? { scale: opts } : (opts || {});
+    var scale = (typeof o.scale === 'number' && isFinite(o.scale) && o.scale > 0) ? o.scale : 1;
+    // origin: (ox, oy) in canvas pixels. A bare scale means the canvas origin IS the
+    // box's top-left corner (the editor's per-box resting canvas); the two page-wide
+    // painters pass the box anchor explicitly rather than translating the context,
+    // which keeps the arithmetic bit-for-bit what it was before this build.
+    var floor = (o.floor != null) ? o.floor : 1;
+    var size = layout.size, lh = layout.lh;
+    var px = Math.max(floor, size * scale);
+    var k = size > 0 ? px / size : scale;
+    var ox = (o.ox != null) ? o.ox : 0, oy = (o.oy != null) ? o.oy : 0;
+    var fam = layout.family;
+    ctx.save();
+    try {
+      // highlights first, BEHIND the glyphs, multiplied so black text stays black
+      ctx.globalCompositeOperation = 'multiply';
+      layout.lines.forEach(function (ln) {
+        ln.hls.forEach(function (r) {
+          ctx.fillStyle = r.c;
+          ctx.fillRect(ox + r.x * k, oy + r.y * k, r.w * k, r.h * k);
+        });
+      });
+      ctx.globalCompositeOperation = 'source-over';
+      // alphabetic baseline at px*0.82 + (i*px)*lh: at lh 1.2 this is bit-for-bit the
+      // arithmetic the thumbnail and drawDecor painters used before this build
+      ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
+      layout.lines.forEach(function (ln) {
+        var y = oy + px * PURE.LINE_BASE + ln.i * px * lh;
+        ln.runs.forEach(function (f) {
+          if (!f.text) return;
+          ctx.fillStyle = f.c;
+          ctx.font = (f.i ? 'italic ' : '') + (f.b ? 'bold ' : '') + px + 'px ' + fam;
+          ctx.fillText(f.text, ox + f.x * k, y);
+        });
+      });
+      layout.lines.forEach(function (ln) {
+        ln.decs.forEach(function (d) {
+          ctx.fillStyle = d.c;
+          ctx.fillRect(ox + d.x * k, oy + (d.y - d.thickness / 2) * k, d.w * k, Math.max(0.5, d.thickness * k));
+        });
+      });
+    } catch (e) { /* one bad box must never stop a thumbnail or an export canvas */ }
+    ctx.restore();
   };
 
   /* ==================================================================================
@@ -685,26 +1226,32 @@
   }
   function hasRedacts(pg) { return !!(pg.redacts && pg.redacts.length); }
 
+  // ---- text metrics + layout (the law lives in the PURE rich-text section) ----
+  // ONE metrics service for every picture: the per-character AFM advance table for the
+  // twelve standard faces, built once here from a throwaway PDFDocument. It resolves in
+  // a microtask (embedStandardFont is synchronous), long before a file can be loaded,
+  // and it never rejects. layoutTextBox takes the RESOLVED table, so it stays pure and
+  // synchronous and is never rebuilt per call.
+  var metricsTable = null;
+  var metricsReady = PURE.buildMetrics(PDFLib).then(function (tb) { metricsTable = tb; return tb; });
+  function textLayout(t, Wpt, Hpt) { return PURE.layoutTextBox(t, Wpt, Hpt, metricsTable); }
+
   // approximate normalized {w,h} bounding box for a text annotation, measured against
   // the CURRENT effective page size (Wpt, Hpt) — used only when rotating a page (see
   // PURE.rotateTexts) so the rotation can account for the text's own footprint instead
   // of treating it as a zero-size point (which lets it get rotated into a spot where it
   // runs off the page — text only ever grows right/down from its anchor).
-  var measureCanvas = null;
-  function textFontCss(t) {
-    var fam = t.font === 'Times' ? 'Georgia, "Times New Roman", serif' : t.font === 'Courier' ? '"Courier New", monospace' : 'Arial, Helvetica, sans-serif';
-    return (t.size || 14) + 'px ' + fam;
-  }
+  // Now a thin wrapper over the layout law. The old canvas measure asked for a Georgia
+  // stack for Times, about 6 percent wider than the face the page actually draws, so
+  // there is exactly one measurement law in the app again.
   function textBoxFrac(t, Wpt, Hpt) {
-    if (!measureCanvas) measureCanvas = document.createElement('canvas');
-    var mx = measureCanvas.getContext('2d');
-    mx.font = textFontCss(t);
-    var lines = (t.text || '').split('\n'), maxW = 0;
-    lines.forEach(function (line) { maxW = Math.max(maxW, mx.measureText(line).width); });
-    var hPt = (t.size || 14) * 1.2 * Math.max(1, lines.length);
-    return { w: Wpt ? Math.min(1, maxW / Wpt) : 0, h: Hpt ? Math.min(1, hPt / Hpt) : 0 };
+    var lay = textLayout(t, Wpt, Hpt);
+    return { w: Wpt ? Math.min(1, lay.boxW / Wpt) : 0, h: Hpt ? Math.min(1, lay.boxH / Hpt) : 0 };
   }
   function textBoxes(texts, Wpt, Hpt) { return (texts || []).map(function (t) { return textBoxFrac(t, Wpt, Hpt); }); }
+
+  // the visual lines of a box, in effective-page fractions (the law is PURE.textLines)
+  function textLines(t, Wpt, Hpt) { return PURE.textLines(t, Wpt, Hpt, metricsTable); }
 
   // ---- elements ----
   var drop = $('pt-drop'), grid = $('pt-grid'), fileInput = $('pt-file'), toolbar = $('pt-toolbar');
@@ -1094,6 +1641,10 @@
   }
 
   function renderThumbInto(canvas, pg, gridIdx, done) {
+    // the text painter needs the AFM metrics table. It resolves in a microtask at init,
+    // so this can only ever defer the very first thumbnail, and done() still fires AFTER
+    // the text has been painted (the golden and every thumbnail assertion wait on it).
+    if (!metricsTable) { metricsReady.then(function () { renderThumbInto(canvas, pg, gridIdx, done); }); return; }
     // per-page render token: two quick rotates can race two pdf.js renders on the same
     // cached canvas (the second resizes/wipes it mid-render → a garbled thumb that never
     // self-corrects). Only the LATEST render may finish; an abandoned/failed one re-marks
@@ -1164,11 +1715,10 @@
     paintRedacts(ctx, pg, tw, th);
     drawMarks(ctx, pg, tw, th, Wpt, Hpt, gridIdx);
     (pg.texts || []).forEach(function (t) {
-      var px = Math.max(3, t.size * tw / Wpt);
-      // alphabetic baseline at y + 0.82em — the same construction the export uses, so
-      // preview and exported ink land at the same height
-      ctx.fillStyle = t.color || '#111'; ctx.font = px + 'px ' + (t.font || 'Helvetica'); ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
-      (t.text || '').split('\n').forEach(function (line, i) { ctx.fillText(line, t.x * tw, t.y * th + px * 0.82 + i * px * 1.2); });
+      // ONE shared painter for the thumbnails, drawDecor and the editor's resting render.
+      // The max(3, ...) pixel floor stays: it is a deliberate readability floor for tiny
+      // text on a 150 px thumbnail, not an accident.
+      PURE.paintTextBox(ctx, t, textLayout(t, Wpt, Hpt), { scale: tw / Wpt, ox: t.x * tw, oy: t.y * th, floor: 3 });
     });
     (pg.sigs || []).forEach(function (s) {
       var im = new Image();
@@ -1719,11 +2269,25 @@
     return cache[docIndex];
   }
 
-  // standard fonts offered by the text tool (built into pdf-lib, no embedding needed)
+  // standard faces offered by the text tool (built into pdf-lib, nothing is downloaded):
+  // three families x {regular, bold, italic, bold italic}. Looked up by the FACE key
+  // PURE.faceKey builds, whose plain face is the bare family name, so a legacy box still
+  // embeds exactly one font and shares Helvetica with the watermark/number/OCR path.
   var STD_FONTS = {
-    'Helvetica': PDFLib.StandardFonts.Helvetica, 'Times': PDFLib.StandardFonts.TimesRoman,
-    'Courier': PDFLib.StandardFonts.Courier
+    'Helvetica': { r: PDFLib.StandardFonts.Helvetica, b: PDFLib.StandardFonts.HelveticaBold,
+                   i: PDFLib.StandardFonts.HelveticaOblique, bi: PDFLib.StandardFonts.HelveticaBoldOblique },
+    'Times': { r: PDFLib.StandardFonts.TimesRoman, b: PDFLib.StandardFonts.TimesRomanBold,
+               i: PDFLib.StandardFonts.TimesRomanItalic, bi: PDFLib.StandardFonts.TimesRomanBoldItalic },
+    'Courier': { r: PDFLib.StandardFonts.Courier, b: PDFLib.StandardFonts.CourierBold,
+                 i: PDFLib.StandardFonts.CourierOblique, bi: PDFLib.StandardFonts.CourierBoldOblique }
   };
+  function stdFontFor(faceKey) {
+    var parts = String(faceKey || '').split('|');
+    var fam = STD_FONTS[PURE.textFamily(parts[0])];
+    var fl = parts[1] || '';
+    var b = fl.indexOf('b') >= 0, i = fl.indexOf('i') >= 0;
+    return (b && i) ? fam.bi : b ? fam.b : i ? fam.i : fam.r;
+  }
   function hexToRgb(h) {
     h = (h || '#111111').replace('#', ''); if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
     return { r: parseInt(h.slice(0, 2), 16) / 255, g: parseInt(h.slice(2, 4), 16) / 255, b: parseInt(h.slice(4, 6), 16) / 255 };
@@ -1757,22 +2321,70 @@
     }
     (pg.texts || []).forEach(function (t) {
       chain = chain.then(function () {
-        var key = t.font || 'Helvetica';
-        var fp = fontCache[key] || (fontCache[key] = out.embedFont(STD_FONTS[key] || PDFLib.StandardFonts.Helvetica));
-        return Promise.resolve(fp).then(function (font) {
-          var c = hexToRgb(t.color), col = PDFLib.rgb(c.r, c.g, c.b);
-          var dropped = false;
-          (t.text || '').split('\n').forEach(function (line, i) {
-            if (!line) return;
-            var opts = { x: t.x * info.w, y: info.h - t.y * info.h - t.size * 0.82 - i * t.size * 1.2, size: t.size, font: font, color: col };
-            // per-line try: one unencodable char (emoji, CJK) must not silently drop
-            // this line AND every line after it — draw the encodable remainder instead
-            try { info.page.drawText(line, opts); }
-            catch (e0) {
-              dropped = true;
-              var clean = PURE.sanitizeWinAnsi(line);
-              try { if (clean) info.page.drawText(clean, opts); } catch (e1) {}
-            }
+        var lay = textLayout(t, info.w, info.h);
+        // the box's own family is embedded for every box, exactly as before this build,
+        // then any bold/italic face the runs actually use, in draw order
+        var keys = [lay.family];
+        lay.lines.forEach(function (ln) {
+          ln.runs.forEach(function (f) { if (f.text && keys.indexOf(f.fontKey) < 0) keys.push(f.fontKey); });
+        });
+        var loads = keys.map(function (k) {
+          var fp = fontCache[k] || (fontCache[k] = out.embedFont(stdFontFor(k)));
+          return Promise.resolve(fp).then(function (font) { return [k, font]; });
+        });
+        return Promise.all(loads).then(function (list) {
+          var fonts = {};
+          list.forEach(function (e) { fonts[e[0]] = e[1]; });
+          var size = lay.size, lh = lay.lh, dropped = false;
+          var bx = t.x * info.w, byTop = info.h - t.y * info.h;
+          // highlight rectangles first, BEHIND the glyphs: multiply with NO opacity key,
+          // so no alpha is written into the graphics state and black text stays black
+          // even in a viewer that ignores /BM. Adjacent fragments sharing a highlight
+          // colour were merged into one rectangle at layout time (pdf-lib allocates a
+          // new ExtGState and resource name for every rectangle it draws).
+          lay.lines.forEach(function (ln) {
+            ln.hls.forEach(function (r) {
+              var hc = hexToRgb(r.c);
+              try {
+                info.page.drawRectangle({
+                  x: bx + r.x, y: byTop - (r.y + r.h), width: r.w, height: r.h,
+                  color: PDFLib.rgb(hc.r, hc.g, hc.b), blendMode: PDFLib.BlendMode.Multiply
+                });
+              } catch (eh) { /* a highlight must never cost the text under it */ }
+            });
+          });
+          // one drawText per run FRAGMENT per line, and a fragment never contains a
+          // newline (pdf-lib would lay the remainder out at its own line height).
+          // For a legacy box this is exactly one call per non-empty line with the same
+          // arguments as before: no maxWidth, no lineHeight, no opacity, no blend mode.
+          lay.lines.forEach(function (ln) {
+            var y = byTop - size * 0.82 - ln.i * size * lh;
+            ln.runs.forEach(function (f) {
+              if (f.drop) dropped = true;
+              if (!f.text) return;
+              var fc = hexToRgb(f.c);
+              var opts = { x: bx + f.x, y: y, size: size, font: fonts[f.fontKey], color: PDFLib.rgb(fc.r, fc.g, fc.b) };
+              // per-fragment try: one unencodable char (emoji, CJK) must not silently
+              // drop this fragment AND every fragment after it. sanitizeRun does not
+              // trim, so the fragments that follow do not shift left.
+              try { info.page.drawText(f.text, opts); }
+              catch (e0) {
+                dropped = true;
+                var clean = PURE.sanitizeRun(f.text);
+                try { if (clean) info.page.drawText(clean, opts); } catch (e1) {}
+              }
+            });
+          });
+          lay.lines.forEach(function (ln) {
+            ln.decs.forEach(function (d) {
+              var dc = hexToRgb(d.c);
+              try {
+                info.page.drawLine({
+                  start: { x: bx + d.x, y: byTop - d.y }, end: { x: bx + d.x + d.w, y: byTop - d.y },
+                  thickness: d.thickness, color: PDFLib.rgb(dc.r, dc.g, dc.b)
+                });
+              } catch (ed) { /* an underline must never cost the text it sits under */ }
+            });
           });
           if (dropped) lastDropped++;
         }).catch(function (e) { lastDropped++; if (window.console) console.warn('pdftools: a text box could not be drawn.', e); });
@@ -2215,15 +2827,14 @@
   // just applied (the thumbnails preview it, so the export must match). Resolves after
   // the async signature images have actually drawn.
   function drawDecor(canvas, pg, gridIdx) {
-    return effPointSize(pg).then(function (sz) {
+    return metricsReady.then(function () { return effPointSize(pg); }).then(function (sz) {
       var ctx = canvas.getContext('2d'), tw = canvas.width, th = canvas.height;
       paintRedacts(ctx, pg, tw, th);
       drawMarks(ctx, pg, tw, th, sz.w, sz.h, gridIdx);
       (pg.texts || []).forEach(function (t) {
-        var px = Math.max(1, t.size * tw / sz.w);
-        ctx.fillStyle = t.color || '#111'; ctx.font = px + 'px ' + (t.font || 'Helvetica');
-        ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';   // same baseline math as the export
-        (t.text || '').split('\n').forEach(function (line, i) { ctx.fillText(line, t.x * tw, t.y * th + px * 0.82 + i * px * 1.2); });
+        // the same shared painter the thumbnails use; drawDecor keeps its max(1, ...)
+        // floor, which is not a readability floor and does not bind at export DPI
+        PURE.paintTextBox(ctx, t, textLayout(t, sz.w, sz.h), { scale: tw / sz.w, ox: t.x * tw, oy: t.y * th, floor: 1 });
       });
       return Promise.all((pg.sigs || []).map(function (s) {
         return new Promise(function (res) {
@@ -2314,6 +2925,18 @@
     effPointSize: effPointSize,
     canvasToBytes: canvasToBytes,
     textBoxFrac: textBoxFrac,
+    // rich text seams (spec 12.1 / 12.2 / 12.4). The table argument is optional on the
+    // two __PT wrappers: omit it (or pass null) to use the live one.
+    textLines: textLines,
+    layoutTextBox: function (t, Wpt, Hpt, table) { return PURE.layoutTextBox(t, Wpt, Hpt, table || metricsTable); },
+    hitTextBox: function (t, Wpt, Hpt, table, px, py) { return PURE.hitTextBox(t, Wpt, Hpt, table || metricsTable, px, py); },
+    paintTextBox: PURE.paintTextBox,
+    buildMetrics: PURE.buildMetrics,
+    metrics: function () { return metricsTable; },
+    metricsReady: metricsReady,
+    sanitizeRun: PURE.sanitizeRun,
+    setBoxContent: PURE.setBoxContent,
+    newTextBox: PURE.newTextBox,
     getFormFields: getFormFields,
     pdfjsPage: function (pg) { return docs[pg.docIndex].js.getPage(pg.pageIndex + 1); },
     drawMarks: drawMarks,
