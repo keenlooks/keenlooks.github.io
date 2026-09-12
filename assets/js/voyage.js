@@ -11015,6 +11015,7 @@
     if (!galBakeTried) { galBakeTried = true; startGalaxyBake(); }
     galPump(nowMs);
     bhSkyPump();
+    bhWarmLens();
   }
   var lastFrameT = 0, framesPainted = 0, lastMode = null;
   function start() { if (!raf) { lastT = 0; raf = requestAnimationFrame(loop); } }
@@ -12708,6 +12709,17 @@
     var n = Math.sqrt(dx * dx + dy * dy + dz * dz);
     if (!(n > 0)) return null;
     var ux = dx / n, uy = dy / n, uz = dz / n;
+    /* The shader links a moment after the page does, so the first bake of
+       this marker goes to the 2D fallback and, with the camera sitting
+       still, nothing ever asks for another one. That left the browser's
+       one-time cost for the first real frame this context draws (measured on
+       a real GPU at about 0.6 s, and independent of both the resolution and
+       the size of the sky, so there is no making it cheap) sitting on the
+       first frame of the plunge: the reader pressed "Fall in" and the page
+       stopped for most of a second. Re-baking the instant the shader is live
+       pays it here, on a parked scene where nothing is moving, and the
+       marker gets the finer bake it wanted anyway. */
+    if (!bhStat.gl && B.glActive && B.glActive()) bhStamp.ok = false;
     var same = bhStamp.ok && bhStamp.key === key &&
       (ux * bhStamp.dx + uy * bhStamp.dy + uz * bhStamp.dz) > 0.9998;
     if (same) return bhStamp.cv;
@@ -13134,7 +13146,7 @@
      the reader drags, their own look takes over and this holds where it is. */
   var bhAuto = 0, bhAutoHold = false;
   /* what the two renderers actually did last frame (test hook) */
-  var bhStat = { px: 0, gl: false, ms: 0, dpx: 0, dms: 0 };
+  var bhStat = { px: 0, gl: false, ms: 0, dpx: 0, dms: 0, dreuse: false };
   /* BHF-5: how long the end card is deaf to the gesture that opened it */
   var BH_END_GUARD_MS = 600;
   var bhEndGuard = 0;
@@ -13144,19 +13156,109 @@
     bhEndGuard = 0;
     return false;
   }
+  /* ---- the other half of the entry cost ----
+     Paying the shader path's first-frame bill on the parked scene (see
+     ensureBhStamp) fixes most of the freeze that used to land on "Fall in",
+     but not all of it: the browser charges again the first time this context
+     draws at a NEW size, and the marker is baked at a few hundred pixels
+     while the cinematic wants the whole frame. So once the reader is parked
+     at the hole with the sky baked and the shader live, one full-size frame
+     is drawn into a scratch canvas and thrown away. It costs nothing on a
+     scene where fourteen stars are creeping along century-long orbits, and
+     it is the difference between the plunge starting and the page stopping
+     for a second first. Once per size, and never while a cinematic runs. */
+  var bhWarmKey = '', bhWarmCv = null;
+  function bhWarmLens() {
+    var B = BH();
+    if (!B || bhIdx < 0 || mode === 'bhfall' || reduced) return;
+    if (!bhSky.done || !bhStat.gl || !atBh()) return;
+    if (!(W > 0 && H > 0)) return;
+    var key = Math.round(W) + 'x' + Math.round(H) + '|' + Math.round(dpr * 100);
+    if (bhWarmKey === key) return;
+    bhWarmKey = key;
+    try {
+      var lut = bhEnsureLut(B.SGRA.parkRs);
+      if (!lut) { bhWarmKey = ''; return; }
+      if (!bhWarmCv) bhWarmCv = document.createElement('canvas');
+      var q = clampN(dpr, 1, 2);
+      bhWarmCv.width = Math.max(2, Math.round(W * q));
+      bhWarmCv.height = Math.max(2, Math.round(H * q));
+      var g = bhWarmCv.getContext('2d');
+      if (!g) return;
+      /* the same shape the cinematic asks for, so the size the browser
+         prepares is the size it will be handed */
+      var o = BH_LOPT;
+      o.w = W; o.h = H;
+      o.fovDeg = bhFov();
+      o.bg = bgRgb();
+      o.quality = q;
+      o.maxPixels = clampN(Math.round(W * H * q * q), 60000, 2600000);
+      o.auto = false;                   /* a warm pass is not evidence: this
+                                           frame IS the cold one, and feeding
+                                           its time to the lens governor would
+                                           halve the ceiling the fall then
+                                           spends six frames climbing back */
+      B.drawLensed(g, lut, bhSky.cv, o);
+      /* the flow too: it is a per-pixel loop, and the first time an engine
+         runs one at full size it runs it slowly. Measured cold at the
+         cinematic's resolution, that first pass cost 50 to 100 ms. */
+      var od = BH_DOPT;
+      od.w = W; od.h = H;
+      od.fovDeg = o.fovDeg;
+      od.maxPixels = clampN(Math.round(W * H * 0.07), 20000, 74000);
+      od.normal = bhDiskNormal();
+      od.brighten = bhGlow ? 6 : 1;
+      od.hotPhase = bhHotPhase();
+      od.reuse = false;
+      od.auto = false;                  /* a warm pass is not evidence */
+      B.drawDisk(g, lut, od);
+    } catch (e) { /* a warm frame that fails is not worth a broken page */ }
+    finally {
+      /* both governors go back on the air even if a draw threw, or the flow
+         would spend the whole visit unable to give ground; and the backing
+         store goes away on every exit from here, including the early return
+         when getContext hands back null, which is megabytes at dpr 2. */
+      BH_LOPT.auto = true;
+      BH_DOPT.auto = true;
+      if (bhWarmCv) { bhWarmCv.width = 0; bhWarmCv.height = 0; }
+    }
+  }
+
   var bhLutCur = null, bhLutRs = 0, bhLutN = 0;
   var bhBasis = { fX: 0, fY: 0, fZ: 0, rX: 0, rY: 0, rZ: 0, uX: 0, uY: 0, uZ: 0 };
   function bhLutSize() {
     if (W <= 768 || cruiseLod >= 2) return 192;
     return cruiseLod >= 1 ? 256 : 320;
   }
+  /* The table IS the picture. Everything the lens draws, the whole bent sky
+     and the edge of the shadow, comes out of this one array, so a frame that
+     reuses the previous table is pixel for pixel the previous frame.
+
+     That is what the owner saw. The rule here used to be "rebuild when the
+     radius has moved two percent", which sounds harmless and is not: over
+     the second half of the interior beat the camera has finished its pan and
+     the radius is the only thing left changing, so the whole cinematic ran
+     at whatever rate two percent of radius came round. Measured on a real
+     GPU at 1280 x 820, between t = 36 s and t = 46 s of the fall, 85 to 94
+     percent of frames were pixel identical to the one before, in runs of six
+     to thirteen, and then the picture jumped about eight times the median
+     step. A page holding fifty frames a second was showing a five frame a
+     second slideshow.
+
+     A table costs 0.6 ms to integrate at n = 320 (browser median; 1.2 ms at
+     the 95th percentile), and it gets CHEAPER as the radius shrinks, not
+     dearer: 0.87 ms at r = 0.9 r_s down to 0.32 ms at the r = 0.02 floor,
+     because rays launched from deep inside leave the interesting region in
+     fewer steps. There was never a cost cliff at the end of the fall to
+     protect the frame from. So every frame gets its own exactly integrated
+     table, and the only thing skipped is a radius that has not moved at all,
+     which is what reduced motion's per-phase stills produce. */
   function bhEnsureLut(rRs) {
     var B = BH();
     if (!B) return null;
     var r = Math.max(0.02, rRs);
     var n = bhLutSize();
-    if (bhLutCur && bhLutN === n && bhLutRs > 0 &&
-        Math.abs(Math.log(r / bhLutRs)) < 0.02) return bhLutCur;
+    if (bhLutCur && bhLutN === n && bhLutRs === r) return bhLutCur;
     bhLutCur = B.buildLut(r, 'raindrop', n, bhLutCur);
     bhLutRs = r; bhLutN = n;
     return bhLutCur;
@@ -13262,6 +13364,9 @@
              ux: dx / dn, uy: dy / dn, uz: dz / dn,
              r0: clampN(dn, B.SGRA.parkAu, 5e5), dive: reduced ? 0 : 1100 };
     bhAuto = 0; bhAutoHold = false;
+    /* a new fall always starts the flow from a real pass: there is nothing
+       from the parked scene it could honestly coast on */
+    bhFlowMs = 0; bhFlowSkip = 0; bhFrameMs = 0; bhFramePrev = 0;
     bhSkyStart();
     bhEnsureLut(B.SGRA.parkRs);
     resetCaptions(B.CAPTIONS);
@@ -13463,6 +13568,32 @@
      ordinary world passes are laid over it while it crossfades in, so the
      S-star cluster keeps its parallax and the reader never sits in front of
      a black screen. */
+  /* The flow's cadence, decided here because only the page knows what else
+     is on the frame. The lens is a shader; the flow is the CPU pass and it
+     costs about nine milliseconds of a sixty hertz budget on its own, which
+     is what kept the plunge off its refresh rate. VoyageBH.flowEvery turns
+     the last real pass's cost and this frame's cost into how many frames one
+     pass should cover, and the frames in between re-blit the same pixels
+     rather than recomputing them. Two things always force a real pass: the
+     first flow frame of a fall (there is nothing to coast on), and the
+     reader turning their head, so a drag never smears the flow against a
+     freshly drawn sky. */
+  var bhFlowMs = 0, bhFlowSkip = 0, bhFrameMs = 0, bhFramePrev = 0;
+  var bhFlowFx = 0, bhFlowFy = 0, bhFlowFz = 0;
+  function bhFlowReuse(nowMs) {
+    var B = BH();
+    if (!B || !B.flowEvery) return false;
+    if (bhFramePrev) {
+      /* a rough EMA of the frame period, which is all flowEvery needs */
+      var dtF = nowMs - bhFramePrev;
+      if (dtF > 0 && dtF < 400) bhFrameMs = bhFrameMs ? bhFrameMs + (dtF - bhFrameMs) * 0.25 : dtF;
+    }
+    bhFramePrev = nowMs;
+    if (!(bhFlowMs > 0)) return false;
+    var d = BH_F[0] * bhFlowFx + BH_F[1] * bhFlowFy + BH_F[2] * bhFlowFz;
+    if (!(d > 0.99995)) return false;        /* about 0.01 rad of look change */
+    return (bhFlowSkip + 1) < B.flowEvery(bhFlowMs, bhFrameMs);
+  }
   function drawBhLens(alpha) {
     var B = BH(), s = bhSt;
     if (!B || !s) return;
@@ -13490,12 +13621,20 @@
         od.normal = bhDiskNormal();
         od.brighten = bhGlow ? 6 : 1;
         od.hotPhase = bhHotPhase();
+        var tNow = performance.now();
+        od.reuse = bhFlowReuse(tNow);
         ctx.globalAlpha = clampN(lensA, 0, 1);
         try {
           var ls = B.drawLensed(ctx, lut, bhSky.cv, ol);
           bhStat.px = ls.px; bhStat.gl = !!ls.gl; bhStat.ms = ls.ms;
           var ds = B.drawDisk(ctx, lut, od);
           bhStat.dpx = ds.px; bhStat.dms = ds.ms;
+          bhStat.dreuse = !!ds.reused;
+          if (ds.reused) bhFlowSkip++;
+          else if (ds.px > 0) {
+            bhFlowMs = ds.ms; bhFlowSkip = 0;
+            bhFlowFx = BH_F[0]; bhFlowFy = BH_F[1]; bhFlowFz = BH_F[2];
+          }
         } catch (e) { /* never kill the frame */ }
         ctx.globalAlpha = 1;
       }
@@ -13949,7 +14088,8 @@
         shadowPx: p ? bhShadowPx(p.rRs) : 0,
         fov: bhFov(),
         lens: { px: bhStat.px, gl: bhStat.gl, ms: bhStat.ms,
-                dpx: bhStat.dpx, dms: bhStat.dms,
+                dpx: bhStat.dpx, dms: bhStat.dms, dreuse: bhStat.dreuse,
+                lutRs: bhLutRs, lutN: bhLutN,
                 canvasPx: canvas.width * canvas.height }
       };
     },

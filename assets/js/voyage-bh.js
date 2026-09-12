@@ -90,12 +90,29 @@
      pass opts.skyDirty = true on the next drawLensed, or the lens keeps
      showing the old sky.
 
-   VoyageBH.drawDisk(ctx2d, lut, opts) -> { px, ms, hits }
+   VoyageBH.drawDisk(ctx2d, lut, opts) -> { px, ms, hits, reused }
      The faint equatorial flow, its first photon-ring echo and the optional
      true-rate hot spot, composited over the lensed sky with 'lighter'. Same
      camera opts (its own quality 0.5 / maxPixels 90000 / budgetMs 6) plus
      { normal:[3] the disk axis, rInRs (default 3 = the ISCO), rOutRs,
        base, brighten, hotspot:true, hotPhase, hotRRs, hotWidth }.
+     opts.reuse = true re-blits the layer's own last pixels instead of
+     recomputing them, whenever they were drawn at the size this call would
+     have used; stat.reused says which happened, and a reused frame never
+     feeds the resolution governor.
+
+   VoyageBH.glActive() -> bool
+     Whether the shader path is live. False at load and for a moment after
+     (the link is polled, never waited on), so anything that CACHES a lensed
+     picture should re-bake once this turns true: the browser charges a
+     one-time cost of roughly half a second for the first real frame this
+     context draws, and a cache taken while it was false leaves that bill to
+     be paid by whatever draws next.
+
+   VoyageBH.flowEvery(lastDiskMs, frameMs) -> integer 1..4
+     Pure. How many frames one real drawDisk pass should cover, given what
+     the last real pass cost and what a frame currently costs. 1 means every
+     frame. See THE FLOW'S OWN UPDATE CADENCE.
 
    VoyageBH.PHASES        the bhfall phase table, [{ name, ms }]
    VoyageBH.TOTAL_MS      sum of the table
@@ -776,8 +793,12 @@
 
   /* module-level scratch: the internal-resolution buffer and the canvas it
      is blitted from. Both persist; nothing here allocates per frame. */
-  var LB = { cv: null, ctx: null, img: null, w: 0, h: 0 };   /* lensed sky */
-  var DB = { cv: null, ctx: null, img: null, w: 0, h: 0 };   /* the flow */
+  /* LB carries `valid` only because ensureBuf writes that field on whichever
+     buffer it is handed; the lens re-renders every frame and never reuses, so
+     on LB it stays false and nothing reads it. DB.valid is the live one. */
+  var LB = { cv: null, ctx: null, img: null, w: 0, h: 0, valid: false };
+  var DB = { cv: null, ctx: null, img: null, w: 0, h: 0, valid: false,
+             hits: 0 };                                      /* the flow */
   var SKY = { src: null, w: 0, h: 0, data: null, cv: null, ctx: null };
 
   /* The two renderers keep SEPARATE buffers on purpose: they run at
@@ -795,6 +816,7 @@
     B.cv.width = w; B.cv.height = h;
     B.img = B.ctx.createImageData(w, h);
     B.w = w; B.h = h;
+    B.valid = false;              /* a resized buffer holds nothing to reuse */
     return true;
   }
 
@@ -850,7 +872,8 @@
     tried: false, dead: false, cv: null, gl: null, prog: null, ready: false,
     ext: null, frames: 0, u: null, skyTex: null, lutTex: null, buf: null,
     skySrc: null, skyW: 0, skyH: 0, lutSeq: -1, lutKey: '', lutN: 0,
-    lutPix: null, w: 0, h: 0, on: true
+    lutPix: null, lutAlloc: null, lutSide: 0, w: 0, h: 0, on: true,
+    polls: 0, polling: false, warmMs: 0
   };
 
   var GL_VS =
@@ -928,7 +951,94 @@
       gl.linkProgram(pr);
       GLX.cv = cv; GLX.gl = gl; GLX.prog = pr;
       GLX.ext = gl.getExtension('KHR_parallel_shader_compile') || null;
+      glSchedulePoll();
     } catch (e) { GLX.dead = true; }
+  }
+  /* Finish the hand-off on our OWN clock, not on the first frame that wants
+     a picture. glReady does the link check, the buffer and texture setup and
+     the warm draw below, and until something calls it none of that has
+     happened; the only caller used to be the frame that was already trying
+     to draw, so the whole cost landed there. Measured on a real GPU, that
+     was about 0.6 s, and where it landed was the first frame of the plunge:
+     the reader pressed "Fall in" and the page froze. This polls instead,
+     during whatever the reader is looking at while the shader links, and
+     stops as soon as the answer is known either way. */
+  var GL_POLL_MS = 90, GL_POLL_MAX = 60;
+  function glSchedulePoll() {
+    if (typeof setTimeout !== 'function') return;
+    if (GLX.polls === undefined) GLX.polls = 0;
+    if (GLX.polling) return;
+    GLX.polling = true;
+    setTimeout(function () {
+      GLX.polling = false;
+      GLX.polls++;
+      if (GLX.dead || GLX.ready || !GLX.on || GLX.polls > GL_POLL_MAX) return;
+      try { glReady(); } catch (e) { GLX.dead = true; }
+      if (!GLX.ready && !GLX.dead) glSchedulePoll();
+    }, GL_POLL_MS);
+  }
+  /* One throwaway frame at the context's own 2 x 2 size, with both samplers
+     pointing at complete placeholder textures so nothing is undefined.
+
+     What this is buying was measured, not guessed. The first REAL frame this
+     path ever drew cost about 0.65 s, and it cost that with a 16 x 8 sky on
+     a 64 x 64 canvas exactly as much as with the 2048 x 1024 bake at full
+     size, while the second frame cost 0.2 ms. So it is neither the texture
+     upload nor the resolution: it is the one-time cost of setting this
+     pipeline up, and the browser only charges it when the picture is
+     actually consumed. Which is why the blit below matters as much as the
+     draw above: a warm-up that ran drawArrays and stopped there left the
+     whole 0.65 s sitting on the first frame of the plunge, where the reader
+     pressed "Fall in" and watched the page freeze. The finish() is
+     deliberate for the same reason: the cost is meant to be spent HERE, on
+     a timer during the parked scene, and nowhere else. */
+  function glWarm(gl, u) {
+    var tW = nowMs();
+    try {
+      gl.viewport(0, 0, GLX.cv.width, GLX.cv.height);
+      gl.uniform3f(u.uFwd, 0, 0, 1);
+      gl.uniform3f(u.uRgt, 1, 0, 0);
+      gl.uniform3f(u.uUp, 0, 1, 0);
+      gl.uniform3f(u.uHole, 0, 0, 1);
+      gl.uniform3f(u.uBg, 0, 0, 0);
+      gl.uniform2f(u.uTan, 0.6, 0.6);
+      gl.uniform4f(u.uP, 16, 0, 0.05, 1);
+      var haveCv = typeof document !== 'undefined' && document.createElement;
+      var sc = null, sg = null;
+      if (haveCv) {
+        /* Upload a canvas, because uploading a canvas is the step that costs.
+           The real sky arrives as an HTMLCanvasElement, and the first time
+           this document hands one to texImage2D the browser has to build the
+           whole canvas-to-texture path; a warm-up that only ever uploaded a
+           typed array left that bill unpaid. Two by two is a power of two,
+           so the REPEAT wrap stays legal, and it claims nothing in skySrc,
+           so the real bake still uploads normally. */
+        sc = document.createElement('canvas');
+        sc.width = 2; sc.height = 2;
+        sg = sc.getContext('2d');
+        if (sg) {
+          sg.fillStyle = '#101418';
+          sg.fillRect(0, 0, 2, 2);
+          gl.activeTexture(gl.TEXTURE0);
+          gl.bindTexture(gl.TEXTURE_2D, GLX.skyTex);
+          gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+          gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, sc);
+        }
+      }
+      gl.uniform1f(u.uHasSky, sg ? 1 : 0);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      if (gl.finish) gl.finish();
+      GLX.w = GLX.cv.width; GLX.h = GLX.cv.height;
+      if (sg) {
+        /* and the same consumption a real frame performs, in the same task
+           as the draw: with no preserved drawing buffer, one yield and there
+           is nothing left to copy */
+        sg.drawImage(GLX.cv, 0, 0, GLX.cv.width, GLX.cv.height, 0, 0, 2, 2);
+        sc.width = 0; sc.height = 0;
+      }
+      GLX.warmMs = nowMs() - tW;
+    } catch (e) { GLX.warmMs = -1; }
   }
   /* Never a synchronous LINK_STATUS read on the first frame (the wave-4
      lesson: it blocked for seconds mid-cinematic and read as a camera pop).
@@ -961,21 +1071,46 @@
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-      GLX.lutTex = gl.createTexture();
-      gl.activeTexture(gl.TEXTURE1);
-      gl.bindTexture(gl.TEXTURE_2D, GLX.lutTex);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      /* both samplers get a complete placeholder so the warm draw below has
+         nothing undefined to sample; the real uploads still happen, because
+         neither placeholder claims a source in skySrc or lutSeq */
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA,
+                    gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]));
+      /* TWO tables, used alternately. The table is rebuilt every frame of
+         the plunge now (that is what makes the picture move at all), so the
+         upload lands on a texture the previous frame's draw may still be
+         reading, and re-specifying one of those is a pipeline stall on some
+         drivers. Alternating means the texture being written is never the
+         texture being read. */
+      GLX.lutTex = [gl.createTexture(), gl.createTexture()];
+      GLX.lutAlloc = [0, 0];
+      GLX.lutSide = 0;
+      for (var ti = 0; ti < 2; ti++) {
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, GLX.lutTex[ti]);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 2, 0, gl.RGBA,
+                      gl.UNSIGNED_BYTE, new Uint8Array(8));
+      }
       gl.uniform1i(GLX.u.uSky, 0);
       gl.uniform1i(GLX.u.uLutT, 1);
       gl.disable(gl.DEPTH_TEST);
       gl.disable(gl.BLEND);
+      glWarm(gl, GLX.u);
       GLX.ready = true;
       return true;
     } catch (e2) { GLX.dead = true; return false; }
   }
+  /* Is the shader path live yet? It is not at page load: the link is polled
+     rather than waited on, so the first frames of anything go to the 2D
+     loop and this turns true a moment later. A caller that caches a lensed
+     picture wants to know, because a cache taken before this went true is a
+     cache of the fallback. */
+  function glActive() { return !!(GLX.on && GLX.ready && !GLX.dead); }
+
   function pot(v) { return v > 0 && (v & (v - 1)) === 0; }
   function glSky(skyCanvas) {
     var gl = GLX.gl;
@@ -1004,7 +1139,13 @@
   }
   function glLut(lut, key) {
     var gl = GLX.gl, n = lut.n, i;
-    if (GLX.lutSeq === lut.seq && GLX.lutKey === key && GLX.lutN === n) return;
+    if (GLX.lutSeq === lut.seq && GLX.lutKey === key && GLX.lutN === n) {
+      /* nothing new to send, but the sampler still has to point at whichever
+         table went up last */
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, GLX.lutTex[GLX.lutSide]);
+      return;
+    }
     if (!GLX.lutPix || GLX.lutPix.length !== n * 8) GLX.lutPix = new Uint8Array(n * 8);
     var px = GLX.lutPix;
     for (i = 0; i < n; i++) {
@@ -1013,9 +1154,19 @@
       enc16(px, (n + i) * 4, PREP.amp[i] / GL_AMP_SCALE);
       enc16(px, (n + i) * 4 + 2, PREP.tint[i] / GL_TINT_SCALE);
     }
+    var side = GLX.lutSide ^ 1;
     gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, GLX.lutTex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, n, 2, 0, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    gl.bindTexture(gl.TEXTURE_2D, GLX.lutTex[side]);
+    /* allocate once per size, then only ever refill: a full texImage2D
+       re-spec every frame makes the driver throw the storage away and take
+       a new one, which is the expensive half of this */
+    if (GLX.lutAlloc[side] !== n) {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, n, 2, 0, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      GLX.lutAlloc[side] = n;
+    } else {
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, n, 2, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    }
+    GLX.lutSide = side;
     GLX.lutSeq = lut.seq; GLX.lutKey = key; GLX.lutN = n;
   }
   /* Returns true when the frame was drawn on the GPU. Any failure at all
@@ -1379,7 +1530,57 @@
      and there is no published visible-light brightness for it, so the
      brighten control is drama and the copy says so.
      ========================================================================== */
-  var DSTAT = { px: 0, ms: 0, hits: 0 };
+  var DSTAT = { px: 0, ms: 0, hits: 0, reused: false };
+
+  /* ---------------- the flow's own update cadence ----------------
+
+     The lens is a shader and costs a fraction of a millisecond a frame. The
+     flow has no shader path: it is the per-pixel loop below, and at the
+     resolution BHF-1 needs it is most of a frame's budget on its own
+     (measured on a real GPU during the plunge: lens 0.2 ms, flow 9.3 ms).
+     Spending that every frame is what stopped the page holding its refresh
+     rate, and dropping the flow's RESOLUTION to buy the time back is the
+     one thing BHF-1 forbids: a coarse annulus stair-steps across the
+     shadow.
+
+     So the flow keeps its resolution and gives up its frame rate instead. It
+     is a smooth, faint, low-frequency layer whose picture moves a pixel or
+     two per frame, so holding its own last pixels for a frame is invisible,
+     while holding the LENS for a frame is exactly the stutter this cadence
+     exists to remove.
+
+     The answer has to be a FRAME COUNT, not a wait in milliseconds: a wait
+     shorter than the frame period never skips anything, and the first
+     version of this was 18 ms against a 20 ms frame, which coasted exactly
+     never. So the caller passes what the last real pass cost and what a
+     frame currently costs, and gets back how many frames one real pass
+     should cover:
+
+       every = ceil(lastMs / (SHARE * frameMs))
+
+     which is the smallest cadence that keeps the flow's share of a frame at
+     or under SHARE. It returns 1 whenever the flow is cheap enough to run
+     every frame, and never goes past FLOW_MAX_EVERY, so however slow the
+     machine the flow still updates about every fourth frame. Pure, and
+     node-tested. */
+  var FLOW_SHARE = 0.35, FLOW_MAX_EVERY = 4;
+  function flowEvery(lastMs, frameMs) {
+    var c = num(lastMs, 0), f = num(frameMs, 0);
+    if (!(c > 0)) return 1;
+    if (!(f > 1)) f = 16.7;
+    var k = Math.ceil(c / (FLOW_SHARE * f));
+    if (!(k >= 1)) k = 1;
+    return k > FLOW_MAX_EVERY ? FLOW_MAX_EVERY : k;
+  }
+  function blitFlow(ctx2d, iw, ih, W, H) {
+    var op = ctx2d.globalCompositeOperation;
+    var sm = ctx2d.imageSmoothingEnabled;
+    ctx2d.globalCompositeOperation = 'lighter';
+    ctx2d.imageSmoothingEnabled = true;
+    ctx2d.drawImage(DB.cv, 0, 0, iw, ih, 0, 0, W, H);
+    ctx2d.globalCompositeOperation = op;
+    ctx2d.imageSmoothingEnabled = sm;
+  }
 
   /* How much a crossing at swept angle phi is demagnified, tabulated.
 
@@ -1457,7 +1658,7 @@
 
   function drawDisk(ctx2d, lut, opts) {
     var t0 = nowMs();
-    DSTAT.px = 0; DSTAT.ms = 0; DSTAT.hits = 0;
+    DSTAT.px = 0; DSTAT.ms = 0; DSTAT.hits = 0; DSTAT.reused = false;
     var o = opts || {};
     if (!ctx2d || !lut || !lut.valid) return DSTAT;
     var W = Math.max(1, num(o.w, ctx2d.canvas ? ctx2d.canvas.width : 1) | 0);
@@ -1476,6 +1677,21 @@
       var s = Math.sqrt(maxPx / (iw * ih));
       iw = Math.max(2, Math.round(iw * s));
       ih = Math.max(2, Math.round(ih * s));
+    }
+    /* coasting on the last real pass, per the cadence above. The buffer is
+       only reusable at exactly the size we would have drawn: anything else
+       (a resize, or the governor moving the ceiling) falls straight through
+       to a real pass. A reused frame is NOT fed to the governor either,
+       because the millisecond it took is a blit and says nothing about what
+       the pixel loop costs. */
+    if (o.reuse === true && DB.valid && DB.cv && DB.w === iw && DB.h === ih &&
+        fin(W) && fin(H) && W > 0 && H > 0) {
+      blitFlow(ctx2d, iw, ih, W, H);
+      DSTAT.px = iw * ih;
+      DSTAT.hits = DB.hits;
+      DSTAT.reused = true;
+      DSTAT.ms = nowMs() - t0;
+      return DSTAT;
     }
     if (!ensureBuf(DB, iw, ih)) return DSTAT;
 
@@ -1642,13 +1858,8 @@
       }
     }
     DB.ctx.putImageData(DB.img, 0, 0);
-    var op = ctx2d.globalCompositeOperation;
-    var sm = ctx2d.imageSmoothingEnabled;
-    ctx2d.globalCompositeOperation = 'lighter';
-    ctx2d.imageSmoothingEnabled = true;
-    ctx2d.drawImage(DB.cv, 0, 0, iw, ih, 0, 0, W, H);
-    ctx2d.globalCompositeOperation = op;
-    ctx2d.imageSmoothingEnabled = sm;
+    DB.valid = true; DB.hits = hits;
+    blitFlow(ctx2d, iw, ih, W, H);
     DSTAT.px = iw * ih;
     DSTAT.hits = hits;
     DSTAT.ms = nowMs() - t0;
@@ -1907,6 +2118,8 @@
     skyUv: skyUv,
     drawLensed: drawLensed,
     drawDisk: drawDisk,
+    glActive: glActive,
+    flowEvery: flowEvery,
     invalidateSky: invalidateSky,
 
     PHASES: PHASES,
@@ -1920,6 +2133,8 @@
 
     __hooks: {
       lutProbe: lutProbe,
+      flowEvery: flowEvery,
+      flowShare: function () { return { share: FLOW_SHARE, maxEvery: FLOW_MAX_EVERY }; },
       tau: tauOfR,
       tauRemainSec: tauRemainSec,
       fallTauYears: fallTauYears,
@@ -1939,7 +2154,8 @@
       /* the GL fast path, for tests that need the CPU contract path or want
          to know which one drew the last frame */
       gl: function () {
-        return { on: GLX.on, ready: GLX.ready, dead: GLX.dead, tried: GLX.tried };
+        return { on: GLX.on, ready: GLX.ready, dead: GLX.dead, tried: GLX.tried,
+                 warmMs: GLX.warmMs, polls: GLX.polls };
       },
       setGl: function (v) {
         GLX.on = v !== false;
