@@ -61,6 +61,109 @@
     }
   };
 
+  // Plan the COPY-route pages of an export into as few pdf-lib copyPages() calls as
+  // possible. This is the whole fix for the split-size bug: pdf-lib 1.17.1 builds a FRESH
+  // PDFObjectCopier inside every copyPages() call, and that copier's traversedObjects map
+  // is the only thing stopping a shared object being copied twice. One call per page
+  // therefore re-copies the master slide, the fonts and every logo once PER PAGE. A
+  // 50 MB, 908-slide deck split in half came back as two 120 MB files.
+  //
+  // `routes` is parallel to the export's page list; an entry with .copy true carries the
+  // .docIndex / .pageIndex to copy, everything else (bake, blank, raster, failed) is
+  // skipped here and handled by its own route.
+  //
+  // Returns batches [{ docIndex, indices, slots }] where slots[k] is the position in
+  // `routes` that indices[k] belongs to. Rules:
+  //   - ONE batch per source document: EVERY index of that document, repeats included,
+  //     in page-list order
+  //   - batch order follows first appearance of the document
+  //
+  // 2026-09-20 (round 2): a repeated source page used to be pushed into a SECOND call
+  // for that document, on the theory that one copier hands back the same copied node
+  // for a repeated index, so two output pages would share a dictionary and one page's
+  // rotation would move the other. That is not what pdf-lib 1.17.1 does: copyPDFPage
+  // clones the page dictionary before the copier's cache is consulted, so a repeated
+  // index yields distinct wrappers, distinct nodes and distinct refs, and independent
+  // rotation survives a save and reload. Two independent probes say so:
+  // _tests/pdftools/split-size/review/probe-node.js (A) and review/dup-guard.js. The
+  // extra call cost a whole extra copy of the shared pile per repeat, which is the
+  // owner's bug in miniature (one Duplicate click, 1.82x the export), so it is gone.
+  //
+  // 2026-09-20 (round 3): that clone is SHALLOW, and the two probes above only looked at
+  // the dictionary, the refs and the rotation. The clone's /Contents VALUE is the source
+  // page's own object, and the copier caches by that object's identity for the whole
+  // call, so the two copies came back sharing ONE copied /Contents array and every
+  // overlay drawn on one landed on the other (page numbers read "1 2" on both copies).
+  // The repeats stay in the one call; PURE.unshareCopiedContents below un-shares the
+  // array afterwards.
+  PURE.planCopyBatches = function (routes) {
+    var order = [], byDoc = {};
+    (routes || []).forEach(function (r, i) {
+      if (!r || !r.copy) return;
+      var d = r.docIndex;
+      if (!byDoc[d]) { byDoc[d] = { docIndex: d, indices: [], slots: [] }; order.push(d); }
+      byDoc[d].indices.push(r.pageIndex);
+      byDoc[d].slots.push(i);
+    });
+    return order.map(function (d) { return byDoc[d]; });
+  };
+
+  // Un-share the /Contents arrays of pages that one copyPages() call handed back sharing
+  // one. pdf-lib 1.17.1's PDFObjectCopier.copyPDFPage clones the page DICTIONARY (so the
+  // dicts, the refs and /Rotate really are independent) but the clone is shallow, and
+  // copyPDFArray / copyPDFIndirectObject cache by the ORIGINAL object's identity for the
+  // whole call. Two copies of one source page therefore come back pointing at the same
+  // copied /Contents array, and PDFPage.drawText pushes each page's overlay into it: a
+  // page number, a watermark scoped to the duplicate, a text box or a signature drawn on
+  // one copy is drawn on the other, while the model, the thumbnails and the editor all
+  // say it is on one page. (Reproduced by the reviewer at the library level in
+  // _tests/pdftools/split-size/review2/contents-share.js and on the served page with real
+  // clicks in review2/dup-overlay.js, dup-image.js and dup-watermark.js.)
+  //
+  // Every copy past the first claim on a copied array gets its OWN array holding the SAME
+  // stream refs, so the content streams stay shared and the size win of the single batched
+  // call is untouched (measured at 2 bytes on the reviewer's probe), while each page keeps
+  // only its own marks. By the shapes a source /Contents can take:
+  //   - a direct array                    leaks; replaced
+  //   - an indirect ref to an ARRAY       leaks; replaced with a direct array of the same refs
+  //   - an indirect ref to a single STREAM already safe (PDFPageLeaf.normalize wraps it in a
+  //                                       fresh array per page); left alone, since registering
+  //                                       a second ref to that stream would duplicate its bytes
+  //   - no /Contents at all               nothing to share; left alone
+  // Keyed on the copied array's identity rather than on the repeated index, so two distinct
+  // source pages that share one /Contents array are covered too.
+  //
+  // WHAT STAYS SHARED (2026-09-20, the round 3 reviewer, review3/shared-objects.js): after this
+  // step two copies of one source page still share their /Resources dict, their /Annots array
+  // and their /MediaBox by identity (the pre-fix one-call-per-page shape shared none of them).
+  // Nothing in pdftools*.js mutates /Annots or /MediaBox, and /Resources is only ever ADDED to
+  // with randomly suffixed keys, so today that is harmless and a duplicated page carrying a
+  // link and a form field exports correctly (review3/annots-dup.js). The first per-copy
+  // mutation of any of those three must un-share it here the same way, or it will leak to
+  // the twin exactly as /Contents did.
+  //
+  // `Lib` is the pdf-lib namespace (window.PDFLib in the page) and `ctx` the output
+  // document's PDFContext; passing them in is what lets the node suite exercise this exact
+  // function without a DOM. Returns how many pages were given a new array. Never throws:
+  // an export must not die because a page had an odd /Contents.
+  PURE.unshareCopiedContents = function (Lib, ctx, copies) {
+    var KEY = Lib.PDFName.of('Contents'), claimed = new Set(), n = 0;
+    (copies || []).forEach(function (cp) {
+      try {
+        var node = cp && cp.node; if (!node) return;
+        var val = node.get(KEY); if (!val) return;
+        var arr = (val instanceof Lib.PDFRef) ? ctx.lookup(val) : val;
+        if (!(arr instanceof Lib.PDFArray)) return;
+        if (!claimed.has(arr)) { claimed.add(arr); return; }
+        var refs = [];
+        for (var i = 0; i < arr.size(); i++) refs.push(arr.get(i));
+        node.set(KEY, ctx.obj(refs));
+        n++;
+      } catch (e) {}
+    });
+    return n;
+  };
+
   // deep-enough page clone for the undo stack: identity + small mutable bits are copied,
   // large immutable byte arrays (raster png, signature pngs) are shared by reference
   // (they are replaced wholesale, never mutated in place).
@@ -2478,17 +2581,154 @@
     });
   }
 
+  // The planner's shape rebuilt without it, for the fallback above: one call per source
+  // document in first-appearance order, or (perPage) one call per page as a last resort.
+  function simpleBatches(routes, perPage) {
+    var order = [], byDoc = {}, flat = [];
+    (routes || []).forEach(function (r, i) {
+      if (!r || !r.copy) return;
+      if (perPage) { flat.push({ docIndex: r.docIndex, indices: [r.pageIndex], slots: [i] }); return; }
+      var d = r.docIndex;
+      if (!byDoc[d]) { byDoc[d] = { docIndex: d, indices: [], slots: [] }; order.push(d); }
+      byDoc[d].indices.push(r.pageIndex);
+      byDoc[d].slots.push(i);
+    });
+    return perPage ? flat : order.map(function (d) { return byDoc[d]; });
+  }
+
+  // Which of `indices` can pdf-lib not copy out of `src`? Every trial copy goes into a
+  // SCRATCH document that is thrown away, so nothing a failed call registers can reach
+  // the real output, and bisection means one damaged page in a 908-page document costs
+  // about 20 trial calls instead of 908. A single index that throws is the bad one.
+  function findBadCopies(src, indices) {
+    function probe(list) {
+      if (!list.length) return Promise.resolve([]);
+      return PDFLib.PDFDocument.create().then(function (scratch) {
+        return scratch.copyPages(src, list);
+      }).then(function () { return []; }, function () {
+        if (list.length === 1) return [list[0]];
+        var mid = Math.floor(list.length / 2);
+        return probe(list.slice(0, mid)).then(function (a) {
+          return probe(list.slice(mid)).then(function (b) { return a.concat(b); });
+        });
+      });
+    }
+    return probe(indices.slice());
+  }
+
+  // pdf-lib writes EVERY registered object on save, whether or not a page points at it.
+  // A copyPages call that throws PART WAY has already registered whatever it copied
+  // before the throw, so those objects ride along in the export as orphans: one failure
+  // on a deck page left a whole extra copy of the shared pile in the file (10.85x,
+  // measured in _tests/pdftools/split-size/REVIEW.md major 1). Rather than make every
+  // document pay for a scratch attempt, the real output is rolled back to the object
+  // count it had before the call. Everything a copy registers goes through
+  // PDFContext.register -> nextRef, so its object number is strictly above the mark and
+  // nothing older can be swept up by this.
+  function objMark(out) { return out.context.largestObjectNumber; }
+  function rollbackObjects(out, mark) {
+    var ctx = out.context, n = 0;
+    ctx.enumerateIndirectObjects().forEach(function (entry) {
+      if (entry[0].objectNumber > mark) { ctx.delete(entry[0]); n++; }
+    });
+    ctx.largestObjectNumber = mark;
+    return n;
+  }
+
+  // Copy one source document's copy-route pages into `out`, in one call where that works.
+  function copyBatch(out, cache, routes, b) {
+    return Promise.resolve(getLibDoc(cache, b.docIndex)).then(function (src) {
+      // pdf-lib loads encrypted PDFs (ignoreEncryption) but does NOT decrypt their streams,
+      // so copyPages would copy encrypted garbage → blank/corrupt pages. pdf.js decrypts and
+      // renders fine, so route encrypted sources through the rasterize fallback instead.
+      // Decided ONCE per document, before any copy is attempted: one warning, no probing,
+      // no trial copies for a document that is known not to be copyable.
+      if (src && src.isEncrypted) {
+        if (window.console) console.warn('pdftools: an encrypted source PDF cannot be copied; rasterizing its ' + b.slots.length + ' page(s) instead.');
+        var encErr = new Error('encrypted source PDF; rasterizing to preserve content');
+        b.slots.forEach(function (s) { routes[s].copyErr = encErr; });
+        return null;
+      }
+      var mark = objMark(out);
+      return out.copyPages(src, b.indices).then(function (cps) {
+        // a repeated page rides in this same call, which is what keeps the export small;
+        // the copies come back sharing one /Contents array, so split them apart before
+        // pass two draws anything on them (PURE.unshareCopiedContents)
+        PURE.unshareCopiedContents(PDFLib, out.context, cps);
+        b.slots.forEach(function (s, k) {
+          if (!cps || !cps[k]) routes[s].copyErr = new Error('copyPages returned no page');
+          else routes[s].copied = cps[k];
+        });
+      }, function (e) {
+        // one bad page must still only cost itself, and it must not cost the file its
+        // size: drop whatever the failed call registered, find the uncopyable indices in
+        // a throwaway document, then copy every good index in ONE call.
+        if (window.console) console.warn('pdftools: a batched page copy failed; finding the page that cannot be copied.', e);
+        rollbackObjects(out, mark);
+        return findBadCopies(src, b.indices).then(function (bad) {
+          var goodIdx = [], goodSlots = [];
+          b.slots.forEach(function (s, k) {
+            if (bad.indexOf(b.indices[k]) >= 0) routes[s].copyErr = e;
+            else { goodIdx.push(b.indices[k]); goodSlots.push(s); }
+          });
+          if (!goodIdx.length) return null;
+          var mark2 = objMark(out);
+          return out.copyPages(src, goodIdx).then(function (cps) {
+            PURE.unshareCopiedContents(PDFLib, out.context, cps);
+            goodSlots.forEach(function (s, k) {
+              if (!cps || !cps[k]) routes[s].copyErr = new Error('copyPages returned no page');
+              else routes[s].copied = cps[k];
+            });
+          }, function (e2) {
+            rollbackObjects(out, mark2);
+            goodSlots.forEach(function (s) { routes[s].copyErr = e2; });
+          });
+        });
+      });
+    }, function (e) {
+      // the source document is tombstoned or will not load at all: every page of it
+      // takes the rasterize route, exactly as it did before
+      b.slots.forEach(function (s) { routes[s].copyErr = e; });
+      return null;
+    }).catch(function (e) {
+      // copyBatch NEVER rejects. A throw from anywhere in here (a copyPages that throws
+      // synchronously instead of rejecting, a pdf-lib internal that blows up while the
+      // copies are being handed back) must cost this document its copies and nothing
+      // else: the batches for the other documents still run, and pass two rasterizes
+      // these pages one at a time. The old per-page loop had this isolation for free.
+      if (window.console) console.warn('pdftools: a source PDF could not be copied; its pages will be rasterized.', e);
+      b.slots.forEach(function (s) { if (!routes[s].copied) routes[s].copyErr = e; });
+      return null;
+    });
+  }
+
   // onTick(done, total) is awaited after each page so the progress bar can paint.
   // numMap ({idx:[gridIdx...], total:n}) keeps page NUMBERS at their grid positions for
   // Extract/Split subsets — the thumbnails preview them there, so the export must match.
-  function buildPdf(pageList, onTick, numMap) {
-    var cache = {}, fontCache = {}, failures = 0;
+  //
+  // TWO PASSES since 2026-09. Pass one decides each page's route (bake / blank / raster /
+  // copy) exactly as before and then copies all of a document's copy-route pages in ONE
+  // out.copyPages() call; pass two adds the pages in page-list order and draws the
+  // overlays. The split is not a refactor for tidiness: pdf-lib makes a fresh
+  // PDFObjectCopier per copyPages() call, so calling it once per page re-copies every
+  // shared font, image and master slide once per page. Splitting a 50 MB 908-slide deck
+  // in two gave two 120 MB halves. See PURE.planCopyBatches.
+  //
+  // `sharedCache` (optional) is a getLibDoc cache owned by the CALLER. A caller that
+  // loops (Split to zip calls buildPdf once per page) would otherwise re-parse the whole
+  // source PDF for every page in the zip: a 908-page split of a 50 MB deck meant 908 full
+  // PDFDocument.load calls. buildPdf owns a fresh cache when no caller supplies one.
+  function buildPdf(pageList, onTick, numMap, sharedCache) {
+    var cache = sharedCache || {}, fontCache = {}, failures = 0;
     lastFlattenedRot = 0; lastFlattenedSrc = 0; lastDropped = 0;
     lastSigFailed = 0; lastFormFailed = 0; lastDpiCapped = 0; lastDpiFloor = 0;
     return PDFLib.PDFDocument.create().then(function (out) {
-      var chain = Promise.resolve();
+      var routes = new Array(pageList.length);
+
+      // ---- pass one, part A: route every page. No page is added to `out` yet.
+      var plan = Promise.resolve();
       pageList.forEach(function (pg, i) {
-        chain = chain.then(function () {
+        plan = plan.then(function () {
           // overlays (text/sigs/marks) are drawn with rotation-0 math; if the page was
           // rotated AFTER they were added, flatten it so the export matches the preview.
           // Empty text boxes (abandoned in the editor) draw nothing — they must never
@@ -2500,60 +2740,97 @@
             : (!overlaid || pg.blank) ? Promise.resolve(false)
             : pageEffRotation(pg).then(function (r) { return r !== 0; });
           return mustBakeP.then(function (mustBake) {
-            var added;
             if (mustBake) {
               if (!hasRedacts(pg)) lastFlattenedRot++;
-              added = bakedPage(out, pg, hasRedacts(pg) ? redactDpi : 150);
+              routes[i] = { kind: 'bake' };
             } else if (pg.blank) {
-              var sw = (pg.rot % 180) !== 0;
-              var bw = sw ? pg.blank.hPt : pg.blank.wPt, bh = sw ? pg.blank.wPt : pg.blank.hPt;
-              var bp = out.addPage([bw, bh]);
-              added = Promise.resolve({ page: bp, w: bw, h: bh });
+              routes[i] = { kind: 'blank' };
             } else if (pg.raster) {
-              // transcode the stored PNG to JPEG-on-white first: the page is opaque, and
-              // pdf-lib's PNG embedder holds raw RGBA until save() (~7 MB per page — the
-              // same blowup the redact bake avoids with embedJpg; page numbers flatten
-              // EVERY rotated page this way, so a big scan would hit it at scale). If the
-              // transcode fails, embed the PNG after all: correctness over memory.
-              added = rasterPngToJpg(pg.raster.png)
-                .then(function (jpg) { return out.embedJpg(jpg); },
-                      function () { return out.embedPng(pg.raster.png); })
-                .then(function (img) {
-                  var p = out.addPage([pg.raster.wPt, pg.raster.hPt]);
-                  p.drawImage(img, { x: 0, y: 0, width: pg.raster.wPt, height: pg.raster.hPt });
-                  if (pg.rot) { try { p.setRotation(PDFLib.degrees(((pg.rot % 360) + 360) % 360)); } catch (e) {} }
-                  return { page: p, w: pg.raster.wPt, h: pg.raster.hPt };
-                });
+              routes[i] = { kind: 'raster' };
             } else {
-              added = Promise.resolve(getLibDoc(cache, pg.docIndex)).then(function (src) {
-                // pdf-lib loads encrypted PDFs (ignoreEncryption) but does NOT decrypt their streams,
-                // so copyPages would copy encrypted garbage → blank/corrupt pages. pdf.js decrypts and
-                // renders fine, so route encrypted sources through the rasterize fallback instead.
-                if (src && src.isEncrypted) throw new Error('encrypted source PDF; rasterizing to preserve content');
-                return out.copyPages(src, [pg.pageIndex]).then(function (cps) {
-                  var cp = cps && cps[0];
-                  if (!cp) throw new Error('copyPages returned no page');
-                  if (pg.rot) {
-                    var base = (cp.getRotation && cp.getRotation().angle) || 0;
-                    cp.setRotation(PDFLib.degrees((base + pg.rot) % 360));
-                  }
-                  out.addPage(cp);
-                  var sz = cp.getSize();
-                  return { page: cp, w: sz.width, h: sz.height };
-                });
-              }).catch(function (e) {
-                if (window.console) console.warn('pdftools: could not copy a page, rasterizing it instead.', e);
-                lastFlattenedSrc++;
-                return rasterFallback(out, pg);
-              });
+              routes[i] = { kind: 'copy', copy: true, docIndex: pg.docIndex, pageIndex: pg.pageIndex };
             }
-            return added.then(function (info) {
-              return drawOverlays(out, info, pg, fontCache,
-                numMap ? numMap.idx[i] : i, numMap ? numMap.total : pageList.length);
-            });
-          }).catch(function (e) { failures++; if (window.console) console.warn('pdftools: a page failed and was skipped.', e); })
-            .then(function () { return onTick ? onTick(i + 1, pageList.length) : null; });
+          }).catch(function (e) { routes[i] = { kind: 'fail', err: e }; });
         });
+      });
+
+      // ---- pass one, part B: ONE copyPages call per source document
+      plan = plan.then(function () {
+        // A throw in this shared step used to reject `plan`, which skips EVERY page's
+        // .then, counts all N pages as failures and kills the export with "No pages
+        // could be processed." The old per-page loop had no step that could do that, so
+        // the planner call falls back to the same one-call-per-document shape and then
+        // to one call per page, and the batch stage below swallows its own throw: a page
+        // with no copy is rasterized by pass two, one page at a time, and costs one
+        // failure, never all of them.
+        var batches;
+        try {
+          batches = PURE.planCopyBatches(routes);
+        } catch (e) {
+          if (window.console) console.warn('pdftools: the copy planner failed; falling back to one call per source PDF.', e);
+          try { batches = simpleBatches(routes, false); }
+          catch (e2) {
+            try { batches = simpleBatches(routes, true); } catch (e3) { batches = []; }
+          }
+        }
+        var chain = Promise.resolve();
+        batches.forEach(function (b) {
+          chain = chain.then(function () { return copyBatch(out, cache, routes, b); });
+        });
+        return chain.catch(function (e) {
+          if (window.console) console.warn('pdftools: the batched copy stage failed; any page it did not copy will be rasterized.', e);
+        });
+      });
+
+      // ---- pass two: add the pages in page-list order and draw the overlays
+      var chain = plan;
+      pageList.forEach(function (pg, i) {
+        chain = chain.then(function () {
+          var r = routes[i] || { kind: 'fail' };
+          if (r.kind === 'fail') throw (r.err || new Error('this page could not be prepared'));
+          var added;
+          if (r.kind === 'bake') {
+            added = bakedPage(out, pg, hasRedacts(pg) ? redactDpi : 150);
+          } else if (r.kind === 'blank') {
+            var sw = (pg.rot % 180) !== 0;
+            var bw = sw ? pg.blank.hPt : pg.blank.wPt, bh = sw ? pg.blank.wPt : pg.blank.hPt;
+            var bp = out.addPage([bw, bh]);
+            added = Promise.resolve({ page: bp, w: bw, h: bh });
+          } else if (r.kind === 'raster') {
+            // transcode the stored PNG to JPEG-on-white first: the page is opaque, and
+            // pdf-lib's PNG embedder holds raw RGBA until save() (~7 MB per page — the
+            // same blowup the redact bake avoids with embedJpg; page numbers flatten
+            // EVERY rotated page this way, so a big scan would hit it at scale). If the
+            // transcode fails, embed the PNG after all: correctness over memory.
+            added = rasterPngToJpg(pg.raster.png)
+              .then(function (jpg) { return out.embedJpg(jpg); },
+                    function () { return out.embedPng(pg.raster.png); })
+              .then(function (img) {
+                var p = out.addPage([pg.raster.wPt, pg.raster.hPt]);
+                p.drawImage(img, { x: 0, y: 0, width: pg.raster.wPt, height: pg.raster.hPt });
+                if (pg.rot) { try { p.setRotation(PDFLib.degrees(((pg.rot % 360) + 360) % 360)); } catch (e) {} }
+                return { page: p, w: pg.raster.wPt, h: pg.raster.hPt };
+              });
+          } else if (r.copied) {
+            var cp = r.copied;
+            if (pg.rot) {
+              var base = (cp.getRotation && cp.getRotation().angle) || 0;
+              cp.setRotation(PDFLib.degrees((base + pg.rot) % 360));
+            }
+            out.addPage(cp);
+            var sz = cp.getSize();
+            added = Promise.resolve({ page: cp, w: sz.width, h: sz.height });
+          } else {
+            if (window.console) console.warn('pdftools: could not copy a page, rasterizing it instead.', r.copyErr);
+            lastFlattenedSrc++;
+            added = rasterFallback(out, pg);
+          }
+          return added.then(function (info) {
+            return drawOverlays(out, info, pg, fontCache,
+              numMap ? numMap.idx[i] : i, numMap ? numMap.total : pageList.length);
+          });
+        }).catch(function (e) { failures++; if (window.console) console.warn('pdftools: a page failed and was skipped.', e); })
+          .then(function () { return onTick ? onTick(i + 1, pageList.length) : null; });
       });
       return chain.then(function () { return applyMetadata(out, cache, pageList); }).then(function () {
         if (failures && out.getPageCount() === 0) throw new Error('No pages could be processed.');
@@ -2655,6 +2932,9 @@
     if (!idxs.length) return;
     setBusy(true);
     var list = idxs.map(function (i) { return pages[i]; });
+    // ONE getLibDoc cache for the whole zip: buildPdf builds its own per call, so a
+    // 908-page split used to run PDFDocument.load on the same 50 MB deck 908 times.
+    var splitCache = {};
     var files = [], splitFailed = 0; var chain = Promise.resolve();
     idxs.forEach(function (pi, k) {
       chain = chain.then(function () {
@@ -2662,7 +2942,7 @@
       }).then(function () {
         // one unprocessable page must not abort the whole zip — isolate it with its own
         // catch, same principle as buildPdf's own internal per-page isolation
-        return buildPdf([pages[pi]], null, { idx: [pi], total: pages.length }).then(function (bytes) {
+        return buildPdf([pages[pi]], null, { idx: [pi], total: pages.length }, splitCache).then(function (bytes) {
           files.push({ name: 'page-' + String(pi + 1).padStart(3, '0') + '.pdf', data: bytes });
         }).catch(function (e) {
           splitFailed++;
