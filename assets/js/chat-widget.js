@@ -629,8 +629,19 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Load chat state and show welcome message if needed
-    loadChatState();
+    // Load chat state and show welcome message if needed.
+    // r24 (1): restoring a long history writes a big innerHTML and measured
+    // 117 to 240 ms on a cold landing, which lands in the middle of the first
+    // paint of whatever page is under it. It waits for the browser's own idle
+    // moment, with a 2 s timeout so a busy page still gets its history, and a
+    // straight call where requestIdleCallback is not available. Nothing else
+    // about it changes: the widget starts closed and nobody can read this
+    // panel before it is opened.
+    if (typeof window.requestIdleCallback === 'function') {
+        window.requestIdleCallback(loadChatState, { timeout: 2000 });
+    } else {
+        loadChatState();
+    }
 
     // Prevent link clicks from minimizing chat
     document.addEventListener('click', (e) => {

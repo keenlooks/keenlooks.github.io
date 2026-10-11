@@ -1,0 +1,120 @@
+name: Deploy Observatory Antenna Worker
+
+# Deploys antenna/worker.js as the "obs-antenna" Cloudflare Worker using the same
+# account secrets the chatbot worker deploy already uses. Runs only when the antenna
+# changes (or on manual dispatch), so ordinary site pushes do not redeploy it.
+#
+# One-time infrastructure (the OBS_KV namespace) is created via the Cloudflare API if
+# missing, and its id is substituted into wrangler.toml at deploy time, so the repo
+# copy keeps its placeholder. If the API token lacks the "Workers KV Storage: Edit"
+# permission, the run fails with a message saying exactly that; fix by editing the
+# token at dash.cloudflare.com -> My Profile -> API Tokens and re-running.
+#
+# Mirrors .github/workflows/update-claude-context.yml (the chat widget's Worker deploy,
+# checked 2026-10-04): the same two repository secrets, CLOUDFLARE_API_TOKEN and
+# CLOUDFLARE_ACCOUNT_ID (read by wrangler from the environment; the chat workflow writes
+# account_id into a generated wrangler.toml instead, same effect), npm install -g wrangler,
+# a `wrangler whoami` check, then `wrangler deploy`. No token is ever stored locally or in
+# the repo. Optional secrets FAA_CLIENT_ID / FAA_CLIENT_SECRET are pushed to the Worker only
+# when they exist. Before the first run, check in the GitHub UI (Settings -> Secrets and
+# variables -> Actions) that CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID exist (the chat
+# widget deploy already needs them), and in the Cloudflare dashboard that the token's
+# permissions include Workers Scripts: Edit AND Workers KV Storage: Edit (the chat widget
+# needs only the first; the KV step here needs the second).
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'antenna/**'
+      - '.github/workflows/deploy-antenna.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-antenna
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      FAA_CLIENT_ID: ${{ secrets.FAA_CLIENT_ID }}
+      FAA_CLIENT_SECRET: ${{ secrets.FAA_CLIENT_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Wrangler
+        run: |
+          npm install -g wrangler
+          wrangler --version
+
+      - name: Verify Wrangler sees the account (same check as the chat widget deploy)
+        run: wrangler whoami
+
+      - name: Ensure the OBS_KV namespace exists
+        id: kv
+        run: |
+          set -euo pipefail
+          LIST=$(curl -sS -X GET \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces?per_page=100" \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H "Content-Type: application/json")
+          if [ "$(echo "$LIST" | jq -r '.success')" != "true" ]; then
+            echo "::error::Could not list KV namespaces. The API token likely lacks the 'Workers KV Storage: Edit' permission. Add it to the token at dash.cloudflare.com -> My Profile -> API Tokens, then re-run this workflow."
+            echo "$LIST" | jq -r '.errors'
+            exit 1
+          fi
+          ID=$(echo "$LIST" | jq -r '.result[] | select(.title == "OBS_KV") | .id' | head -n 1)
+          if [ -z "$ID" ]; then
+            echo "OBS_KV not found, creating it..."
+            CREATE=$(curl -sS -X POST \
+              "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces" \
+              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              -H "Content-Type: application/json" \
+              --data '{"title":"OBS_KV"}')
+            if [ "$(echo "$CREATE" | jq -r '.success')" != "true" ]; then
+              echo "::error::Could not create the OBS_KV namespace. See the token permission note above."
+              echo "$CREATE" | jq -r '.errors'
+              exit 1
+            fi
+            ID=$(echo "$CREATE" | jq -r '.result.id')
+            echo "Created OBS_KV: $ID"
+          else
+            echo "Found existing OBS_KV: $ID"
+          fi
+          echo "kv_id=$ID" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy the antenna
+        working-directory: antenna
+        run: |
+          set -euo pipefail
+          sed -i "s/PASTE_KV_NAMESPACE_ID_HERE/${{ steps.kv.outputs.kv_id }}/" wrangler.toml
+          grep -q "PASTE_KV_NAMESPACE_ID_HERE" wrangler.toml && { echo "::error::KV id substitution failed"; exit 1; } || true
+          wrangler deploy
+
+      - name: Push FAA NOTAM secrets if configured
+        working-directory: antenna
+        run: |
+          set -euo pipefail
+          if [ -n "${FAA_CLIENT_ID:-}" ] && [ -n "${FAA_CLIENT_SECRET:-}" ]; then
+            echo "$FAA_CLIENT_ID" | wrangler secret put FAA_CLIENT_ID
+            echo "$FAA_CLIENT_SECRET" | wrangler secret put FAA_CLIENT_SECRET
+            echo "FAA NOTAM secrets pushed."
+          else
+            echo "FAA secrets not configured; /notams/gps stays offline (the page discloses this honestly)."
+          fi
+
+      - name: Smoke the deployed routes
+        run: |
+          set -euo pipefail
+          BASE="https://obs-antenna.keenlooks-cloudflare.workers.dev"
+          sleep 5
+          HEALTH=$(curl -sS "$BASE/health" || true)
+          echo "health: $HEALTH"
+          echo "$HEALTH" | jq -e '.routes' > /dev/null || { echo "::error::/health did not answer as expected at $BASE"; exit 1; }
+          echo "Antenna is live at $BASE. Note: the first cron fills /planes and /jam within about 10 minutes of deploy; until then those routes serve 503 offline, which the page shows honestly."

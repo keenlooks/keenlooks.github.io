@@ -201,6 +201,16 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
     </div>
   </a>
 
+  <a class="xp-card" href="{{ base_path }}/observatory/">
+    <div class="xp-card__art" aria-hidden="true" data-thumb="observatory">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 3.5 a 8.5 11 0 0 0 0 17 a 8.5 11 0 0 0 0 -17" stroke-opacity="0.5"></path><path d="M3.9 9 H20.1" stroke-opacity="0.5"></path><path d="M3.9 15 H20.1" stroke-opacity="0.5"></path><circle cx="9" cy="8.6" r="1.3" fill="currentColor" stroke="none"></circle><circle cx="15.4" cy="14.6" r="1" fill="currentColor" stroke="none"></circle></svg>
+    </div>
+    <div class="xp-card__body">
+      <h3 class="xp-card__title">The Observatory</h3>
+      <p class="xp-card__desc">A live Earth drawn from public instruments, where the layers are computed against each other.</p>
+    </div>
+  </a>
+
 </div>
 </section>
 

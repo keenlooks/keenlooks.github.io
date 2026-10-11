@@ -148,12 +148,15 @@ exclude:
   - Rakefile
   - _config.dev.yml
   - _config.docker.yml
+  - antenna
+  - _tests
   - content_extractor.py
   - docker-compose.yml
   - make_adversarial_model.py
   - make_favicons.py
   - make_fourinarow_model.py
   - make_keepittogether_model.py
+  - make_observatory_earth.py
   - make_og_cards.py
   - make_voyage_data.py
   - make_lander_model.py

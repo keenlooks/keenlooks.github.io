@@ -31,6 +31,22 @@
                        control panel (see placeHint) it is re-centred in the
                        free strip beside it.
 
+   setHintObstacles(fn) — a page may hand over MORE boxes the hint must keep
+                       off: fn returns an array of rects ({x,y,w,h} or
+                       DOMRect-shaped), measured fresh on every placement.
+                       Default is none, so a page that never calls this is
+                       placed against the control panel exactly as before.
+                       Pass null to clear. Registering also lets the plate be
+                       lifted above the obstacles when its own row has no
+                       room left, so a page that positions the hint's top
+                       itself should not register (none of them do).
+
+   placeHints()      — re-run the placement for every hint currently on
+                       screen. A page whose obstacles move (a rail that
+                       appears, a strip that grows) calls this from its own
+                       layout(); the panel toggle and window resize already
+                       call it internally.
+
    isTyping(e)       — true when a key event belongs to the focused control,
                        so gadget keyboard shortcuts stay out of its way.
                        Text-entry fields (text/search/number/email/url/
@@ -146,36 +162,218 @@
      re-centred in the free strip left of the panel instead. Only left/right/
      transform/margins are touched: several pages set the hint's top
      themselves (voyage 58vh, computer a bottom offset in landscape), and the
-     plate styling, pointer-events and dismiss behaviour are untouched. */
+     plate styling, pointer-events and dismiss behaviour are untouched.
+
+     A page with more fixed furniture than a panel (the observatory grows an
+     evidence rail, a key, a caption plate and a ticker while its tour runs)
+     hands those boxes over with setHintObstacles, and they are then treated
+     the same way the panel is. With none registered the law below reduces
+     exactly to the panel-only placement described above, which is what the
+     other twelve gadget pages get. */
   var HINT_GAP = 12;          /* breathing room at the screen edge and the panel */
   var HINT_STRIP_CENTER = 240; /* wider than this, centre the plate in the strip */
   var HINT_STRIP_MIN = 160;   /* narrower than this, nowhere better to go */
+  var HINT_TOP_MIN = 0.15;    /* a lifted plate never climbs into the nav band */
   var panelEl = null;         /* most recently registered control panel */
+  var obstacleFn = null;      /* a page's extra boxes, measured per placement */
   var openHints = [];         /* hint nodes currently on screen */
   var hintResizeOn = false;
 
-  function placeHint(node) {
-    if (!node || !node.parentNode) return;
-    /* measure from the page's own CSS, not from a previous placement */
+  function fin(n) { return typeof n === 'number' && isFinite(n); }
+
+  /* takes a DOMRect, a {left,top,width,height} or a {x,y,w,h}; anything with
+     no real size is not an obstacle */
+  function normRect(r) {
+    if (!r) return null;
+    var l = fin(r.left) ? r.left : r.x, t = fin(r.top) ? r.top : r.y;
+    var w = fin(r.width) ? r.width : r.w, h = fin(r.height) ? r.height : r.h;
+    if (!fin(l) || !fin(t) || !fin(w) || !fin(h) || w <= 0 || h <= 0) return null;
+    return { left: l, top: t, right: l + w, bottom: t + h, width: w, height: h };
+  }
+
+  /* is anything really on top of the plate, rather than merely beside it or
+     below it */
+  function hintCovered(hintRect, blockers) {
+    var hint = normRect(hintRect), i, r;
+    if (!hint) return false;
+    for (i = 0; blockers && i < blockers.length; i++) {
+      r = normRect(blockers[i]);
+      if (!r) continue;
+      if (r.right > hint.left && r.left < hint.right &&
+          r.bottom > hint.top && r.top < hint.bottom) return true;
+    }
+    return false;
+  }
+
+  /* The horizontal placement law, pure so a node test can drive it without a
+     browser. Given the plate's rect where the page's own CSS puts it and the
+     boxes it must keep off, it returns the strip to move into, or null for
+     "leave it where the CSS put it" (nothing really covers it, or nothing
+     better is on offer). Only boxes crossing the plate's own horizontal band
+     count: a ticker along the bottom edge is not in the way of a plate at 38%
+     height. */
+  function hintStrip(hintRect, blockers, vw, opts) {
+    var o = opts || {};
+    var gap = fin(o.gap) ? o.gap : HINT_GAP;
+    var min = fin(o.min) ? o.min : HINT_STRIP_MIN;
+    var hint = normRect(hintRect);
+    if (!hint || !fin(vw) || vw <= 0) return null;
+    if (!hintCovered(hint, blockers)) return null;       /* already clear: leave it centred */
+    var band = [], i, r;
+    for (i = 0; blockers && i < blockers.length; i++) {
+      r = normRect(blockers[i]);
+      if (!r) continue;
+      if (r.bottom <= hint.top || r.top >= hint.bottom) continue;   /* misses the band */
+      band.push(r);
+    }
+    band.sort(function (a, b) { return a.left - b.left; });
+    /* walk the band left to right, collecting what the blockers, each padded
+       by the gap, leave behind */
+    var free = [], x = gap, lim = vw - gap, a, b;
+    for (i = 0; i < band.length; i++) {
+      a = band[i].left - gap; b = band[i].right + gap;
+      if (a > x) free.push({ left: x, right: a < lim ? a : lim });
+      if (b > x) x = b;
+    }
+    if (x < lim) free.push({ left: x, right: lim });
+    var best = null, w;
+    for (i = 0; i < free.length; i++) {
+      w = free[i].right - free[i].left;
+      if (w < min) continue;                             /* no strip worth using */
+      if (!best || w > best.width) best = { left: free[i].left, right: free[i].right, width: w };
+    }
+    return best;
+  }
+
+  /* The whole placement, strip plus an optional lift.
+
+     A page dense enough to register obstacles can leave the plate's own row
+     with nothing but slivers: on the observatory at 1280x800 the caption
+     plate, the key, the evidence rail and the panel between them fill the row
+     the hint sits on, and the widest gap left is 164px, which folds one
+     sentence into a five line column. So when a page has opted in, the plate
+     may also step UP, to just above something covering it, and the strip law
+     runs again there. Every option is scored by how much of the plate's own
+     natural width it keeps, and the plate stays where the page put it unless
+     moving really does buy it room (equal room means no move). Up only, never
+     down (the ticker and a phone's chat bar live at the bottom edge), never
+     above HINT_TOP_MIN of the screen (the site nav band is up there), and
+     ONLY when the page registered obstacles: the pages that set the hint's
+     top themselves register none, so their top is never touched.
+
+     Returns { top, strip }, either of which may be null (top null = leave the
+     CSS top alone, strip null = the plate is clear where it is horizontally),
+     or null for "leave the page's own CSS alone". */
+  function hintPlace(hintRect, blockers, vw, opts) {
+    var o = opts || {};
+    var gap = fin(o.gap) ? o.gap : HINT_GAP;
+    var vh = o.vh;
+    var hint = normRect(hintRect);
+    if (!hint || !fin(vw) || vw <= 0) return null;
+    if (!hintCovered(hint, blockers)) return null;       /* nothing in the way */
+    var here = hintStrip(hint, blockers, vw, o);
+    var best = here ? { top: null, strip: here, room: Math.min(hint.width, here.width) } : null;
+    if (!o.lift || !fin(vh) || vh <= 0) {                /* the default: no lift */
+      return best ? { top: best.top, strip: best.strip } : null;
+    }
+    /* one candidate per box: the top the plate would need to clear it, kept
+       only when that is a step UP. Every box, not only the ones covering the
+       plate now: on a narrow screen the furniture is a stack of full width
+       plates, and clearing the key lands the plate on the caption above it.
+       Nearest first, so an equally roomy step is the smallest one. */
+    var tops = [], i, r, t, shifted, s2, room;
+    for (i = 0; blockers && i < blockers.length; i++) {
+      r = normRect(blockers[i]);
+      if (!r) continue;
+      t = r.top - gap - hint.height;
+      if (t < hint.top) tops.push(t);
+    }
+    tops.sort(function (a, b) { return b - a; });
+    for (i = 0; i < tops.length; i++) {
+      t = tops[i];
+      if (!fin(t) || t < vh * HINT_TOP_MIN) continue;
+      if (t + hint.height > vh - gap) continue;
+      shifted = { left: hint.left, top: t, width: hint.width, height: hint.height };
+      if (!hintCovered(shifted, blockers)) {
+        /* clear up there: the plate keeps its whole width, which is the most
+           any option can be worth, so nothing further along can beat it */
+        if (!best || hint.width > best.room) best = { top: t, strip: null, room: hint.width };
+        break;
+      }
+      s2 = hintStrip(shifted, blockers, vw, o);
+      if (!s2) continue;
+      room = Math.min(hint.width, s2.width);
+      if (!best || room > best.room) best = { top: t, strip: s2, room: room };
+    }
+    return best ? { top: best.top, strip: best.strip } : null;
+  }
+
+  /* back to the page's own CSS; the top is only ever cleared when a previous
+     placement is what set it (computer positions the plate from a measured
+     bottom, and nothing here may take that over) */
+  function hintReset(node) {
     var s = node.style;
     s.left = ''; s.right = ''; s.transform = ''; s.marginLeft = ''; s.marginRight = '';
-    if (!panelEl) return;
-    var p = panelEl.getBoundingClientRect();
-    if (!p.width || !p.height) return;                   /* hidden panel */
-    var h = node.getBoundingClientRect();
-    if (!h.width) return;
-    if (h.right <= p.left || h.left >= p.right) return;  /* clear horizontally */
-    if (h.bottom <= p.top || h.top >= p.bottom) return;  /* clear vertically */
-    var strip = p.left - HINT_GAP * 2;
-    if (strip < HINT_STRIP_MIN) return;                  /* no strip worth using */
-    var vw = document.documentElement.clientWidth || window.innerWidth;
-    s.left = HINT_GAP + 'px';
-    s.right = (vw - (p.left - HINT_GAP)) + 'px';
+    if (node.__ghTop) { s.top = ''; node.__ghTop = false; }
+  }
+
+  function hintApply(node, got, vw) {
+    var s = node.style;
+    if (fin(got.top)) { s.top = got.top + 'px'; node.__ghTop = true; }
+    if (!got.strip) return;
+    s.left = got.strip.left + 'px';
+    s.right = (vw - got.strip.right) + 'px';
     s.transform = 'none';
     /* auto/auto centres the plate inside the strip; a narrow strip keeps it
        against the left edge so the text has as much room as it can get */
-    s.marginLeft = strip >= HINT_STRIP_CENTER ? 'auto' : '0';
+    s.marginLeft = got.strip.width >= HINT_STRIP_CENTER ? 'auto' : '0';
     s.marginRight = 'auto';
+  }
+
+  function placeHint(node) {
+    if (!node || !node.parentNode) return;
+    hintReset(node);                                     /* measure from the CSS, not from a previous placement */
+    var blockers = [], extra = null, i, p;
+    if (panelEl) {
+      p = panelEl.getBoundingClientRect();
+      if (p.width && p.height) blockers.push(p);         /* a hidden panel is not in the way */
+    }
+    if (obstacleFn) {
+      try { extra = obstacleFn(); } catch (e) { extra = null; }
+      for (i = 0; extra && i < extra.length; i++) {
+        if (extra[i]) blockers.push(extra[i]);
+      }
+    }
+    if (!blockers.length) return;
+    var h = node.getBoundingClientRect();
+    if (!h.width) return;
+    var vw = document.documentElement.clientWidth || window.innerWidth;
+    var vh = document.documentElement.clientHeight || window.innerHeight;
+    var opts = { vh: vh, lift: !!obstacleFn };
+    var got = hintPlace(h, blockers, vw, opts);
+    if (!got) return;
+    hintApply(node, got, vw);
+    if (!obstacleFn) return;                             /* panel-only pages stop exactly here */
+    /* A narrower strip wraps the text onto another line, and the taller plate
+       can then reach something the first measurement cleared. The plate as it
+       now really is gets one more pass; more than that would chase its own
+       tail, and the first placement is kept when nothing better turns up. */
+    var pass, now, next;
+    for (pass = 0; pass < 2; pass++) {
+      now = node.getBoundingClientRect();
+      if (!hintCovered(now, blockers)) return;
+      hintReset(node);
+      next = hintPlace(now, blockers, vw, opts);
+      if (!next) { hintApply(node, got, vw); return; }
+      got = next;
+      hintApply(node, got, vw);
+    }
+  }
+
+  /* default off: a page opts in, and passing null puts it back to panel-only */
+  function setHintObstacles(fn) {
+    obstacleFn = typeof fn === 'function' ? fn : null;
+    placeHints();
   }
 
   function placeHints() {
@@ -297,7 +495,11 @@
     initPanel: initPanel,
     longPress: longPress,
     firstRunHint: firstRunHint,
+    setHintObstacles: setHintObstacles,
+    placeHints: placeHints,
     isTyping: isTyping,
-    liveStatus: liveStatus
+    liveStatus: liveStatus,
+    /* the placement law on its own, for the node test in _tests/site/hint */
+    PURE: { hintStrip: hintStrip, hintPlace: hintPlace, hintCovered: hintCovered }
   };
 })();

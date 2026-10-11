@@ -853,6 +853,74 @@
           ctx.globalAlpha = 1;
         }
       }
+    },
+
+    observatory: {
+      fps: 30,
+      init: function (s) {
+        s.f = 0; s.rot = 0.4;
+        /* three fixed spots on the disc, each ringing on its own phase */
+        s.pings = [[-0.38, -0.20, 0], [0.30, 0.34, 44], [0.02, -0.55, 86]];
+      },
+      draw: function (s, ctx, w, h) {
+        var cx = w / 2, cy = h / 2, R = Math.min(w, h) * 0.38, i;
+        var gold = light() ? '#a07c2c' : '#c8a45c';
+        s.f = (s.f + 1) % 360;
+        s.rot += 0.009;
+        ctx.save();
+        ctx.beginPath(); ctx.arc(cx, cy, R, 0, 6.2832); ctx.clip();
+        /* the dark glass Earth of the real page, ocean colour and all */
+        ctx.fillStyle = '#10141c';
+        ctx.fillRect(cx - R, cy - R, R * 2, R * 2);
+        ctx.strokeStyle = 'rgba(130,166,204,0.22)'; ctx.lineWidth = 1;
+        for (i = -1; i <= 1; i++) {
+          ctx.beginPath();
+          ctx.moveTo(cx - R, cy + i * R * 0.52); ctx.lineTo(cx + R, cy + i * R * 0.52);
+          ctx.stroke();
+        }
+        /* one meridian, turning with the globe */
+        var mr = Math.abs(Math.cos(s.rot)) * R;
+        if (ctx.ellipse && mr > 0.5) {
+          ctx.beginPath(); ctx.ellipse(cx, cy, mr, R, 0, 0, 6.2832); ctx.stroke();
+        }
+        /* the terminator sweeps across it */
+        var tx = cx + Math.sin(s.rot * 0.55) * R * 0.55;
+        var ng = ctx.createLinearGradient(tx - R * 0.4, 0, tx + R * 0.45, 0);
+        ng.addColorStop(0, 'rgba(0,0,0,0)');
+        ng.addColorStop(1, 'rgba(0,0,0,0.6)');
+        ctx.fillStyle = ng;
+        ctx.fillRect(cx - R, cy - R, R * 2, R * 2);
+        /* quake pings */
+        for (i = 0; i < s.pings.length; i++) {
+          var p = s.pings[i], px = cx + p[0] * R, py = cy + p[1] * R;
+          var ph = (s.f + p[2]) % 120;
+          if (ph < 60) {
+            var u = ph / 60;
+            ctx.strokeStyle = accent(); ctx.globalAlpha = (1 - u) * 0.8;
+            ctx.beginPath(); ctx.arc(px, py, 2 + u * R * 0.55, 0, 6.2832); ctx.stroke();
+            ctx.globalAlpha = 1;
+          }
+          ctx.fillStyle = accent();
+          ctx.beginPath(); ctx.arc(px, py, 1.6, 0, 6.2832); ctx.fill();
+        }
+        ctx.restore();
+        ctx.strokeStyle = 'rgba(130,166,204,0.35)'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(cx, cy, R, 0, 6.2832); ctx.stroke();
+        /* the one gold arc: the finding, lifted off the limb */
+        var a1 = -2.35, a2 = -0.5;
+        var x1 = cx + Math.cos(a1) * R, y1 = cy + Math.sin(a1) * R;
+        var x2 = cx + Math.cos(a2) * R, y2 = cy + Math.sin(a2) * R;
+        var mx = (x1 + x2) / 2 - cx, my = (y1 + y2) / 2 - cy;
+        var ml = Math.sqrt(mx * mx + my * my) || 1;
+        ctx.strokeStyle = gold; ctx.lineWidth = 1.4;
+        ctx.beginPath(); ctx.moveTo(x1, y1);
+        /* 1.3, not more: at R * 1.55 the apex of the arc leaves the art box */
+        ctx.quadraticCurveTo(cx + mx / ml * R * 1.3, cy + my / ml * R * 1.3, x2, y2);
+        ctx.stroke();
+        ctx.fillStyle = gold;
+        ctx.beginPath(); ctx.arc(x1, y1, 1.8, 0, 6.2832); ctx.fill();
+        ctx.beginPath(); ctx.arc(x2, y2, 1.8, 0, 6.2832); ctx.fill();
+      }
     }
   };
 

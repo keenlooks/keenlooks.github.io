@@ -1,0 +1,29 @@
+# The Observatory antenna. See README.md for the deploy steps.
+#
+# OWNER STEP 1: create the KV namespace and paste its id below.
+#   cd antenna && npx wrangler kv namespace create OBS_KV
+# The command prints an id. Replace PASTE_KV_NAMESPACE_ID_HERE with it.
+#
+# OWNER STEP 2 (optional, only when the FAA NOTAM API key exists):
+#   npx wrangler secret put FAA_CLIENT_ID
+#   npx wrangler secret put FAA_CLIENT_SECRET
+# Until then /notams/gps answers 503 with offline: true, which the page shows honestly.
+
+name = "obs-antenna"
+main = "worker.js"
+compatibility_date = "2026-08-15"
+workers_dev = true
+
+[observability]
+enabled = true
+
+# The cron aggregation: sample the aircraft tiles, roll the jamming bins, refresh the TFR list.
+[triggers]
+crons = ["*/10 * * * *"]
+
+[[kv_namespaces]]
+binding = "OBS_KV"
+id = "PASTE_KV_NAMESPACE_ID_HERE"
+
+# A local dev namespace is created automatically by `npx wrangler dev`, so no preview_id is
+# required for the local loop.
