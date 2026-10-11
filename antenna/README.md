@@ -132,7 +132,8 @@ ANT_BREAK=1 node ...\t-antenna.js     (proves the assertions bite: this run must
 Every upstream request sends
 `User-Agent: keanelucas.com-observatory-antenna (keenlooks@gmail.com)` so the operators can
 see who is calling and reach the owner. Tile fetches are serialized with at least 250 ms
-between them.
+between them, and any two adsb.fi calls in a cron (fallback or primary) start at least 1 second
+apart, its documented rate (`SOURCE_MIN_SPACING_MS` in `worker.js`).
 
 - **adsb.lol** is the primary aircraft source. Data is licensed **ODbL 1.0**, so the derived
   aggregate layers the page publishes are redistributable under the same license, and the

@@ -1570,6 +1570,13 @@
         clat: num(tile.clat, NaN), clon: num(tile.clon, NaN),
         region: tile.region || '', ok: !!tile.ok, src: tile.src || null,
         err: tile.err || tile.err2 || null,
+        /* 2026-10-11 (antenna-fix): the FALLBACK source's error too, and the
+           status numbers a newer antenna stores beside them, so whoever reads
+           the snapshot can tell a refusal (403, 429) from an outage.
+           obs-instruments.js relayReach reads all four. */
+        err2: tile.err2 || null,
+        status: isNum(tile.status) ? tile.status : null,
+        status2: isNum(tile.status2) ? tile.status2 : null,
         total: num(tile.total, NaN), ground: num(tile.ground, 0),
         planes: planes
       });

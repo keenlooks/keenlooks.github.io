@@ -369,6 +369,14 @@
     /* the non-lazy antenna feed whose health tells this file whether the relay
        is answering at all, so the lazy planes feed is only held when it is */
     AMB_PROBE_FEED: 'jam',
+    /* 2026-10-11 (antenna-fix): a relay snapshot that reached fewer than this
+       share of its sample areas is a DARK aircraft input, not a quiet sky
+       (relayReach, section 1b). */
+    RELAY_DARK_FRAC: 0.25,
+    /* fourth pass: how old a dark snapshot may be and still be the reason a
+       row or a line gives. The /planes route's own staleAfterMs (15 min,
+       antenna/worker.js ROUTES; obs-feeds.js planes manifest). */
+    RELAY_REACH_MAX_AGE_MS: 900000,
 
     /* --- happenings (r10 item 4) ---
        The always-armed context instrument that keeps the tour supplied. It
@@ -730,6 +738,109 @@
     return { primitives: [], readout: { missing: ids.slice() },
              status: 'offline', statusLine: offlineLine(ids),
              lineInputs: lineInputsOf(ids), events: [] };
+  }
+
+  /* ---- 1b. 2026-10-11 (antenna-fix): A RELAY THAT REACHED TOO FEW AREAS ----
+     From Cloudflare's shared egress the two aircraft sources refuse the
+     antenna (adsb.lol 429, adsb.fi 403), so /planes answers on time with 0 or
+     1 of its 24 tiles (_tests/observatory/antenna-prod-2026-10-11/). The feed
+     is live and the snapshot is fresh, so every class drawn from it read
+     "none in this frame": a claim about the FRAME, over an input that reached
+     almost nothing. A snapshot that reached fewer than K.RELAY_DARK_FRAC of
+     its areas is a dark input, worded in the existing family ("no data, ..."
+     on a class row, "Offline: ... Nothing is being claimed until the data
+     returns." on an instrument line) with the numbers the snapshot carries.
+     `refused` only when every upstream status its failed tiles recorded is
+     403 or 429 and no attempt failed without a status (second pass). Null
+     when the snapshot is fine or says nothing about coverage.
+     Pure; the parsed snapshot and the antenna's raw one read the same. */
+  var UPSTREAM_STATUS_RE = /upstream status (\d{3})/;
+  function relayReach(planes) {
+    var p = (planes && typeof planes === 'object') ? planes : null;
+    if (!p) return null;
+    var tiles = arr(p.tiles), ok = numOr(p.tilesOk, NaN), total = numOr(p.tilesTotal, NaN);
+    var codes = [], i, tl, refused, a1, a2, quiet = false;
+    if (tiles && !fin(total)) total = tiles.length;
+    if (tiles && !fin(ok)) {
+      ok = 0;
+      for (i = 0; i < tiles.length; i++) if (tiles[i] && tiles[i].ok) ok++;
+    }
+    if (!fin(ok) || !fin(total) || !(total > 0)) return null;
+    if (!(ok < total * K.RELAY_DARK_FRAC)) return null;
+    for (i = 0; tiles && i < tiles.length; i++) {
+      tl = tiles[i];
+      if (!tl || tl.ok) continue;
+      a1 = attemptStatus(tl.status, tl.err);
+      a2 = attemptStatus(tl.status2, tl.err2);
+      if (fin(a1)) codes.push(a1); else if (a1 !== null) quiet = true;
+      if (fin(a2)) codes.push(a2); else if (a2 !== null) quiet = true;
+    }
+    /* second pass: an attempt that failed WITHOUT a status (a timeout, a lost
+       connection, a payload that would not parse) is not a refusal, and one of
+       them is enough to take the clause away */
+    refused = codes.length > 0 && !quiet;
+    for (i = 0; i < codes.length; i++) {
+      if (codes[i] !== 403 && codes[i] !== 429) { refused = false; break; }
+    }
+    return { ok: Math.round(ok), total: Math.round(total), refused: refused };
+  }
+  /* one attempt of one tile: its status number (the stored one, else the
+     `upstream status N` text, which the breaker's skip text also opens with),
+     null where no call was made (no text, or the budget text), NaN where the
+     call failed without a status */
+  function attemptStatus(status, err) {
+    var m;
+    if (fin(status)) return status;
+    if (!err) return null;
+    if ((m = UPSTREAM_STATUS_RE.exec(String(err)))) return +m[1];
+    if (/^subrequest budget exhausted/.test(String(err))) return null;
+    return NaN;
+  }
+  /* the phrase, after `who` ("the relay" on a class row, the feed's label on
+     an instrument line). A phrase, not a sentence: the callers finish it. */
+  function reachPhrase(reach, who) {
+    if (!reach) return '';
+    return String(who || 'the relay') + ' reached ' + numFmt(reach.ok) + ' of ' +
+           numFmt(reach.total) + ' areas' +
+           (reach.refused ? ' (the aircraft sources are refusing it)' : '');
+  }
+  /* offlineOut's sentence with the snapshot's numbers in it. No cold window:
+     the relay ANSWERED, so this is a fact about its answer and not a feed
+     too young to judge (the r27b allowance rule, one input over). */
+  /* fourth pass: a reach whose relay is no longer answering (`silent`, or a
+     snapshot older than K.RELAY_REACH_MAX_AGE_MS at `nowMs`) takes the plain
+     outage line, offlineLine's own words, and never a present-tense refusal. */
+  function relayDarkOut(ids, reach, nowMs) {
+    var silent = !!(reach && (reach.silent ||
+      (fin(reach.t) && fin(nowMs) && nowMs - reach.t > K.RELAY_REACH_MAX_AGE_MS)));
+    return { primitives: [], readout: { missing: ids.slice(), relayReach: reach },
+             status: 'offline',
+             statusLine: silent ? offlineLine(ids)
+                       : 'Offline: ' + reachPhrase(reach, FEED_LABEL[ids[0]] || ids[0]) +
+                         '. Nothing is being claimed until the data returns.',
+             lineInputs: lineInputsOf(ids), events: [] };
+  }
+  /* fourth pass (review2's STANDS): the reach of a held snapshot is a reason
+     only while the PLANES feed is live, or stale by age within
+     K.RELAY_REACH_MAX_AGE_MS of the snapshot's own t. Otherwise the verdict is
+     `silent`: the relay is not reporting, whatever its last snapshot said.
+     `health` is the planes feed's kernel word. Null where the snapshot is not
+     dark. Pure. */
+  function relayVerdict(planes, health, nowMs) {
+    var reach = relayReach(planes), age;
+    if (!reach) return null;
+    reach.t = (planes && fin(planes.t)) ? planes.t : NaN;
+    age = (fin(reach.t) && fin(nowMs)) ? nowMs - reach.t : NaN;
+    reach.silent = !(health === 'live' ||
+                     (health === 'stale' && fin(age) && age <= K.RELAY_REACH_MAX_AGE_MS));
+    return reach;
+  }
+  /* the planes feed's kernel word, from whichever door the kernel has */
+  function planesHealthOf(c) {
+    var fs = null;
+    if (c && typeof c.feedState === 'function') { try { fs = c.feedState('planes'); } catch (e) { fs = null; } }
+    if (fs && fs.health) return fs.health;
+    return (c && typeof c.health === 'function') ? c.health('planes') : '';
   }
 
   /*
@@ -3343,6 +3454,19 @@
     }
 
     if (!pl) return withGrid(offlineOut(['planes'], state, nowMs));
+    /* 2026-10-11 (antenna-fix): a relay that reached too few areas is dark.
+       The field is still drawn (withGrid), and the status stays 'offline' so
+       the row's light is the hollow ring a dark planes feed already gives it:
+       a filled light over an "Offline:" line is r19p (2)'s contradiction. */
+    /* fourth pass: the bridge's verdict (section 11b) when it has given one,
+       which knows the planes feed's health; the snapshot alone otherwise */
+    var reachW = (state && state.relayReach !== undefined) ? state.relayReach
+                                                           : relayReach(data ? data.planes : null);
+    if (reachW) {
+      var darkW = withGrid(relayDarkOut(['planes'], reachW, nowMs));
+      darkW.status = 'offline';
+      return darkW;
+    }
     if (!pl.rows.length) {
       return withGrid({ primitives: [], readout: { nSamples: 0, nRows: 0 },
                status: 'insufficient',
@@ -4078,6 +4202,10 @@
 
     var jm = NORM.jam(data ? data.jam : null);
     if (!jm || !jm.bins.length) return offlineOut(['jam'], state, nowMs);
+    /* 2026-10-11 (antenna-fix): the aggregate is the same relay's, and the
+       latest snapshot's reach arrives on this state through the bridge
+       (syncRelayReach, section 11b) */
+    if (state && state.relayReach) return relayDarkOut(['jam'], state.relayReach, nowMs);
 
     var sp = NORM.space(data ? data.kp_rtsw : null);
     var nt = NORM.notams(data ? data.gps_notams : null);
@@ -5248,7 +5376,11 @@
     /* r20 (20): the relay's own facts, published whether or not this layer is
        the one drawing them */
     if (apAll) {
-      readout.nAircraft = apAll.rows;
+      /* 2026-10-11 (antenna-fix): not from a relay that reached too few areas.
+         The class is a no-data row then (classHealth), and a count "over the
+         sampled regions" would say the regions were sampled. The coverage,
+         the age and every DRAWN number still publish. */
+      if (!relayReach(state.planes)) readout.nAircraft = apAll.rows;
       readout.aircraftOutside = apAll.outside;
       if (fin(apAll.ageMs)) readout.aircraftAgeMs = apAll.ageMs;
       if (fin(apAll.tilesOk)) readout.aircraftTilesOk = apAll.tilesOk;
@@ -6513,7 +6645,10 @@
        thing on that half of the planet, and the old jam_new event fired once
        and was never a tour stop again. */
     var nJamCl = 0, nJamBins = 0, nJamIono = 0, nJamAnnounced = 0;
-    if (jm && jm.bins && jm.bins.length) {
+    /* 2026-10-11 (antenna-fix, second pass): not from a relay the jamming layer
+       calls dark (state.relayReach, synced by the section 11b bridge), or the two
+       layers disagree about one aggregate in one frame */
+    if (jm && jm.bins && jm.bins.length && !(state && state.relayReach)) {
       /* r19i item 9: the SAME gated pass the jamming layer runs, so a cell
          held back there as a storm effect or an announced test is held back
          here too. kp_rtsw and gps_notams are context inputs of this layer for
@@ -8463,10 +8598,20 @@
        ANSWER: the service told us why, so it does not wait out the cold
        window and it is never reported as a silence. */
     var quota = [];
+    /* 2026-10-11 (antenna-fix): the relay inputs whose latest snapshot reached
+       too few areas (`reach`, from relayReach). Same reasoning as the
+       allowance: the relay ANSWERED, so neither the cold window nor a drawn
+       mark makes it a live class; the reach is the row's reason. */
+    var thin = [];
     var ids = [];
     for (i = 0; i < list.length; i++) {
       f = list[i] || {};
       ids.push(f.id || '');
+      /* second pass: only while the relay is answering (live or stale). A relay
+         gone silent is an outage, and an old snapshot's reach is not its reason. */
+      if (RELAY_FEEDS[f.id] && f.reach && (f.health === 'live' || f.health === 'stale')) {
+        thin.push({ id: f.id, label: FEED_LABEL[f.id] || f.id, why: 'reach', reach: f.reach });
+      }
       if (f.hadData) had = true;
       if (f.health === 'idle' && !f.hadData) idle = true;
       if (f.health === 'offline' || (f.health === 'idle' && !f.hadData && s.tried)) {
@@ -8498,6 +8643,7 @@
        has not answered is not called broken, and this one has answered. A
        class that DREW is still never a no-data row (r15 item 5). */
     else if (quota.length && !drew) state = 'down';
+    else if (thin.length) state = 'down';
     /* r13 item 13's window outranks both outage words, unchanged: inside it a
        feed that has not answered has not failed. */
     else if (s.cold && !had) state = 'waiting';
@@ -8534,6 +8680,11 @@
       }
     } else if (state === 'waiting' && ids.length === 1) {
       input = ids[0];
+    }
+    if (state === 'down' && thin.length && !quota.length) {
+      input = thin[0].id;
+      /* fourth pass: a silent verdict is an outage, in the outage's words */
+      reason = thin[0].reach.silent ? CLASS_REASON.relay : reachPhrase(thin[0].reach, 'the relay');
     }
     return { cls: s.cls || '', state: state, input: input, inputs: ids,
              reason: reason, inst: s.inst || '',
@@ -8582,6 +8733,12 @@
                     reason: fs ? fs.reason : '',
                     errText: fs ? fs.errText : '',
                     hadData: !!(fs && fs.hadData) });
+      /* 2026-10-11 (antenna-fix): both relay routes stand on the one snapshot,
+         judged by the PLANES feed (fourth pass): `relayVerdict` */
+      if (RELAY_FEEDS[id] && typeof c.data === 'function' && fs &&
+          (fs.health === 'live' || fs.health === 'stale')) {
+        inputs[inputs.length - 1].reach = relayVerdict(c.data('planes'), planesHealthOf(c), t);
+      }
     }
     var st = (typeof c.state === 'function') ? c.state(map.inst) : null;
     var cold = false;
@@ -8974,10 +9131,44 @@
     var st = ambientState(c);
     if (!st) return false;
     var next = (want && typeof c.data === 'function') ? (c.data('planes') || null) : null;
+    syncRelayReach(c, next);
     if (next === (st.planes || null)) return false;
     st.planes = next;
     if (typeof c.recompute === 'function') c.recompute('ambient');
     return true;
+  }
+
+  /* 2026-10-11 (antenna-fix): the jamming residual reads the relay's AGGREGATE,
+     which carries no coverage, so the latest snapshot's reach is snapshotted
+     onto its state the way every cross instrument fact is (compute stays a
+     pure projection of what it is handed), and it recomputes only when the
+     reach really changed. */
+  /* second pass: the happenings layer's GPS pass reads the same aggregate, so
+     its state takes the same reach */
+  /* fourth pass: the verdict is judged by the PLANES feed (relayVerdict), and
+     the winds residual, whose own input is the planes feed, takes it from the
+     snapshot the kernel holds even while the jamming probe is down */
+  var RELAY_REACH_STATES = ['jam_residual', 'happenings', 'winds_residual'];
+  function reachKey(r) {
+    return r ? [r.ok, r.total, r.refused, r.silent ? 1 : 0, r.t].join('|') : '';
+  }
+  function syncRelayReach(c, planes) {
+    if (!c || typeof c.state !== 'function') return false;
+    var health = planesHealthOf(c);
+    var now = (typeof c.now === 'function') ? c.now() : NaN;
+    var gated = relayVerdict(planes, health, now);
+    var own = relayVerdict(typeof c.data === 'function' ? c.data('planes') : null, health, now);
+    var changed = false, i, js, reach;
+    for (i = 0; i < RELAY_REACH_STATES.length; i++) {
+      js = c.state(RELAY_REACH_STATES[i]);
+      if (!js) continue;
+      reach = RELAY_REACH_STATES[i] === 'winds_residual' ? own : gated;
+      if (reachKey(reach) === reachKey(js.relayReach || null)) continue;
+      js.relayReach = reach;
+      changed = true;
+      if (typeof c.recompute === 'function') c.recompute(RELAY_REACH_STATES[i]);
+    }
+    return changed;
   }
 
   function syncArmed(core) {
@@ -9626,6 +9817,11 @@
       errKind: errKind,
       classHealth: classHealth,
       classDrew: classDrew,
+      /* 2026-10-11 (antenna-fix) */
+      relayReach: relayReach,
+      reachPhrase: reachPhrase,
+      relayDarkOut: relayDarkOut,
+      relayVerdict: relayVerdict,
       /* (10) PIN Z3-S7 */
       JAM_POP_NOUNS: JAM_POP_NOUNS,
       jamPopulations: jamPopulations,

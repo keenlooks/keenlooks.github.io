@@ -38,8 +38,25 @@ export const TFR_DETAIL_BASE = 'https://tfr.faa.gov/download/detail_';
 export const FAA_NOTAM_URL = 'https://external-api.faa.gov/notamapi/v1/notams';
 
 export const TILE_DIST_NM = 250;
-export const TILE_SPACING_MS = 250;      /* serialized upstream calls, adsb.fi documents 1/s */
+export const TILE_SPACING_MS = 250;      /* serialized upstream calls; adsb.fi's own 1/s is SOURCE_MIN_SPACING_MS */
 export const UPSTREAM_TIMEOUT_MS = 12000;
+/*
+ * 2026-10-11 (antenna-fix): the refusal breaker. From Cloudflare's shared egress adsb.lol
+ * answers 429 and adsb.fi 403 to nearly every tile, and each refused tile cost two calls, so a
+ * refused round spent 43 of the 44 and starved the TFR detail fetches. After this many
+ * CONSECUTIVE 403 or 429 answers from one source in one cron, that source is skipped for the
+ * rest of the cron. Only 403 and 429 count: a 5xx is an outage that may clear on the next tile.
+ */
+export const REFUSAL_STATUSES = [403, 429];
+export const REFUSALS_TO_SKIP = 3;
+/*
+ * 2026-10-11 (antenna-fix, third pass): the least time between two calls to ONE source in a
+ * cron, start to start. adsb.fi documents one request per second, and after an adsb.lol burst
+ * trips the breaker every tile goes to adsb.fi at the 250 ms tile spacing, so its calls
+ * (fallback or primary) wait for their own second. adsb.lol keeps the tile spacing. Waiting
+ * costs wall time only (24 tiles at 1 s is about 24 s), never a subrequest.
+ */
+export const SOURCE_MIN_SPACING_MS = { 'adsb.lol': TILE_SPACING_MS, 'adsb.fi': 1000 };
 
 /* A Workers invocation may make 50 subrequests on the free plan. Leave headroom. */
 export const MAX_SUBREQUESTS = 44;
@@ -341,8 +358,31 @@ async function fetchUpstream(deps, url, init, budget) {
     opts.signal = AbortSignal.timeout(UPSTREAM_TIMEOUT_MS);
   }
   const res = await deps.fetchFn(url, opts);
-  if (!res || !res.ok) throw new Error('upstream status ' + (res && res.status) + ' for ' + url);
+  if (!res || !res.ok) {
+    const err = new Error('upstream status ' + (res && res.status) + refusalHeaders(res) + ' for ' + url);
+    err.status = res ? res.status : null;
+    throw err;
+  }
   return res;
+}
+
+/*
+ * The headers that say WHY an upstream refused (2026-10-11): whether a rate limit names a wait,
+ * whether a Cloudflare zone challenged or blocked the Worker, and who answered. Each value is
+ * cut to 40 characters; a header that is absent adds nothing, and a response with no headers
+ * object at all (a test stub) adds nothing either.
+ */
+function refusalHeaders(res) {
+  const h = res && res.headers;
+  if (!h || typeof h.get !== 'function') return '';
+  let out = '';
+  const names = ['retry-after', 'cf-mitigated', 'server'];
+  for (let i = 0; i < names.length; i++) {
+    let v = null;
+    try { v = h.get(names[i]); } catch (e) { v = null; }
+    if (v !== null && v !== undefined && String(v) !== '') out += ' ' + names[i] + '=' + String(v).slice(0, 40);
+  }
+  return out;
 }
 
 async function fetchUpstreamJson(deps, url, init, budget) {
@@ -362,21 +402,67 @@ async function fetchUpstreamText(deps, url, init, budget) {
  */
 export async function fetchTile(deps, tile, budget) {
   const out = { clat: tile.lat, clon: tile.lon, region: tile.region, ok: false, src: null, planes: [] };
-  try {
-    const json = await fetchUpstreamJson(deps, tileUrl(ADSB_LOL_BASE, tile.lat, tile.lon, TILE_DIST_NM), null, budget);
-    const parsed = parseTile(json);
-    return Object.assign(out, { ok: true, src: 'adsb.lol', planes: parsed.planes, total: parsed.total, ground: parsed.ground });
-  } catch (e) {
-    out.err = String((e && e.message) || e);
+  const lol = await trySource(deps, 'adsb.lol', tileUrl(ADSB_LOL_BASE, tile.lat, tile.lon, TILE_DIST_NM), budget);
+  if (lol.parsed) {
+    return Object.assign(out, { ok: true, src: 'adsb.lol', planes: lol.parsed.planes, total: lol.parsed.total, ground: lol.parsed.ground });
   }
-  try {
-    const json = await fetchUpstreamJson(deps, tileUrl(ADSB_FI_BASE, tile.lat, tile.lon, TILE_DIST_NM), null, budget);
-    const parsed = parseTile(json);
-    return Object.assign(out, { ok: true, src: 'adsb.fi', planes: parsed.planes, total: parsed.total, ground: parsed.ground });
-  } catch (e2) {
-    out.err2 = String((e2 && e2.message) || e2);
+  out.err = lol.err;
+  if (lol.status !== null) out.status = lol.status;
+  const fi = await trySource(deps, 'adsb.fi', tileUrl(ADSB_FI_BASE, tile.lat, tile.lon, TILE_DIST_NM), budget);
+  if (fi.parsed) {
+    return Object.assign(out, { ok: true, src: 'adsb.fi', planes: fi.parsed.planes, total: fi.parsed.total, ground: fi.parsed.ground });
   }
+  out.err2 = fi.err;
+  if (fi.status !== null) out.status2 = fi.status;
   return out;
+}
+
+/*
+ * One source for one tile, behind the refusal breaker. The breaker's counts live on the
+ * budget object, which is per cron, so a skipped source is asked again on the next cron. A
+ * skipped source makes no call; its tile error still opens with the status that tripped the
+ * breaker, so every failed tile says why in the same words a refused call does.
+ */
+async function trySource(deps, src, url, budget) {
+  const br = budget ? (budget.refusals || (budget.refusals = {})) : null;
+  const b = br ? (br[src] || (br[src] = { run: 0, last: null, skip: false })) : null;
+  if (b && b.skip) {
+    return { parsed: null, status: b.last,
+             err: 'upstream status ' + b.last + ', ' + src + ' skipped for the rest of this cron after ' +
+                  REFUSALS_TO_SKIP + ' refusals in a row' };
+  }
+  await spaceSource(deps, src, budget);
+  try {
+    const json = await fetchUpstreamJson(deps, url, null, budget);
+    const parsed = parseTile(json);
+    if (b) b.run = 0;
+    return { parsed: parsed, status: null, err: null };
+  } catch (e) {
+    const status = (e && typeof e.status === 'number') ? e.status : null;
+    if (b) {
+      if (status !== null && REFUSAL_STATUSES.indexOf(status) >= 0) {
+        b.run += 1;
+        b.last = status;
+        if (b.run >= REFUSALS_TO_SKIP) b.skip = true;
+      } else {
+        b.run = 0;
+      }
+    }
+    return { parsed: null, status: status, err: String((e && e.message) || e) };
+  }
+}
+
+/* Wait out the source's own minimum spacing since its previous call in this cron (the times live
+   on the per-cron budget object, beside the breaker), then stamp this call's start. */
+async function spaceSource(deps, src, budget) {
+  if (!budget) return;
+  const last = budget.lastCallMs || (budget.lastCallMs = {});
+  const min = SOURCE_MIN_SPACING_MS[src] || 0;
+  if (typeof last[src] === 'number') {
+    const wait = min - (nowOf(deps) - last[src]);
+    if (wait > 0) await ((deps && deps.sleep) || defaultSleep)(wait);
+  }
+  last[src] = nowOf(deps);
 }
 
 export async function collectTiles(deps, budget) {
@@ -1161,8 +1247,25 @@ export default {
     return handleRequest(request, makeDeps(env, null));
   },
   async scheduled(event, env, ctx) {
-    const p = runCron(makeDeps(env, null));
+    const p = runCron(makeDeps(env, null)).then(function (result) {
+      /* 2026-10-11: one line per cron in Workers Logs ([observability] is on in
+         wrangler.toml). The result carries no secret. */
+      console.log(cronLogLine(result));
+      return result;
+    });
     if (ctx && ctx.waitUntil) ctx.waitUntil(p);
     await p;
   },
 };
+
+/* The cron's result as one JSON line: tiles reached, planes, calls used, TFR details fetched. */
+export function cronLogLine(result) {
+  const r = result || {};
+  const tiles = r.tiles || {};
+  const tfrs = r.tfrs || {};
+  return JSON.stringify({
+    cron: 'antenna', t: r.t, tilesOk: tiles.ok, tilesTotal: tiles.total, planes: tiles.planes,
+    calls: r.subrequests, tfrDetails: tfrs.detailFetched, tfrs: tfrs.count,
+    errors: r.errors || [],
+  });
+}
