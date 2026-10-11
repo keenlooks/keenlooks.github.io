@@ -19,3 +19,9 @@ setup_cf_redirects.ps1
 
 # Python bytecode from the make_*.py dev scripts
 __pycache__/
+
+# Local test suites, fixtures, harnesses and screenshots (never committed; Jekyll ignores _ dirs)
+_tests/
+
+# Local-only compose override (maps the site to 127.0.0.1:4010 on this Mac; never committed)
+docker-compose.override.yml

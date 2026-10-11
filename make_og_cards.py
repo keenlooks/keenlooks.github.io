@@ -1,7 +1,7 @@
 """Generate the per-gadget Open Graph link-preview cards (images/og/<slug>.png).
 
 Each covered page is POSED live in system Chrome against the RUNNING dev server
-(http://localhost:4000, `docker compose up`), screenshotted, and composed onto a
+(http://localhost:4010, `docker compose up`), screenshotted, and composed onto a
 1200x630 navy card in the favicon's visual language (Big Dipper motif, gold on
 navy) with the page title and keanelucas.com. A page whose pose fails falls back
 to the branded title-only card. Rerunning is idempotent: it overwrites the same
@@ -12,20 +12,25 @@ Re-run after design tweaks (the dev server must be up first):
     python make_og_cards.py              # all cards
     python make_og_cards.py voyage qr    # just these slugs
 
-Requires Pillow (pip install pillow), node on PATH, playwright-core at
-%LOCALAPPDATA%/Temp/pushreview/node_modules (override: OG_NODE_PATH), and system
-Chrome. The Playwright stager script and all scratch (screenshots, sample
-images) are written to %LOCALAPPDATA%/Temp/designpass/F5/ at runtime; only this
-python file lives in the repo. Fonts follow make_favicons.py: local Segoe UI
-stands in for Source Sans 3, which is fine because the rendered PNGs are what
-gets committed. The og_image front matter on each covered page points at the
-output; _includes/seo.html turns that into og:image / twitter:image.
+Requires Pillow (pip install pillow), node on PATH, playwright-core (override:
+OG_NODE_PATH) and system Chrome. On the Mac mini: playwright-core from
+_tests/node_modules, scratch in $TMPDIR/designpass/F5/, and HEADFUL slugs (the
+WebGL globe) pose in a visible Chrome window; on Windows: playwright-core at
+%LOCALAPPDATA%/Temp/pushreview/node_modules, scratch in
+%LOCALAPPDATA%/Temp/designpass/F5/. The Playwright stager script and all scratch
+(screenshots, sample images) are written there at runtime; only this python
+file lives in the repo. Fonts follow make_favicons.py: local Segoe UI (Arial on
+the Mac) stands in for Source Sans 3, which is fine because the rendered PNGs
+are what gets committed. The og_image front matter on each covered page
+points at the output; _includes/seo.html turns that into og:image /
+twitter:image.
 """
 
 import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 
@@ -37,15 +42,30 @@ from make_favicons import (DIPPER, FONTS_BOLD, FONTS_REGULAR, GOLD, GOLD_DIM,
 
 REPO = os.path.dirname(os.path.abspath(__file__))
 OUT_DIR = os.path.join(REPO, "images", "og")
-BASE_URL = "http://localhost:4000"
-TEMP = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
-                    "Temp", "designpass", "F5")
+BASE_URL = "http://localhost:4010"
+if sys.platform == "win32":  # the Windows laptop the cards were first made on
+    TEMP = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
+                        "Temp", "designpass", "F5")
+    CHROME = r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
+    NODE_DEFAULT = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Temp",
+                                "pushreview", "node_modules")
+else:  # the Mac mini (since 2026-09-24): $TMPDIR scratch, the pinned _tests deps
+    TEMP = os.path.join(tempfile.gettempdir(), "designpass", "F5")
+    CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    NODE_DEFAULT = os.path.join(REPO, "_tests", "node_modules")
 SHOTS = os.path.join(TEMP, "shots")
-CHROME = r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
-NODE_PATH = os.environ.get(
-    "OG_NODE_PATH",
-    os.path.join(os.environ.get("LOCALAPPDATA", ""), "Temp", "pushreview",
-                 "node_modules"))
+NODE_PATH = os.environ.get("OG_NODE_PATH", NODE_DEFAULT)
+# WebGL pages: headless Chrome on the Mac cannot start WebGL (the globe falls
+# back to a flat map), so these are posed in a separate, visible browser.
+HEADFUL = {"observatory"}
+# Extra query per slug (the Observatory reads its live layers from the local
+# antenna dev server, `node antenna/dev-server.mjs`; override: OG_ANTENNA).
+QUERY = {"observatory": "?antenna=" + os.environ.get("OG_ANTENNA",
+                                                     "http://127.0.0.1:8788")}
+# Per-slug viewport where the standard one hides the money shot (at 1120 wide
+# the Observatory panel covers the globe; at 1440x900 the whole disc sits
+# clear between the plate and the panel).
+VIEWPORTS = {"observatory": {"width": 1440, "height": 900}}
 
 VIEW_W, VIEW_H = 1120, 960
 CROP_TOP = 70          # masthead strip removed from viewport shots
@@ -75,9 +95,11 @@ PAGES = [
     ("timing", "/timing/", "Recovering a Secret From Timing Alone",
      "element", "#timing-canvas"),
     ("fourinarow", "/fourinarow/", "Four in a Row", "viewport", None),
+    ("keepittogether", "/keepittogether/", "Keep It Together", "viewport", None),
     ("creatures", "/creatures/", "Evolving Creatures", "viewport", None),
     ("computer", "/computer/", "The Visible Computer", "viewport", None),
     ("voyage", "/voyage/", "Mission to Anywhere", "viewport", None),
+    ("observatory", "/observatory/", "The Observatory", "viewport", None),
     ("bonds", "/bonds/", "Why Bond Prices Fall When Rates Rise",
      "element", "#bond-canvas"),
     ("loans", "/loans/", "Where Your Loan Payments Actually Go",
@@ -273,6 +295,19 @@ async function pose(page, job) {
       await sleep(2000);
     }
   }
+  else if (S === 'observatory') {
+    /* The whole WebGL globe with the plate and its key, shot inside the boot
+       tour: it holds the home view until about 13 s, then the autopilot flies
+       to its first event (measured 2026-10-09), so no retry padding here. */
+    await sleep(11000);
+    const s = await page.evaluate(() => {
+      try {
+        const a = window.__obs.ap();
+        return 'gl=' + window.ObsGlobe.glReady() + ' ap=' + a.state + ' boot=' + !!(a.boot && a.boot.active);
+      } catch (e) { return 'hooks unavailable'; }
+    });
+    console.log('    (' + s + ')');
+  }
   else if (S === 'bonds') { await sleep(1800 + extra); }
   else if (S === 'loans') { await sleep(1800 + extra); }
   else if (S === 'diversification') { await sleep(3400 + extra); }
@@ -303,7 +338,7 @@ async function pose(page, job) {
 (async () => {
   const browser = await chromium.launch({
     executablePath: cfg.chrome,
-    headless: true,
+    headless: cfg.headless !== false,
     args: ['--enable-unsafe-swiftshader', '--hide-scrollbars', '--force-color-profile=srgb'],
   });
   const context = await browser.newContext({
@@ -316,8 +351,10 @@ async function pose(page, job) {
   });
   for (const job of cfg.jobs) {
     const out = cfg.shots + '/' + job.slug + '.png';
+    const vp = job.viewport || cfg.viewport;
     console.log('  posing ' + job.slug + ' (' + job.url + ')');
     const page = await context.newPage();
+    if (job.viewport) await page.setViewportSize(vp);
     page.on('dialog', (d) => { d.accept().catch(() => {}); });
     try {
       await page.goto(cfg.base + job.url, { waitUntil: 'load', timeout: 45000 });
@@ -330,7 +367,7 @@ async function pose(page, job) {
       } else {
         await page.screenshot({
           path: out,
-          clip: { x: 0, y: cfg.cropTop, width: cfg.viewport.width, height: cfg.viewport.height - cfg.cropTop },
+          clip: { x: 0, y: cfg.cropTop, width: vp.width, height: vp.height - cfg.cropTop },
         });
       }
       console.log('    shot -> ' + out);
@@ -541,11 +578,21 @@ def shot_is_blank(path):
 
 
 def run_stager(pages, attempt):
-    jobs = [{"slug": s, "url": u, "shot": mode, "sel": sel, "attempt": attempt}
+    """Headless batch first, then any HEADFUL pages in a visible browser."""
+    for headless in (True, False):
+        group = [p for p in pages if (p[0] not in HEADFUL) == headless]
+        if group:
+            run_stager_batch(group, attempt, headless)
+
+
+def run_stager_batch(pages, attempt, headless):
+    jobs = [{"slug": s, "url": u + QUERY.get(s, ""), "shot": mode, "sel": sel,
+             "attempt": attempt, "viewport": VIEWPORTS.get(s)}
             for (s, u, _t, mode, sel) in pages]
     sample_paths = make_sample_images()
     cfg = {
-        "base": BASE_URL, "chrome": CHROME, "shots": SHOTS.replace("\\", "/"),
+        "base": BASE_URL, "chrome": CHROME, "headless": headless,
+        "shots": SHOTS.replace("\\", "/"),
         "viewport": {"width": VIEW_W, "height": VIEW_H}, "cropTop": CROP_TOP,
         "jobs": jobs, "diffA": DIFF_A, "diffB": DIFF_B,
         "sampleA": sample_paths[0], "sampleB": sample_paths[1],

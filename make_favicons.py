@@ -103,14 +103,18 @@ def render_wide(w, h):
     return img
 
 
+# macOS has no Segoe UI; its system Arial (the same second choice as on
+# Windows) matches Segoe's title width and weight closely.
 FONTS_BOLD = (
     "C:/Windows/Fonts/segoeuib.ttf",
     "C:/Windows/Fonts/arialbd.ttf",
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
 )
 FONTS_REGULAR = (
     "C:/Windows/Fonts/segoeui.ttf",
     "C:/Windows/Fonts/arial.ttf",
+    "/System/Library/Fonts/Supplemental/Arial.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
 )
 
