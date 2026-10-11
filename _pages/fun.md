@@ -57,6 +57,16 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
     </div>
   </a>
 
+  <a class="xp-card" href="{{ base_path }}/keepittogether/">
+    <div class="xp-card__art" aria-hidden="true" data-thumb="keepittogether">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 14h6"></path><path d="M16 14h6"></path><path d="M2 14v-3M5 14v-3M8 14v-3M16 14v-3M19 14v-3M22 14v-3"></path><path d="M9 20h6v-4H9z"></path><circle cx="7" cy="5" r="1.6"></circle><circle cx="17" cy="5" r="1.6"></circle></svg>
+    </div>
+    <div class="xp-card__body">
+      <h3 class="xp-card__title">Keep It Together</h3>
+      <p class="xp-card__desc">Two AI engineers hold one keep without talking, and you can take one of their places.</p>
+    </div>
+  </a>
+
   <a class="xp-card" href="{{ base_path }}/creatures/">
     <div class="xp-card__art" aria-hidden="true" data-thumb="creatures">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5 L7.5 11 L16.5 11 Z"></path><path d="M7.5 11 L5.5 19 M16.5 11 L18.5 19"></path><circle cx="12" cy="5" r="1.4" fill="currentColor" stroke="none"></circle><circle cx="5.5" cy="19" r="1.4" fill="currentColor" stroke="none"></circle><circle cx="18.5" cy="19" r="1.4" fill="currentColor" stroke="none"></circle></svg>

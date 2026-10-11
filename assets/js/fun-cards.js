@@ -548,6 +548,99 @@
       }
     },
 
+    /* Keep It Together: two engineers build one line from opposite ends, the
+       wave arrives, the machines throw, the line holds. It NEVER shows a
+       breach: in a 60x40 box a hole in a wall reads as a rendering artefact
+       rather than as the point, so the failure lives on the page where it has
+       a caption. Its own 12x7 miniature, no core, no model. */
+    keepittogether: {
+      fps: 20,
+      init: function (s) {
+        /* the two halves grow inward and meet in the middle */
+        s.order = [1, 10, 2, 9, 3, 8, 4, 7, 5, 6];
+        s.owner = [0, 1, 0, 1, 0, 1, 0, 1, 0, 1];
+        s.guns = [{ c: 3, o: 0 }, { c: 8, o: 1 }];
+        s.f = 0;
+      },
+      draw: function (s, ctx, w, h) {
+        var C = 12, Rw = 7;
+        var cell = Math.min(w / C, h / (Rw + 0.8));
+        var bx = (w - cell * C) / 2, by = (h - cell * Rw) / 2;
+        var X = function (c) { return bx + c * cell; };
+        var Y = function (r) { return by + r * cell; };
+        var gold = light() ? '#a07c2c' : '#c8a45c';
+        var own = function (o) { return o === 1 ? gold : accent(); };
+        var f = s.f++;
+        if (f > 132) { s.f = 0; f = 0; }
+        var built = Math.min(10, Math.floor(f / 3));
+        var WALL_R = 3.1, GUN_R = 4.4, KEEP_R = 5.7, i;
+
+        ctx.strokeStyle = grey(0.28); ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(bx, Y(Rw) + 0.5); ctx.lineTo(bx + cell * C, Y(Rw) + 0.5);
+        ctx.stroke();
+        /* the two gates the wave comes through */
+        ctx.fillStyle = grey(0.3);
+        ctx.fillRect(X(2), Y(0), cell, cell * 0.28);
+        ctx.fillRect(X(9), Y(0), cell, cell * 0.28);
+        /* the keep, and its bar, which never moves */
+        ctx.fillStyle = grey(0.55);
+        ctx.fillRect(X(5) + 1, Y(KEEP_R), cell * 2 - 2, cell * 1.2);
+        ctx.fillStyle = accent();
+        ctx.fillRect(X(5) + 1, Y(KEEP_R) - 4, cell * 2 - 2, 2.5);
+
+        for (i = 0; i < built; i++) {
+          var c = s.order[i], o = s.owner[i];
+          ctx.fillStyle = own(o);
+          ctx.globalAlpha = 0.85;
+          ctx.fillRect(X(c) + 1, Y(WALL_R) + cell * 0.25, cell - 2, cell * 0.75);
+          ctx.globalAlpha = 0.35;
+          ctx.fillRect(X(c) + 1, Y(WALL_R) + cell * 0.15, cell - 2, cell * 0.14);
+          ctx.globalAlpha = 1;
+        }
+        /* the machines, once the line is up: a block and a cocked arm */
+        if (built >= 10) {
+          for (i = 0; i < s.guns.length; i++) {
+            var gx = X(s.guns[i].c) + cell * 0.5, gy = Y(GUN_R) + cell * 0.75;
+            ctx.fillStyle = own(s.guns[i].o);
+            ctx.fillRect(gx - cell * 0.3, gy - cell * 0.3, cell * 0.6, cell * 0.34);
+            ctx.strokeStyle = own(s.guns[i].o); ctx.lineWidth = 1.6;
+            var sw = Math.max(0, Math.min(1, (f - 44 - i * 12) / 26));
+            var ang = -2.5 + 1.7 * sw;
+            ctx.beginPath();
+            ctx.moveTo(gx, gy - cell * 0.3);
+            ctx.lineTo(gx + Math.cos(ang) * cell * 0.7, gy - cell * 0.3 + Math.sin(ang) * cell * 0.7);
+            ctx.stroke();
+          }
+        }
+        /* the wave: two bodies walk down, stop at the line, and are gone */
+        var march = (f - 34) / 6;
+        for (i = 0; i < 2; i++) {
+          var startC = i === 0 ? 2 : 9, gone = 78 + i * 12;
+          if (f < 34 || f > gone) continue;
+          var rr = Math.min(2.2, march - i * 1.5);
+          if (rr < 0) continue;
+          ctx.fillStyle = grey(0.72);
+          ctx.beginPath();
+          ctx.arc(X(startC) + cell * 0.5, Y(rr) + cell * 0.5, cell * 0.22, 0, 6.2832);
+          ctx.fill();
+        }
+        /* the pods, drawn only while they are in the air */
+        for (i = 0; i < 2; i++) {
+          var t0 = 70 + i * 12, u = (f - t0) / 8;
+          if (u < 0 || u > 1) continue;
+          var x0 = X(s.guns[i].c) + cell * 0.5, y0 = Y(GUN_R) + cell * 0.4;
+          var x1 = X(i === 0 ? 2 : 9) + cell * 0.5, y1 = Y(2.2) + cell * 0.5;
+          var px = x0 + (x1 - x0) * u;
+          var py = y0 + (y1 - y0) * u - Math.sin(u * Math.PI) * cell * 1.2;
+          ctx.fillStyle = own(s.guns[i].o);
+          ctx.beginPath();
+          ctx.arc(px, py, cell * 0.13, 0, 6.2832);
+          ctx.fill();
+        }
+      }
+    },
+
     creatures: {
       fps: 30,
       init: function (s) {
