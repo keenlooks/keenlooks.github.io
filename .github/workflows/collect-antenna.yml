@@ -1,0 +1,75 @@
+name: Collect Observatory aircraft tiles
+
+# Why this exists (2026-10-11): adsb.lol answers 429 and adsb.fi answers 403 to the shared
+# addresses Cloudflare Workers call out from, so the antenna Worker's own cron reaches 0 or 1 of
+# its 24 aircraft tiles, while the same request from outside Cloudflare gets 200 from both. This
+# job runs the antenna's aircraft phase on a GitHub runner instead: antenna/collect.mjs imports
+# runAircraftPhase from antenna/worker.js (the same 24 tiles, the same spacing, the same refusal
+# breaker, the same jam roll) and writes snap:planes and agg:jam into the Worker's OBS_KV
+# namespace through the Cloudflare KV REST API, with the two repository secrets the antenna
+# deploy already uses (the token needs Workers KV Storage: Edit, which that deploy also needs).
+# The snapshot says who wrote it (writer: github-actions). The Worker leaves the aircraft to a
+# collector snapshot younger than 25 minutes and spends its own cron on the TFRs.
+# See antenna/README.md, "The collector".
+#
+# What this cannot promise:
+# - GitHub starts scheduled runs late, sometimes by many minutes, and skips some when its queue
+#   is busy. Nothing hides that: every snapshot carries its own time, /planes serves its age,
+#   and the page labels a snapshot stale after 15 minutes.
+# - GitHub disables scheduled workflows in a public repository after 60 days with no activity
+#   in the repository. Re-enable it from the Actions tab when that happens.
+# - The runner's addresses may be refused by the upstreams too. Then collect.mjs writes nothing
+#   (fewer than a quarter of the tiles came back) and exits 0 with one ::warning:: annotation
+#   naming the tile count and the statuses seen: a refusal is the upstream's choice, not a fault,
+#   and a red run would mean 144 failures and emails a day. Once the last collector snapshot is
+#   25 minutes old the Worker's own round runs again as the fallback, and it never replaces a
+#   collector snapshot with a dark round of its own. Exit 2, a red run, is kept for real faults:
+#   missing secrets, a token that cannot reach the KV namespace, a KV read or write that failed.
+# - The runner is one address, and adsb.lol refuses one address from about the fourth call at
+#   the Worker's 250 ms spacing, so the collector spaces adsb.lol calls one second apart.
+#
+# Run it by hand: gh workflow run collect-antenna.yml --repo keenlooks/keenlooks.github.io --ref master
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: collect-antenna
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: antenna
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Collect the tiles and write them to the antenna's KV
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # worker.js is an ES module with no package.json "type"; node loads it fine and would
+          # otherwise print a warning about that on every run
+          NODE_OPTIONS: --disable-warning=MODULE_TYPELESS_PACKAGE_JSON
+        run: node antenna/collect.mjs
+
+      - name: Read the antenna's health
+        if: always()
+        run: |
+          # KV is eventually consistent: the edge can serve the previous snapshot for about a
+          # minute after the write above, so this prints what the Worker serves; it judges nothing.
+          HEALTH=$(curl -sS --max-time 20 "https://obs-antenna.keenlooks-cloudflare.workers.dev/health" || true)
+          echo "$HEALTH" | jq -c '{tiles, planes: (.routes[]? | select(.path == "/planes") | {t, ageMs, stale})}' \
+            || echo "health: $HEALTH"

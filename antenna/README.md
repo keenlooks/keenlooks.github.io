@@ -8,7 +8,9 @@ The Worker fetches on a five minute cron, aggregates, and serves small CORS open
 snapshots. The page works without it: with no antenna deployed, the plane, jamming and TFR
 layers report themselves offline and everything else on the page still runs.
 
-Files here: `worker.js` (all the logic), `wrangler.toml` (deploy config), this README.
+Files here: `worker.js` (all the logic), `wrangler.toml` (deploy config), `collect.mjs` (the
+aircraft collector that runs outside Cloudflare, see "The collector"), `dev-server.mjs` (a local
+preview), this README.
 Nothing in this directory is part of the Jekyll site; `antenna` is in the `_config.yml`
 exclude list.
 
@@ -16,8 +18,8 @@ exclude list.
 
 | Route | Serves | Edge cache | Source |
 |---|---|---|---|
-| `GET /planes` | KV `snap:planes`, the cron's aircraft sample | `s-maxage=90` | adsb.lol tiles, adsb.fi per-tile fallback |
-| `GET /jam` | KV `agg:jam`, summarized to one row per bin | `s-maxage=120` | derived from the same tiles |
+| `GET /planes` | KV `snap:planes`, the aircraft sample | `s-maxage=90` | adsb.lol tiles, adsb.fi per-tile fallback, gathered by the collector (`collect.mjs` on GitHub Actions); the Worker's own cron is the fallback |
+| `GET /jam` | KV `agg:jam`, summarized to one row per bin | `s-maxage=120` | derived from the same tiles, rolled by whichever wrote `/planes` |
 | `GET /tfrs` | KV `tfrs`, the list plus geometry | `s-maxage=600` | `tfr.faa.gov` list plus per-TFR detail |
 | `GET /notams/gps` | KV `notams:gps` | `s-maxage=900` | FAA NOTAM API, needs secrets |
 | `GET /health` | computed | `no-store` | per route KV ages and tile coverage |
@@ -49,6 +51,61 @@ permission to the token in the Cloudflare dashboard and re-run the workflow.
 
 The first cron fills `/planes` and `/jam` within about ten minutes of the first deploy;
 until then those routes answer 503 offline and the page says so honestly.
+
+## The collector
+
+adsb.lol answers 429 and adsb.fi answers 403 to the addresses Cloudflare Workers call out from
+(diagnosed 2026-10-11), so the Worker's own cron reaches 0 or 1 of its 24 tiles. From outside
+Cloudflare both answer. `collect.mjs` gathers the tiles there and writes them into this Worker's
+KV, where the Worker serves them exactly as before.
+
+- **What it runs.** `collect.mjs` (node 20 or newer, no dependencies) imports `runAircraftPhase`
+  from `worker.js`, the same function the cron runs: the 24 tiles with the same spacing and the
+  same refusal breaker, the `snap:planes` write, then the `agg:jam` roll. Its snapshot therefore
+  has the Worker's shape by construction, plus one field ahead of `tiles`: `writer`
+  (`github-actions` from the workflow, `collect.mjs` from a hand run). It writes through the
+  Cloudflare KV REST API with `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` (the deploy's
+  repository secrets) into the namespace titled `OBS_KV`, or the one named by `OBS_KV_ID` when that
+  is set. Off Cloudflare there is no 50 call cap, so every tile may try both sources (at most 50
+  calls). A runner is one address, and adsb.lol refuses one address from about the fourth call at
+  the Worker's 250 ms spacing, so the collector alone spaces adsb.lol calls 1,000 ms apart
+  (`COLLECTOR_SPACING_MS`, carried on its round's budget); the Worker keeps its own spacing. The
+  TFRs and the NOTAM sweep stay the Worker's.
+- **When it runs.** `.github/workflows/collect-antenna.yml`, every ten minutes and on demand.
+  GitHub starts scheduled runs late and sometimes skips them; the snapshot's own `t`, the age
+  `/planes` serves and the page's stale label show that honestly. GitHub disables a schedule in a
+  public repository after 60 days with no activity; re-enable it from the Actions tab.
+- **The deferral rule.** Each cron first reads the head of the stored snapshot (the fields before
+  `tiles`, without parsing the tile array: `snapHead`, a few microseconds where a full parse of a
+  250 to 750 KB snapshot costs 0.5 to 2 ms of a cron's 10 ms). When it names a writer and is younger
+  than 25 minutes (`COLLECTOR_FRESH_MS`; a `t` more than 5 minutes in the future is a skewed
+  clock and counts as absent, and ages are clamped at 0), the cron makes no tile call and no snapshot or jam
+  write, logs `deferred to the collector, age N s` in its log line, and its whole call budget goes
+  to the TFRs. When the stored snapshot is older, absent, or the Worker's own (the Worker never
+  names a writer), the cron runs its own round as before: that is the fallback. The fallback
+  never replaces a collector snapshot with a DARK round (fewer than 6 of 24 tiles), whatever that
+  snapshot's age: `/planes` serves the age honestly, and a dark overwrite would only erase good
+  data. Whoever writes, a stored snapshot with a newer `t` is never overwritten, the Worker also leaves alone a fresh
+  collector snapshot that landed during its own round, and a round that leaves the snapshot alone
+  leaves the jam ring alone too. KV is eventually consistent (about a minute), which a ten minute
+  cadence absorbs.
+- **When the runner is refused too.** A collection that reaches fewer than a quarter of the tiles
+  (under 6 of 24) writes nothing and exits 0 with one `::warning::` line naming the tile count
+  and the statuses seen (a refusal is the upstream's choice, not a fault; red runs would mean 144
+  failures and emails a day). Once the last collector snapshot is 25 minutes old the Worker's own
+  round runs again. Exit 2, a red run, is kept for real faults (missing secrets, a namespace the
+  token cannot list, a KV read or write that failed) and says what was and was not written. A
+  key whose read failed in the run, including a 200 whose body never arrived, is never written,
+  so the jam ring is never rebuilt from nothing.
+- **Run it by hand.** `gh workflow run collect-antenna.yml --repo keenlooks/keenlooks.github.io --ref master`,
+  then `gh run watch` (or `gh run list --workflow collect-antenna.yml --limit 1`). `/health`
+  names the writer in its `tiles` summary once the edge serves the new snapshot.
+- **Locally, writing nothing.** `node antenna/collect.mjs --dry` fetches the real tiles into an
+  in-memory KV, prints one line per tile (a tile the fallback carried also says why the primary
+  did not), then one `collect:` line with tilesOk, planes, calls, the writer and the jam roll
+  summary. No token is needed and nothing reaches Cloudflare. `--kv-api
+  http://127.0.0.1:<port>/client/v4` points the KV calls at a local stub for tests and accepts no
+  other address.
 
 ## Local preview without wrangler
 
@@ -156,6 +213,9 @@ for less, the two knobs are the cron interval in `wrangler.toml` and the tile li
 of `worker.js`, and both can be changed without touching anything else.
 
 ## What the cron does
+
+Steps 1 to 3 are the aircraft phase (`runAircraftPhase`), which the collector runs too; the cron
+skips them while a collector snapshot is fresh (see "The collector").
 
 Every five minutes:
 

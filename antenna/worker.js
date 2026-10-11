@@ -453,11 +453,14 @@ async function trySource(deps, src, url, budget) {
 }
 
 /* Wait out the source's own minimum spacing since its previous call in this cron (the times live
-   on the per-cron budget object, beside the breaker), then stamp this call's start. */
+   on the per-cron budget object, beside the breaker), then stamp this call's start. A round may
+   carry its own table as budget.minSpacingMs (2026-10-11, second pass: the collector spaces
+   adsb.lol at 1 s, because a runner is one address); the Worker's budget carries none. */
 async function spaceSource(deps, src, budget) {
   if (!budget) return;
   const last = budget.lastCallMs || (budget.lastCallMs = {});
-  const min = SOURCE_MIN_SPACING_MS[src] || 0;
+  const own = budget.minSpacingMs;
+  const min = (own && typeof own[src] === 'number') ? own[src] : (SOURCE_MIN_SPACING_MS[src] || 0);
   if (typeof last[src] === 'number') {
     const wait = min - (nowOf(deps) - last[src]);
     if (wait > 0) await ((deps && deps.sleep) || defaultSleep)(wait);
@@ -1089,6 +1092,8 @@ export async function handleHealth(deps) {
       planes += (snap.tiles[i].planes || []).length;
     }
     out.tiles = { ok: ok, total: snap.tiles.length, planes: planes };
+    /* 2026-10-11 (the collector): who wrote it, when a collector did (the Worker never names itself) */
+    if (typeof snap.writer === 'string' && snap.writer) out.tiles.writer = snap.writer;
   }
   return jsonResponse(out, { cacheControl: 'no-store' });
 }
@@ -1173,6 +1178,144 @@ export async function refreshTfrs(deps, budget) {
 }
 
 /*
+ * 2026-10-11 (the collector). adsb.lol answers 429 and adsb.fi 403 to Cloudflare's shared egress,
+ * so the aircraft tiles are gathered OUTSIDE Cloudflare: antenna/collect.mjs, run by the GitHub
+ * Actions workflow .github/workflows/collect-antenna.yml every ten minutes, runs
+ * runAircraftPhase below (the very function runCron runs) and writes snap:planes and agg:jam
+ * into this Worker's KV through the Cloudflare KV REST API. A collector's snapshot names its
+ * writer; the Worker's own never does. While a collector snapshot is younger than
+ * COLLECTOR_FRESH_MS, runCron leaves the aircraft to it and spends its calls on the TFRs; when
+ * the stored snapshot is older, absent or the Worker's own, runCron runs its own round as before
+ * (the fallback).
+ */
+export const COLLECTOR_FRESH_MS = 25 * 60 * 1000;
+/* Second pass: a writer snapshot whose t is more than this far AHEAD of the cron's clock is a
+   skewed clock, not a fresh collector: it is treated as absent (the Worker runs its round, and the
+   newer-t guard does not protect it). Within it, the age is clamped at 0. */
+export const COLLECTOR_SKEW_MS = 5 * 60 * 1000;
+/* A round that reaches fewer than this share of the tiles is a DARK round (the page's
+   K.RELAY_DARK_FRAC is the same quarter): the collector writes nothing from one, and the Worker
+   never replaces a collector's snapshot with one. */
+export const RELAY_DARK_FRAC = 0.25;
+export function tilesNeeded(total) { return Math.ceil(total * RELAY_DARK_FRAC); }
+
+/*
+ * The fields ahead of `tiles` in the stored snapshot (t, distNm, tilesOk, tilesTotal, planes and a
+ * collector's writer), read WITHOUT parsing the tile array: runCron reads it every cron, a free
+ * plan cron has 10 ms of CPU, and a full snapshot is about 650 KB of JSON. Both writers put
+ * `tiles` last, so the head is the text before the first ',"tiles":'. A value that does not cut
+ * that way is parsed whole; a failed read or parse is null, as in kvGetJson.
+ */
+export async function snapHead(kv) {
+  if (!kv) return null;
+  let raw = null;
+  try { raw = await kv.get('snap:planes'); } catch (e) { return null; }
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw === 'object') return raw;
+  const s = String(raw);
+  const cut = s.indexOf(',"tiles":');
+  if (cut > 0) {
+    try {
+      const head = JSON.parse(s.slice(0, cut) + '}');
+      if (head && typeof head === 'object') return head;
+    } catch (e) { /* not cut where expected: parse it whole below */ }
+  }
+  try { return JSON.parse(s); } catch (e) { return null; }
+}
+
+/* The age in ms of a stored snapshot the Worker defers to, else null: it names a writer (only a
+   collector does), carries a numeric t no more than COLLECTOR_SKEW_MS ahead of the clock, and is
+   younger than COLLECTOR_FRESH_MS. The age is clamped at 0. */
+export function collectorAgeMs(head, t) {
+  if (!head || typeof head.writer !== 'string' || !head.writer) return null;
+  const st = num(head.t);
+  if (st === null) return null;
+  const age = t - st;
+  if (age < -COLLECTOR_SKEW_MS) return null;
+  const a = Math.max(0, age);
+  return a < COLLECTOR_FRESH_MS ? a : null;
+}
+
+/* Why a finished round must leave snap:planes (and with it agg:jam) alone, or null to write. */
+async function aircraftWriteSkip(deps, t, ok, total, o) {
+  if (typeof o.minTilesOk === 'number' && ok < o.minTilesOk) {
+    return 'not written: the round reached ' + ok + ' of ' + total + ' tiles, fewer than ' + o.minTilesOk;
+  }
+  const head = await snapHead(deps.kv);
+  const st = head ? num(head.t) : null;
+  if (st !== null && st > t && st - t <= COLLECTOR_SKEW_MS) {
+    return 'not written: a newer snapshot is stored (t ' + st + ', this round ' + t + ')';
+  }
+  if (o.yieldToCollector) {
+    const age = collectorAgeMs(head, t);
+    if (age !== null) {
+      return 'not written: a collector snapshot landed during this round, age ' + Math.round(age / 1000) + ' s';
+    }
+  }
+  /* Second pass: a dark round never replaces a collector's snapshot, whatever its age. The route
+     serves that snapshot's age honestly; a dark overwrite would only erase good data. */
+  if (o.keepWriterOverDark && ok < tilesNeeded(total) && head && typeof head.writer === 'string' && head.writer) {
+    return 'not written: this round reached ' + ok + ' of ' + total + ' tiles, so the ' + head.writer +
+      ' snapshot (age ' + (st === null ? '?' : Math.round(Math.max(0, t - st) / 1000)) + ' s) is kept';
+  }
+  return null;
+}
+
+/*
+ * The aircraft phase: the 24 tiles (spacing, breaker and budget exactly as collectTiles has
+ * them), the snap:planes write, then the agg:jam roll. runCron and antenna/collect.mjs both run
+ * this one function, so a collector's snapshot has the Worker's shape by construction. t is the
+ * round's start: the snapshot's t and the jam slot. opts, all optional (runCron passes only
+ * yieldToCollector and keepWriterOverDark, so a healthy Worker round writes exactly the bytes it
+ * always wrote):
+ *   extra             fields set on the snapshot ahead of `tiles` (the collector's writer)
+ *   minTilesOk        a round that reached fewer tiles writes nothing (the collector's rule, so
+ *                     a refused collector never holds the Worker's own round off)
+ *   yieldToCollector  also leave alone a fresh collector snapshot that landed during the round
+ *   keepWriterOverDark  a round under a quarter of the tiles never replaces a snapshot that names
+ *                     a writer, whatever its age (the Worker's rule, second pass)
+ * The result: tiles { ok, total, planes } once reached, jam, errors, skipped (why nothing was
+ * written) and tileList (the tiles themselves, which collect.mjs prints; runCron ignores it).
+ * Whoever runs it, a stored snapshot with a NEWER t is never overwritten, and a round that
+ * leaves the snapshot alone leaves the jam ring alone too (the newer writer rolled that slot).
+ * KV is eventually consistent (a write can take about a minute to reach every location), so
+ * these checks hold for writes more than about a minute apart, which a ten minute cadence is.
+ */
+export async function runAircraftPhase(deps, budget, t, opts) {
+  const o = opts || {};
+  const out = { tiles: null, jam: null, errors: [], skipped: null, tileList: null };
+  try {
+    const tiles = await collectTiles(deps, budget);
+    out.tileList = tiles;
+    let ok = 0;
+    let planes = 0;
+    for (let i = 0; i < tiles.length; i++) { if (tiles[i].ok) ok++; planes += (tiles[i].planes || []).length; }
+    const skip = await aircraftWriteSkip(deps, t, ok, tiles.length, o);
+    if (skip) {
+      out.tiles = { ok: ok, total: tiles.length, planes: planes };
+      out.skipped = skip;
+      return out;
+    }
+    const snap = { t: t, distNm: TILE_DIST_NM, tilesOk: ok, tilesTotal: tiles.length, planes: planes };
+    if (o.extra) Object.assign(snap, o.extra);
+    snap.tiles = tiles;
+    await kvPutJson(deps.kv, 'snap:planes', snap);
+    out.tiles = { ok: ok, total: tiles.length, planes: planes };
+    try {
+      const prev = await kvGetJson(deps.kv, 'agg:jam');
+      const agg = rollJam(prev, sampleBins(tiles, JAM_BIN_DEG), t);
+      await kvPutJson(deps.kv, 'agg:jam', agg);
+      out.jam = { buckets: agg.buckets.length, hours: agg.daily.length };
+    } catch (e) {
+      out.errors.push('jam: ' + String((e && e.message) || e));
+    }
+  } catch (e) {
+    out.errors.push('tiles: ' + String((e && e.message) || e));
+  }
+  return out;
+}
+
+/*
  * The cron body. Each stage is isolated: a dead upstream in one stage leaves the others alone,
  * and every stage writes at most one KV key.
  */
@@ -1181,25 +1324,18 @@ export async function runCron(deps) {
   const budget = { left: MAX_SUBREQUESTS, used: 0 };
   const result = { t: t, errors: [], tiles: null, jam: null, tfrs: null, notams: null };
 
-  try {
-    const tiles = await collectTiles(deps, budget);
-    let ok = 0;
-    let planes = 0;
-    for (let i = 0; i < tiles.length; i++) { if (tiles[i].ok) ok++; planes += (tiles[i].planes || []).length; }
-    await kvPutJson(deps.kv, 'snap:planes', {
-      t: t, distNm: TILE_DIST_NM, tilesOk: ok, tilesTotal: tiles.length, planes: planes, tiles: tiles,
-    });
-    result.tiles = { ok: ok, total: tiles.length, planes: planes };
-    try {
-      const prev = await kvGetJson(deps.kv, 'agg:jam');
-      const agg = rollJam(prev, sampleBins(tiles, JAM_BIN_DEG), t);
-      await kvPutJson(deps.kv, 'agg:jam', agg);
-      result.jam = { buckets: agg.buckets.length, hours: agg.daily.length };
-    } catch (e) {
-      result.errors.push('jam: ' + String((e && e.message) || e));
-    }
-  } catch (e) {
-    result.errors.push('tiles: ' + String((e && e.message) || e));
+  /* 2026-10-11 (the collector): a fresh collector snapshot means the tiles were gathered where
+     the upstreams answer, so this cron leaves the aircraft to it (no tile call, no snapshot or
+     jam write) and its whole budget goes to the TFRs. Otherwise its own round runs, as always. */
+  const deferAge = collectorAgeMs(await snapHead(deps.kv), t);
+  if (deferAge !== null) {
+    result.aircraft = 'deferred to the collector, age ' + Math.round(deferAge / 1000) + ' s';
+  } else {
+    const air = await runAircraftPhase(deps, budget, t, { yieldToCollector: true, keepWriterOverDark: true });
+    result.tiles = air.tiles;
+    result.jam = air.jam;
+    for (let i = 0; i < air.errors.length; i++) result.errors.push(air.errors[i]);
+    if (air.skipped) result.aircraft = air.skipped;
   }
 
   try {
@@ -1258,7 +1394,9 @@ export default {
   },
 };
 
-/* The cron's result as one JSON line: tiles reached, planes, calls used, TFR details fetched. */
+/* The cron's result as one JSON line: tiles reached, planes, calls used, TFR details fetched, and
+   (2026-10-11) why the aircraft were left alone when they were, e.g. "deferred to the collector,
+   age 312 s". */
 export function cronLogLine(result) {
   const r = result || {};
   const tiles = r.tiles || {};
@@ -1267,5 +1405,7 @@ export function cronLogLine(result) {
     cron: 'antenna', t: r.t, tilesOk: tiles.ok, tilesTotal: tiles.total, planes: tiles.planes,
     calls: r.subrequests, tfrDetails: tfrs.detailFetched, tfrs: tfrs.count,
     errors: r.errors || [],
+    /* 2026-10-11: present only when this cron wrote no aircraft (deferred, or a newer snapshot) */
+    aircraft: r.aircraft,
   });
 }
