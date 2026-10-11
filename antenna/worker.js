@@ -21,6 +21,9 @@
  *   adsb.lol data is ODbL 1.0, adsb.fi is free for personal non-commercial use and requires a
  *   citation with a link. Both are volunteer feeder networks. Every upstream call carries the
  *   User-Agent below so the operators can see who we are.
+ *
+ * 2026-10-11: with the secret GH_DISPATCH_TOKEN the cron also starts the GitHub Actions aircraft
+ * collector (dispatchCollector below), one POST to api.github.com when the collector is late.
  */
 
 /* ------------------------------------------------------------------ constants */
@@ -36,6 +39,10 @@ export const ADSB_FI_BASE = 'https://opendata.adsb.fi/api/v3';
 export const TFR_LIST_URL = 'https://tfr.faa.gov/tfrapi/exportTfrList';
 export const TFR_DETAIL_BASE = 'https://tfr.faa.gov/download/detail_';
 export const FAA_NOTAM_URL = 'https://external-api.faa.gov/notamapi/v1/notams';
+/* 2026-10-11 (the dispatch): the repository whose collector workflow this Worker starts, and the one
+   GitHub endpoint it calls. GH_DISPATCH_TOKEN is sent to this URL and nowhere else. */
+export const GH_REPO = 'keenlooks/keenlooks.github.io';
+export const GH_DISPATCH_URL = 'https://api.github.com/repos/' + GH_REPO + '/dispatches';
 
 export const TILE_DIST_NM = 250;
 export const TILE_SPACING_MS = 250;      /* serialized upstream calls; adsb.fi's own 1/s is SOURCE_MIN_SPACING_MS */
@@ -63,11 +70,14 @@ export const MAX_SUBREQUESTS = 44;
 /*
  * TFR geometries enriched per cron (r12 item 16, raised from 4). The arithmetic on the
  * 44 call budget, worst case first: 24 tiles at up to 2 calls each is 48, which is already
- * over the cap, so collectTiles stops adding tiles once budget.left <= 2 and the tiles can
- * never leave less than 2. On a normal round the primary source answers first time, so the
- * tiles spend 24, the TFR list spends 1 and the GPS sweep spends at most 1: 18 calls are
- * left. The detail loop is gated on budget.left > 2 as well as on this ceiling, so 8 is the
- * most it will ever take and it takes fewer whenever the tiles had a bad round. At 8 per
+ * over the cap, so collectTiles stops adding tiles once budget.left <= 2, and the tiles leave
+ * at least 1 (2026-10-11, measured in t-antenna 6f: a tile started with 3 left can spend 2).
+ * On a normal round the primary source answers first time, so the tiles spend 24, the TFR
+ * list spends 1 and the GPS sweep spends at most 1: 18 calls are left. (2026-10-11: the
+ * collector dispatch, only with GH_DISPATCH_TOKEN, goes last and spends 1 of what the stages
+ * before it left; the sweep stops with 1 left, so only a round whose tiles alone spend 43
+ * leaves it none.) The detail loop is gated on budget.left > 2 as well as on this ceiling, so
+ * 8 is the most it will ever take and it takes fewer whenever the tiles had a bad round. At 8 per
  * 10 minute cron a list of 60 restrictions is fully enriched in about 75 minutes instead of
  * two and a half hours, which is the difference between tfr_active being a tour class on a
  * first visit and being one tomorrow.
@@ -1095,6 +1105,9 @@ export async function handleHealth(deps) {
     /* 2026-10-11 (the collector): who wrote it, when a collector did (the Worker never names itself) */
     if (typeof snap.writer === 'string' && snap.writer) out.tiles.writer = snap.writer;
   }
+  /* 2026-10-11 (the dispatch): when this Worker last started the collector, and GitHub's status */
+  const dl = await kvGetJson(deps.kv, 'dispatch:last');
+  if (dl && typeof dl === 'object') out.dispatch = { t: num(dl.t), status: num(dl.status) };
   return jsonResponse(out, { cacheControl: 'no-store' });
 }
 
@@ -1316,6 +1329,131 @@ export async function runAircraftPhase(deps, budget, t, opts) {
 }
 
 /*
+ * 2026-10-11 (the dispatch). GitHub did not fire the collector's schedule once in five hours, while
+ * this Worker's own cron fires every ten minutes, so this cron IS the collector's scheduler (the
+ * schedule trigger is gone from collect-antenna.yml; a schedule that started firing would double
+ * every run). With the secret GH_DISPATCH_TOKEN (Keane's fine-grained token, Contents: Read and write
+ * on this repository only; deploy-antenna.yml pushes it when the repository has it) a cron sends ONE
+ * repository_dispatch of type collect-antenna to GH_DISPATCH_URL when
+ *   the stored snapshot is absent, the Worker's own, or a collector's at least DISPATCH_STALE_MS old
+ *   (read through the deferral's own collectorAgeMs, so a snapshot the cron does not defer to counts
+ *   as late too), and
+ *   KV dispatch:last {t, status} is absent or at least DISPATCH_GAP_MS old (a t more than
+ *   COLLECTOR_SKEW_MS in the future is a skewed clock and counts as absent).
+ * Both are 5 minutes (second pass): the round a dispatch starts carries a t from minutes after the
+ * cron (the TFR stage, GitHub's queue, the runner's boot), so at the next cron its snapshot is 10
+ * minutes less that delay old, and 5 minutes of slack keeps every cron sending while the delay is
+ * under about 5 minutes; a cron that fires late is still more than 5 minutes after the one before,
+ * so it never skips a slot either. At a ten minute cron that is one dispatch per cron at most.
+ * Every call is recorded in dispatch:last whatever GitHub answers, so a broken token costs one call
+ * per cron and no more; t is the cron's own start, the clock the next cron compares. The
+ * call counts in the subrequest budget and goes LAST in the cron, so no other stage ever loses a call
+ * to it: it spends one the stages before it left (the TFR details stop at 2 left, the sweep at 1), and
+ * in the rare round whose tiles alone spend 43 of the 44 it skips with "no subrequest left". The
+ * answer is one line, never the token or a header: "sent, status 204", "sent, status 401, body <its
+ * first 120 characters>" (no body clause when the answer had none), "tried, no answer: <error>", or
+ * "skipped, <why>".
+ * Without the token nothing here runs: no call, no read, no write, and the cron's result has no
+ * dispatch field, so it is byte-equal to the Worker before this trigger; dispatchLogLine then says
+ * "dispatch: skipped, no token".
+ */
+export const GH_DISPATCH_EVENT = 'collect-antenna';
+export const DISPATCH_STALE_MS = 5 * 60 * 1000;
+export const DISPATCH_GAP_MS = 5 * 60 * 1000;
+export const DISPATCH_BODY_HEAD = 120;
+
+export function dispatchConfigured(deps) {
+  const s = (deps && deps.secrets) || {};
+  return !!s.ghDispatchToken;
+}
+
+/* GitHub's answer or an error as one short line. The token is replaced FIRST, whole and then each of
+   its whitespace-separated pieces of 4 or more characters (an error can echo a token with an inner
+   newline, raw or escaped), and only then is whitespace folded and the line cut to
+   DISPATCH_BODY_HEAD characters (second pass: folding first turned the newline into a space and the
+   whole token no longer matched). */
+function dispatchHead(text, token) {
+  let s = String(text === null || text === undefined ? '' : text);
+  if (token) {
+    const parts = [token].concat(String(token).split(/\s+/).filter(function (p) { return p.length >= 4; }));
+    for (let i = 0; i < parts.length; i++) s = s.split(parts[i]).join('[token]');
+  }
+  return s.replace(/\s+/g, ' ').trim().slice(0, DISPATCH_BODY_HEAD);
+}
+
+/* One dispatch decision. collectorAge is the cron's collectorAgeMs for the stored snapshot (null when
+   it is absent, the Worker's own, skewed, or 25 minutes old or more). Returns the text of the log line
+   after "dispatch: ", and never throws. */
+export async function dispatchCollector(deps, budget, collectorAge, t) {
+  const token = String((deps && deps.secrets && deps.secrets.ghDispatchToken) || '');
+  try {
+    if (collectorAge !== null && collectorAge < DISPATCH_STALE_MS) {
+      return 'skipped, the collector snapshot is ' + Math.round(collectorAge / 1000) + ' s old';
+    }
+    const last = await kvGetJson(deps.kv, 'dispatch:last');
+    const lt = last ? num(last.t) : null;
+    if (lt !== null) {
+      const ago = t - lt;
+      if (ago >= -COLLECTOR_SKEW_MS && ago < DISPATCH_GAP_MS) {
+        return 'skipped, the last dispatch was ' + Math.round(Math.max(0, ago) / 1000) + ' s ago';
+      }
+    }
+    if (budget) {
+      if (budget.left <= 0) return 'skipped, no subrequest left';
+      budget.left = budget.left - 1;
+      budget.used = (budget.used || 0) + 1;
+    }
+    const init = {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/vnd.github+json',
+        'Authorization': 'Bearer ' + token,
+        'X-GitHub-Api-Version': '2022-11-28',
+        'User-Agent': USER_AGENT,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ event_type: GH_DISPATCH_EVENT }),
+      /* second pass: never follow a redirect (a renamed repository answers 301, and a followed POST
+         becomes a GET elsewhere); a 3xx is recorded like any other answer that is not 204 */
+      redirect: 'manual',
+    };
+    if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) {
+      init.signal = AbortSignal.timeout(UPSTREAM_TIMEOUT_MS);
+    }
+    let status = null;
+    let line;
+    try {
+      const res = await deps.fetchFn(GH_DISPATCH_URL, init);
+      status = (res && typeof res.status === 'number') ? res.status : null;
+      line = 'sent, status ' + status;
+      if (status !== 204) {
+        let body = '';
+        try { body = (res && typeof res.text === 'function') ? await res.text() : ''; } catch (e) { body = ''; }
+        const head = dispatchHead(body, token);
+        if (head) line += ', body ' + head;
+      }
+    } catch (e) {
+      line = 'tried, no answer: ' + dispatchHead((e && e.message) || e, token);
+    }
+    /* recorded whatever GitHub answered, so a refused token is asked again only after DISPATCH_GAP_MS */
+    try {
+      await kvPutJson(deps.kv, 'dispatch:last', { t: t, status: status });
+    } catch (e) {
+      line += '; dispatch:last not written: ' + dispatchHead((e && e.message) || e, token);
+    }
+    return line;
+  } catch (e) {
+    return 'failed, ' + dispatchHead((e && e.message) || e, token);
+  }
+}
+
+/* The second line scheduled() logs: "dispatch: " and what the cron did about the collector. */
+export function dispatchLogLine(result) {
+  const r = result || {};
+  return 'dispatch: ' + (typeof r.dispatch === 'string' ? r.dispatch : 'skipped, no token');
+}
+
+/*
  * The cron body. Each stage is isolated: a dead upstream in one stage leaves the others alone,
  * and every stage writes at most one KV key.
  */
@@ -1360,6 +1498,10 @@ export async function runCron(deps) {
     result.errors.push('notams: ' + String((e && e.message) || e));
   }
 
+  /* 2026-10-11 (the dispatch): with GH_DISPATCH_TOKEN, start the collector when its snapshot is late
+     (dispatchCollector above), judged by the deferral's own age; last, on the call the stages above leave */
+  if (dispatchConfigured(deps)) result.dispatch = await dispatchCollector(deps, budget, deferAge, t);
+
   result.subrequests = budget.used;
   return result;
 }
@@ -1374,7 +1516,8 @@ export function makeDeps(env, over) {
     kv: o.kv || e.OBS_KV || null,
     nowMs: o.nowMs || function () { return Date.now(); },
     sleep: o.sleep || defaultSleep,
-    secrets: o.secrets || { faaClientId: e.FAA_CLIENT_ID || '', faaClientSecret: e.FAA_CLIENT_SECRET || '' },
+    secrets: o.secrets || { faaClientId: e.FAA_CLIENT_ID || '', faaClientSecret: e.FAA_CLIENT_SECRET || '',
+                            ghDispatchToken: String(e.GH_DISPATCH_TOKEN || '').trim() },
   };
 }
 
@@ -1387,6 +1530,9 @@ export default {
       /* 2026-10-11: one line per cron in Workers Logs ([observability] is on in
          wrangler.toml). The result carries no secret. */
       console.log(cronLogLine(result));
+      /* 2026-10-11 (the dispatch): "dispatch: sent, status 204" or "dispatch: skipped, <why>";
+         never the token or a header */
+      console.log(dispatchLogLine(result));
       return result;
     });
     if (ctx && ctx.waitUntil) ctx.waitUntil(p);

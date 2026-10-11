@@ -22,7 +22,7 @@ exclude list.
 | `GET /jam` | KV `agg:jam`, summarized to one row per bin | `s-maxage=120` | derived from the same tiles, rolled by whichever wrote `/planes` |
 | `GET /tfrs` | KV `tfrs`, the list plus geometry | `s-maxage=600` | `tfr.faa.gov` list plus per-TFR detail |
 | `GET /notams/gps` | KV `notams:gps` | `s-maxage=900` | FAA NOTAM API, needs secrets |
-| `GET /health` | computed | `no-store` | per route KV ages and tile coverage |
+| `GET /health` | computed | `no-store` | per route KV ages, tile coverage, and the last collector dispatch `{t, status}` once there is one |
 
 Every response carries `Access-Control-Allow-Origin: *` (public data, no credentials), and
 `OPTIONS` is answered with 204. Nothing here ever returns a 500: if an upstream or KV read
@@ -44,7 +44,8 @@ from GitHub Actions whenever a push to master touches `antenna/`, using the same
 `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` repository secrets the chatbot worker
 deploy already uses. It creates the `OBS_KV` namespace through the Cloudflare API if it
 does not exist, substitutes the id into `wrangler.toml` at deploy time (the repo copy keeps
-its placeholder), pushes the FAA secrets when the repo has them, and smokes `/health` at
+its placeholder), pushes the FAA secrets and `GH_DISPATCH_TOKEN` when the repo has them (see
+"The collector"), and smokes `/health` at
 `https://obs-antenna.keenlooks-cloudflare.workers.dev`. If the token lacks the
 "Workers KV Storage: Edit" permission the run fails with a message saying so; add that
 permission to the token in the Cloudflare dashboard and re-run the workflow.
@@ -71,10 +72,39 @@ KV, where the Worker serves them exactly as before.
   the Worker's 250 ms spacing, so the collector alone spaces adsb.lol calls 1,000 ms apart
   (`COLLECTOR_SPACING_MS`, carried on its round's budget); the Worker keeps its own spacing. The
   TFRs and the NOTAM sweep stay the Worker's.
-- **When it runs.** `.github/workflows/collect-antenna.yml`, every ten minutes and on demand.
-  GitHub starts scheduled runs late and sometimes skips them; the snapshot's own `t`, the age
-  `/planes` serves and the page's stale label show that honestly. GitHub disables a schedule in a
-  public repository after 60 days with no activity; re-enable it from the Actions tab.
+- **When it runs.** `.github/workflows/collect-antenna.yml`, started every ten minutes by the
+  Worker's cron (next bullet), by hand, and once by a push that changes the collector. It has no
+  schedule trigger: GitHub's cron for it never fired in the five hours after the push, and one that
+  started firing would double every run against the Worker's dispatch. GitHub queues a dispatched
+  run for a while before a runner starts it; the snapshot's own `t`, the age `/planes` serves and the
+  page's stale label show that honestly.
+- **Who starts it (2026-10-11).** The Worker's own Cloudflare cron, every ten minutes: it is the
+  collector's one scheduler. Keane's repository secret `GH_DISPATCH_TOKEN` is a fine-grained GitHub
+  token limited to this repository, with Contents: Read and write (the permission GitHub's REST docs
+  name for creating a repository dispatch event) beside the read-only Metadata access every
+  fine-grained token carries. Contents: Read and write is the least permission `repository_dispatch`
+  accepts and it also allows pushes to master, so this token is the site's write key and must be
+  rotated if the Worker is ever compromised. `deploy-antenna.yml` pushes it to the Worker with
+  `wrangler secret put` when the repository has it, from its own step's environment, never echoed.
+  Each cron, after the deferral decision and after every other stage (so it spends a call the others
+  leave in the 44 call budget and none of them loses one; in the rare round whose tiles alone spend
+  43 calls nothing is left, and it skips with `no subrequest left`), the Worker sends ONE `POST
+  https://api.github.com/repos/keenlooks/keenlooks.github.io/dispatches` with
+  `{"event_type":"collect-antenna"}`, never following a redirect, when the stored snapshot is absent,
+  its own, or a collector's 5 minutes old or more (`DISPATCH_STALE_MS`), and KV `dispatch:last` is
+  absent or 5 minutes old or more (`DISPATCH_GAP_MS`). The round a dispatch starts begins a minute or
+  more after the cron (GitHub's queue, the runner's boot), so at the next cron its snapshot is between
+  5 and 10 minutes old and that cron sends again: one run per cron, and in a simulation with that
+  delay at 60 to 290 s the snapshot was never more than 10.4 minutes old (11.9 with every third cron
+  90 s late). Past about 295 s of delay every other cron skips and the snapshot reaches about 20
+  minutes. It records `dispatch:last` `{t, status}` whatever GitHub answers (a redirect is recorded
+  with its 3xx status), so a broken token costs one call per cron and no more, and logs one line
+  after the cron line: `dispatch: sent, status 204`, `dispatch: sent, status 401, body <the first 120
+  characters>`, or `dispatch: skipped, <why>`; `/health` shows `dispatch: {t, status}`. The token goes
+  to `api.github.com` and nowhere else, and never into a log, a KV value or `/health`. Without the
+  secret the Worker makes no call, reads and writes nothing for it, and logs `dispatch: skipped, no
+  token`; everything else it does is byte-for-byte what it did before. Hand dispatches add runs on
+  top of the Worker's (two more KV writes each), so they stop once this trigger is live.
 - **The deferral rule.** Each cron first reads the head of the stored snapshot (the fields before
   `tiles`, without parsing the tile array: `snapHead`, a few microseconds where a full parse of a
   250 to 750 KB snapshot costs 0.5 to 2 ms of a cron's 10 ms). When it names a writer and is younger
@@ -252,12 +282,13 @@ cap, and the cron caps detail fetches and sweep points per run.
 
 | Key | Writes per day | Notes |
 |---|---|---|
-| `snap:planes` | 288 | one per cron |
-| `agg:jam` | 288 | one per cron |
-| `tfrs` | roughly 10 to 60 | skipped when the payload is unchanged, 288 in the worst case |
+| `snap:planes` | 144 | one per ten minute round, the collector's (through the KV REST API, which counts here too) or the Worker's fallback |
+| `agg:jam` | 144 | rolled with each snapshot write |
+| `tfrs` | roughly 10 to 60 | skipped when the payload is unchanged, 144 in the worst case |
 | `tfrgeo:<id>` | roughly 10 to 30 | only new TFRs, plus a backfill of about 95 on the first day |
 | `notams:gps` | 4 | one per six hour sweep |
-| **Typical total** | **roughly 620** | worst case about 900, cap 1,000 |
+| `dispatch:last` | at most 144 | one per collector dispatch, at most one per cron, only with `GH_DISPATCH_TOKEN` |
+| **Typical total** | **roughly 460 to 530** | worst case about 705 (144 x 4, a first-day `tfrgeo` backfill of about 125, 4); the 1,000 cap holds with about 295 to spare. Each extra collector run (a hand dispatch, a push) adds 2 |
 
 Payload sizes, measured against the live fixtures (24 tiles, about 12,500 aircraft):
 

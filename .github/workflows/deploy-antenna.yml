@@ -16,11 +16,17 @@ name: Deploy Observatory Antenna Worker
 # account_id into a generated wrangler.toml instead, same effect), npm install -g wrangler,
 # a `wrangler whoami` check, then `wrangler deploy`. No token is ever stored locally or in
 # the repo. Optional secrets FAA_CLIENT_ID / FAA_CLIENT_SECRET are pushed to the Worker only
-# when they exist. Before the first run, check in the GitHub UI (Settings -> Secrets and
-# variables -> Actions) that CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID exist (the chat
-# widget deploy already needs them), and in the Cloudflare dashboard that the token's
-# permissions include Workers Scripts: Edit AND Workers KV Storage: Edit (the chat widget
-# needs only the first; the KV step here needs the second).
+# when they exist. So is the optional GH_DISPATCH_TOKEN (2026-10-11): Keane's fine-grained
+# GitHub token with Contents: Read and write on this repository only, which the Worker's cron
+# uses to start the aircraft collector (collect-antenna.yml) with a repository_dispatch when
+# the collector is late, because GitHub's own schedule for it did not fire (antenna/README.md,
+# "The collector"). It is read only in its own step's environment and never echoed; the Worker
+# sends it to api.github.com and nowhere else. Before the first run, check in the GitHub UI
+# (Settings -> Secrets and variables -> Actions) that CLOUDFLARE_API_TOKEN and
+# CLOUDFLARE_ACCOUNT_ID exist (the chat widget deploy already needs them), and in the
+# Cloudflare dashboard that the token's permissions include Workers Scripts: Edit AND
+# Workers KV Storage: Edit (the chat widget needs only the first; the KV step here needs
+# the second).
 
 on:
   push:
@@ -107,6 +113,19 @@ jobs:
             echo "FAA NOTAM secrets pushed."
           else
             echo "FAA secrets not configured; /notams/gps stays offline (the page discloses this honestly)."
+          fi
+
+      - name: Push the collector trigger token if configured
+        working-directory: antenna
+        env:
+          GH_DISPATCH_TOKEN: ${{ secrets.GH_DISPATCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${GH_DISPATCH_TOKEN:-}" ]; then
+            printf '%s' "$GH_DISPATCH_TOKEN" | wrangler secret put GH_DISPATCH_TOKEN
+            echo "GH_DISPATCH_TOKEN pushed: the Worker's cron starts the collector when its snapshot is late."
+          else
+            echo "GH_DISPATCH_TOKEN not configured; the Worker does not start the collector (its cron logs dispatch: skipped, no token)."
           fi
 
       - name: Smoke the deployed routes

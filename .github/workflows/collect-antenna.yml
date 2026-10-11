@@ -12,12 +12,17 @@ name: Collect Observatory aircraft tiles
 # collector snapshot younger than 25 minutes and spends its own cron on the TFRs.
 # See antenna/README.md, "The collector".
 #
+# Who starts it (2026-10-11, second pass): the antenna Worker's own ten minute cron, with one
+# repository_dispatch (type collect-antenna) whenever the stored snapshot is 5 minutes old or more,
+# using the GH_DISPATCH_TOKEN secret that deploy-antenna.yml pushes to it. There is NO schedule
+# trigger here on purpose: GitHub's cron for this workflow never fired in five hours after the push,
+# and if it ever started it would double every run against the Worker's dispatch. The Worker's
+# cron is the one scheduler; without the token nothing starts this job but a hand or a push.
+#
 # What this cannot promise:
-# - GitHub starts scheduled runs late, sometimes by many minutes, and skips some when its queue
-#   is busy. Nothing hides that: every snapshot carries its own time, /planes serves its age,
-#   and the page labels a snapshot stale after 15 minutes.
-# - GitHub disables scheduled workflows in a public repository after 60 days with no activity
-#   in the repository. Re-enable it from the Actions tab when that happens.
+# - GitHub queues a dispatched run for a while before a runner starts it. Nothing hides that:
+#   every snapshot carries its own time, /planes serves its age, and the page labels a snapshot
+#   stale after 15 minutes.
 # - The runner's addresses may be refused by the upstreams too. Then collect.mjs writes nothing
 #   (fewer than a quarter of the tiles came back) and exits 0 with one ::warning:: annotation
 #   naming the tile count and the statuses seen: a refusal is the upstream's choice, not a fault,
@@ -31,12 +36,12 @@ name: Collect Observatory aircraft tiles
 # Run it by hand: gh workflow run collect-antenna.yml --repo keenlooks/keenlooks.github.io --ref master
 
 on:
-  schedule:
-    - cron: '*/10 * * * *'
+  # No schedule: the antenna Worker's cron sends the repository_dispatch below every ten minutes
+  # while the snapshot is 5 minutes old or more (see the header).
   workflow_dispatch:
   # A push that changes the collector runs it once, as its own check; a fine-grained token
   # without "Actions: write" cannot use workflow_dispatch, so repository_dispatch is the hand
-  # trigger for such a token:
+  # trigger for such a token, and the Worker's:
   #   gh api -X POST repos/keenlooks/keenlooks.github.io/dispatches -f event_type=collect-antenna
   push:
     branches: [ master ]
