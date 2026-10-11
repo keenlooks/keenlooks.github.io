@@ -34,6 +34,17 @@ on:
   schedule:
     - cron: '*/10 * * * *'
   workflow_dispatch:
+  # A push that changes the collector runs it once, as its own check; a fine-grained token
+  # without "Actions: write" cannot use workflow_dispatch, so repository_dispatch is the hand
+  # trigger for such a token:
+  #   gh api -X POST repos/keenlooks/keenlooks.github.io/dispatches -f event_type=collect-antenna
+  push:
+    branches: [ master ]
+    paths:
+      - 'antenna/collect.mjs'
+      - '.github/workflows/collect-antenna.yml'
+  repository_dispatch:
+    types: [ collect-antenna ]
 
 permissions:
   contents: read
