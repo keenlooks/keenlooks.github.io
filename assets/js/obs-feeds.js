@@ -1536,6 +1536,23 @@
     });
   }
 
+  /* 2026-10-12 (antenna-ondemand): the antenna asked its collector for a fresh aircraft sample that has
+     not landed yet (/planes and /jam carry `refresh: {requestedAt, snapshotT}` while it is in flight).
+     The antenna's own clock at its answer (the snapshot's t plus the age it served) is kept beside the
+     moment this page read it, so obs-instruments.js measures how long ago the sample was asked for
+     without setting this machine's clock against the antenna's. Null when the answer carries none,
+     which is how a landed sample, an expired request and an older antenna all read. */
+  function refreshOf(j, now) {
+    var r = j && j.refresh;
+    if (!r || typeof r !== 'object' || !isNum(r.requestedAt)) return null;
+    return {
+      requestedAt: r.requestedAt,
+      snapshotT: isNum(r.snapshotT) ? r.snapshotT : NaN,
+      serverNow: (isNum(j.t) && isNum(j.ageMs)) ? j.t + j.ageMs : NaN,
+      checkedAt: isNum(now) ? now : NaN
+    };
+  }
+
   function parsePlanes(raw, ctx) {
     var j = jsonOf(raw, 'planes');
     if (!j || typeof j !== 'object') throw new Error('planes: not an object');
@@ -1546,6 +1563,8 @@
       for (var f in ctx.prev) keep[f] = ctx.prev[f];
       keep.ageMs = num(j.ageMs, keep.ageMs);
       keep.checkedAt = now;
+      /* antenna-ondemand: the short answer says whether a fresh sample is on its way, every time */
+      keep.refresh = refreshOf(j, now);
       return keep;
     }
     if (!isArr(j.tiles)) throw new Error('planes: no tiles');
@@ -1594,7 +1613,8 @@
       samples: samples,
       count: samples.length,
       ground: ground,
-      dropped: dropped
+      dropped: dropped,
+      refresh: refreshOf(j, now)
     };
   }
 
@@ -1629,7 +1649,8 @@
       bins: bins,
       planes1h: n1,
       low1h: low1,
-      checkedAt: (ctx && isNum(ctx.now)) ? ctx.now : NaN
+      checkedAt: (ctx && isNum(ctx.now)) ? ctx.now : NaN,
+      refresh: refreshOf(j, (ctx && isNum(ctx.now)) ? ctx.now : NaN)
     };
   }
 
@@ -3994,8 +4015,14 @@
          GitHub's queue and the round add a minute or two, so the copy we hold
          is at worst about an hour plus that delay plus one cadence old, and
          the window is 75 minutes on both sides (it was 15 at a ten minute
-         cron). Two numbers, one rule:
-         cadence + 60 min + the queue and round must stay inside the window.
+         cron). 2026-10-12 (antenna-ondemand, Keane: "change the update
+         frequency to every 30 mins then, but yes also make it on demand"):
+         while this page is open its polls start the collector whenever the
+         snapshot is 25 minutes old, so the window is 45 minutes on both sides
+         (the half hour plus the queue, the round and one poll), and after a
+         quiet spell the first poll asks for a fresh sample and says so (the
+         answer's `refresh`, refreshOf above). Two numbers, one rule:
+         cadence + 30 min + the queue and round must stay inside the window.
          The three minute cadence stays: the polls are nearly free because
          planesUrl sends ?since= and an unchanged snapshot answers in about
          eighty bytes, and a new snapshot reaches the page within three
@@ -4006,7 +4033,7 @@
          the feed from it, never from the poll. */
       url: '/planes',
       cadenceMs: 180000,
-      staleAfterMs: 4500000,
+      staleAfterMs: 2700000,
       lazy: true,
       fetcher: fetchPlanes,
       parse: parsePlanes
@@ -4027,8 +4054,11 @@
          At the old 30 minutes the kernel would call an aggregate that is on
          time stale for half of every hour. Five minutes plus the hour
          plus the delay is inside it: this route has no ?since= and every poll
-         costs the whole aggregate, so the cadence stays where it was. */
-      staleAfterMs: 4500000,
+         costs the whole aggregate, so the cadence stays where it was.
+         2026-10-12 (antenna-ondemand): rewritten every half hour while this
+         page is open, so 45 minutes, the antenna's own /jam window; five
+         minutes plus the half hour plus the delay is inside it. */
+      staleAfterMs: 2700000,
       lazy: false,
       responseType: 'text',   /* text so the kernel can measure and slice the payload */
       parse: parseJam

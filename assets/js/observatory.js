@@ -932,6 +932,10 @@
                       as the same 13 px donut in two greys, so the ring is
                       dotted now and the sentence says so. */
                    'A grey dot inside a dotted ring: armed, inputs still connecting. ' +
+                   /* 2026-10-12 (antenna-ondemand): the light of a layer whose
+                      fresh aircraft sample was asked for and has not landed */
+                   'A small accent dot inside a dashed accent ring: armed, and a fresh ' +
+                   'sample it asked for is still loading. ' +
                    /* r19p (2): the carve-out is gone. A judge read a filled
                       accent dot beside a row's own "this feed is offline" note
                       and had the page telling them both things at once. */
@@ -954,7 +958,9 @@
     { cls: 'stale', word: 'stale' },
     { cls: 'offline', word: 'offline' },
     { cls: 'idle', word: 'off' },
-    { cls: 'connecting', word: 'connecting' }
+    { cls: 'connecting', word: 'connecting' },
+    /* 2026-10-12 (antenna-ondemand): the sixth light, named where it is drawn */
+    { cls: 'loading', word: 'loading' }
   ];
 
   /* The autopilot checkbox says what the autopilot is doing. Paused is a state
@@ -3031,6 +3037,30 @@
                    text: rowFit(line, 2, perLine) });
       }
     }
+    /* ---- 2026-10-12 (antenna-ondemand): A FRESH SAMPLE IS LOADING ---------
+       Keane: "change the page to tell the user for those layers that they are
+       loading". The class record (obs-instruments.js classHealth) says
+       `loading` while a fresh aircraft sample the antenna asked for has not
+       landed, with the phrase: when it was asked for, and how old the one
+       drawn is where this class drew it. That sentence replaces the row's
+       count or its "none in this frame", because both are about a sample that
+       is being replaced. A class that drew the last one stays a drawn row (it
+       is on the planet); one that drew nothing sorts with the rows that have
+       nothing to count. The record expires on its own (4 minutes), and the
+       row is the ordinary one again from the next render. */
+    for (i = 0; i < out.length; i++) {
+      r = out[i];
+      hr = r ? healthFor(health, r.glyph, r.id) : null;
+      if (!hr || hr.health !== 'loading' || !hr.why) continue;
+      line = r.lead + ': ' + String(hr.why).replace(/[.\s]+$/, '') + '.';
+      r.loading = true;
+      r.absent = !(hr.rec && hr.rec.drew);
+      r.noData = r.absent;
+      r.waiting = false;
+      r.parts = null; r.ids = null; r.clauseGlyphs = null; r.forms = null;
+      r.full = line;
+      r.text = rowFit(line, 2, perLine);
+    }
     for (i = 0; i < rows.length; i++) {
       r = rows[i];
       g = r ? String(r.glyph || '') : '';
@@ -5008,6 +5038,10 @@
     if (!isArray(rows)) return rows;
     for (i = 0; i < rows.length; i++) {
       r = rows[i];
+      /* 2026-10-12 (antenna-ondemand, third pass): a row saying its fresh
+         sample is loading is news about the frame, so it stands with the drawn
+         rows, above the phone key's fold, whether or not it drew the last one */
+      if (r && r.loading) { on.push(r); continue; }
       if (r && !r.absent && !r.noData) on.push(r); else off.push(r);
     }
     if (!on.length || !off.length) return rows;
@@ -14447,11 +14481,25 @@
      refreshes these (the dot reads the instrument's own verdict), and replacing
      the button between a press and a release EATS THE CLICK, so the nodes are
      built once and updated in place from then on. */
+  /* 2026-10-12 (antenna-ondemand): the instrument's own word that a fresh
+     aircraft sample it asked for is loading (obs-instruments.js section 1c puts
+     it on the readout with the phrase its status line says), or null. Only an
+     armed layer reports it, like every other light. */
+  function loadingOf(id, on) {
+    var core = CORE(), out;
+    if (!on || !core || typeof core.out !== 'function') return null;
+    out = core.out(id);
+    return (out && out.readout && out.readout.relayLoading && out.readout.relayLoading.phrase)
+      ? out.readout.relayLoading : null;
+  }
   function paintChip(b, id) {
     /* r19p (2): the chip's dot and the chip's own words are the rack row's,
        read from the same door, so the two lights cannot disagree */
     var on = isArmed(id), health = rowHealth(id);
     var cls = dotClass({ armed: on, always: alwaysArmed(id), health: health });
+    /* 2026-10-12 (antenna-ondemand): a fresh sample loading is the sixth light */
+    var ld = loadingOf(id, on || alwaysArmed(id));
+    if (ld) cls = 'loading';
     b.className = 'obs-chip__btn' + (on ? ' obs-chip__btn--on' : '');
     b.setAttribute('aria-pressed', on ? 'true' : 'false');
     var dot = b.firstChild;
@@ -14460,6 +14508,7 @@
        an armed layer reports on its inputs, and a layer that is drawing names
        the input rather than calling itself offline (r16 (7)) */
     var tag = inputsTag(id, null, health, on);
+    if (ld) tag = ld.phrase;
     b.title = chipName(id) + ': ' + (on ? ('armed, ' + tag.replace(/\.$/, '')) : 'off') +
       (id === 'stopwatch' ? ('. ' + STOPWATCH_LENS_LINE) : '');
   }
@@ -14534,6 +14583,9 @@
     /* the same law the chips use: a layer that is off reports nothing */
     top.childNodes[0].className = 'obs-dot obs-dot--' +
       dotClass({ armed: on, always: always, health: light });
+    /* 2026-10-12 (antenna-ondemand): the chip's own loading light, here too */
+    var rowLd = loadingOf(id, on || always);
+    if (rowLd) top.childNodes[0].className = 'obs-dot obs-dot--loading';
     top.childNodes[1].textContent = instrumentName(id);
     top.childNodes[2].className = 'obs-rack__tag' + (on ? ' obs-rack__tag--on' : '');
     top.childNodes[2].textContent = always ? 'always on' : (on ? 'armed' : 'off');
@@ -14556,6 +14608,7 @@
        instrument that is off has no input health to report. */
     var srNode = top.childNodes[top.childNodes.length - 1];
     srNode.textContent = inputsTag(id, outLive, light, on || always);
+    if (rowLd) srNode.textContent = 'loading.';
     var relay = on ? relayNote(id) : '';
     /* r16 (8): the row clips a long reading to three lines so all six rows fit
        the panel. The whole string stays reachable: on the title attribute here,

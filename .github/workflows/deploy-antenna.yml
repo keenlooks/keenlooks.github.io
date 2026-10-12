@@ -17,9 +17,10 @@ name: Deploy Observatory Antenna Worker
 # a `wrangler whoami` check, then `wrangler deploy`. No token is ever stored locally or in
 # the repo. Optional secrets FAA_CLIENT_ID / FAA_CLIENT_SECRET are pushed to the Worker only
 # when they exist. So is the optional GH_DISPATCH_TOKEN (2026-10-11): Keane's fine-grained
-# GitHub token with Actions: Read and write on this repository only, which the Worker's cron
-# uses to start the aircraft collector (collect-antenna.yml) once an hour with a
-# workflow_dispatch, because GitHub's own schedule for it did not fire (antenna/README.md,
+# GitHub token with Actions: Read and write on this repository only, which the Worker uses to
+# start the aircraft collector (collect-antenna.yml) with a workflow_dispatch, on a visit and
+# every half hour while someone is watching (2026-10-12; once an hour before), because GitHub's
+# own schedule for it did not fire (antenna/README.md,
 # "The collector"). It is read only in its own step's environment and never echoed; the Worker
 # sends it to api.github.com and nowhere else. Before the first run, check in the GitHub UI
 # (Settings -> Secrets and variables -> Actions) that CLOUDFLARE_API_TOKEN and
@@ -123,7 +124,7 @@ jobs:
           set -euo pipefail
           if [ -n "${GH_DISPATCH_TOKEN:-}" ]; then
             printf '%s' "$GH_DISPATCH_TOKEN" | wrangler secret put GH_DISPATCH_TOKEN
-            echo "GH_DISPATCH_TOKEN pushed: the Worker's cron starts the collector once an hour, when its snapshot is 50 minutes old."
+            echo "GH_DISPATCH_TOKEN pushed: the Worker starts the collector on a visit and every half hour while someone is watching, when its snapshot is 25 minutes old."
           else
             echo "GH_DISPATCH_TOKEN not configured; the Worker does not start the collector (its cron logs dispatch: skipped, no token)."
           fi

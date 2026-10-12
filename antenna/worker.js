@@ -24,8 +24,15 @@
  *
  * 2026-10-11: with the secret GH_DISPATCH_TOKEN the cron also starts the GitHub Actions aircraft
  * collector (dispatchCollector below), one POST to api.github.com when the collector is late.
- * Since the hourly pass the collector runs once an hour (a workflow_dispatch when the stored
- * snapshot is 50 minutes old), and the Worker's own ten minute cron keeps the TFRs.
+ * The hourly pass ran the collector once an hour (a workflow_dispatch when the stored snapshot was
+ * 50 minutes old); the on-demand pass below supersedes it. The Worker's own ten minute cron keeps the TFRs.
+ *
+ * 2026-10-12 (antenna-ondemand, Keane: "Let's change the update frequency to every 30 mins then, but
+ * yes also make it on demand"): a /planes request (the page's poll) records KV visit:last and, when
+ * the snapshot is 25 minutes old and the last dispatch is too, starts the collector itself, in the
+ * background (planesOnDemand); the cron's dispatch runs only while someone visited in the last 20
+ * minutes (35 in the first pass; Fable's ruling, second pass), and /planes and /jam carry `refresh`
+ * while a requested sample has not landed yet.
  */
 
 /* ------------------------------------------------------------------ constants */
@@ -101,7 +108,8 @@ export const JAM_BUCKETS_1H = 6;
    buckets written within this span before the aggregate's own t, which is the one bucket holding
    that t (each bucket is one sample, rollJam replaces a repeated write within a slot). It is under
    an hour on purpose, so one hourly sample is the hour, and the column no longer ages on the
-   request clock: the 75 minute stale windows (ROUTES, the page's feeds) do the ageing. */
+   request clock: the stale windows (ROUTES, the page's feeds; 75 minutes then, 45 since the on-demand
+   pass) do the ageing. */
 export const JAM_LATEST_SPAN_MS = JAM_BUCKET_MS;
 export const JAM_HOURS_24H = 24;
 export const NACP_LOW_MAX = 6;           /* nac_p <= 6 counts as degraded position integrity */
@@ -165,11 +173,15 @@ export const TILES = [
  * collector rewrites snap:planes and agg:jam once an hour, so both are stale at 75 minutes (the
  * hour, the queue before a runner starts, and the round itself), the same window as
  * COLLECTOR_FRESH_MS and the page's planes and jam feeds. At 15 and 30 minutes they would call a
- * snapshot that is on time stale for most of every hour.
+ * snapshot that is on time stale for most of every hour. On-demand pass (2026-10-12): while someone
+ * is watching, the collector runs every half hour, so both are stale at 45 minutes (the half hour
+ * plus the queue, the round and the poll that notices it), the same window as COLLECTOR_FRESH_MS and
+ * the page's two feeds. A snapshot older than that is served as stale, which after a quiet spell is
+ * the honest state until the sample the visit asked for lands.
  */
 export const ROUTES = [
-  { path: '/planes', kv: 'snap:planes', maxAge: 45, sMaxAge: 90, staleAfterMs: 75 * 60 * 1000 },
-  { path: '/jam', kv: 'agg:jam', maxAge: 60, sMaxAge: 120, staleAfterMs: 75 * 60 * 1000 },
+  { path: '/planes', kv: 'snap:planes', maxAge: 45, sMaxAge: 90, staleAfterMs: 45 * 60 * 1000 },
+  { path: '/jam', kv: 'agg:jam', maxAge: 60, sMaxAge: 120, staleAfterMs: 45 * 60 * 1000 },
   { path: '/tfrs', kv: 'tfrs', maxAge: 300, sMaxAge: 600, staleAfterMs: 6 * 3600 * 1000 },
   { path: '/notams/gps', kv: 'notams:gps', maxAge: 450, sMaxAge: 900, staleAfterMs: 24 * 3600 * 1000 },
   { path: '/health', kv: null, maxAge: 0, sMaxAge: 0 },
@@ -1047,8 +1059,13 @@ export async function handlePlanes(deps, url) {
   const route = routeFor('/planes');
   const t = nowOf(deps);
   const snap = await kvGetJson(deps.kv, 'snap:planes');
+  /* 2026-10-12 (antenna-ondemand): this poll is a visit, and may start the collector (in the
+     background, never delaying this answer); `refresh` says a requested sample is on its way */
+  const od = await planesOnDemand(deps, snap, t);
   if (!snap) {
-    return jsonResponse({ ok: false, offline: true, route: '/planes', reason: 'no snapshot has been written yet' }, { status: 503 });
+    const off = { ok: false, offline: true, route: '/planes', reason: 'no snapshot has been written yet' };
+    if (od.refresh) off.refresh = od.refresh;
+    return jsonResponse(off, { status: 503 });
   }
   /*
    * The snapshot only changes once per cron, so a client polling faster than that can send
@@ -1057,7 +1074,9 @@ export async function handlePlanes(deps, url) {
    */
   const since = url ? num(url.searchParams.get('since')) : null;
   if (since !== null && since === num(snap.t)) {
-    return jsonResponse({ ok: true, t: snap.t, unchanged: true, ageMs: Math.max(0, t - snap.t) }, { cacheControl: cacheControl(route) });
+    const same = { ok: true, t: snap.t, unchanged: true, ageMs: Math.max(0, t - snap.t) };
+    if (od.refresh) same.refresh = od.refresh;
+    return jsonResponse(same, { cacheControl: cacheControl(route) });
   }
   let body = snap;
   const minAlt = url ? num(url.searchParams.get('min_alt')) : null;
@@ -1073,12 +1092,29 @@ export async function handlePlanes(deps, url) {
   const age = Math.max(0, t - (num(body.t) !== null ? num(body.t) : t));
   const out = Object.assign({ ok: true }, body, { ageMs: age });
   if (age > route.staleAfterMs) out.stale = true;
+  if (od.refresh) out.refresh = od.refresh;
   return jsonResponse(out, { cacheControl: cacheControl(route) });
 }
 
+/* 2026-10-12 (antenna-ondemand): serveKvRoute's answer for agg:jam, plus `refresh` while a requested
+   sample is on its way (judged against the aggregate's own t, the round's t). Byte-equal to
+   serveKvRoute when there is no refresh to report. /jam records no visit and starts nothing. */
 export async function handleJam(deps) {
   const route = routeFor('/jam');
-  return serveKvRoute(route, deps, function (agg, t) { return summarizeJam(agg, t); });
+  const t = nowOf(deps);
+  const stored = await kvGetJson(deps.kv, route.kv);
+  const refresh = await relayRefresh(deps, stored ? num(stored.t) : null, t);
+  if (!stored) {
+    const off = { ok: false, offline: true, route: route.path, reason: 'no snapshot has been written yet' };
+    if (refresh) off.refresh = refresh;
+    return jsonResponse(off, { status: 503 });
+  }
+  const body = summarizeJam(stored, t);
+  const age = Math.max(0, t - (num(body.t) !== null ? num(body.t) : t));
+  const out = Object.assign({ ok: true }, body, { ageMs: age });
+  if (age > route.staleAfterMs) out.stale = true;
+  if (refresh) out.refresh = refresh;
+  return jsonResponse(out, { cacheControl: cacheControl(route) });
 }
 
 export async function handleTfrs(deps) {
@@ -1141,7 +1177,15 @@ export async function handleHealth(deps) {
   }
   /* 2026-10-11 (the dispatch): when this Worker last started the collector, and GitHub's status */
   const dl = await kvGetJson(deps.kv, 'dispatch:last');
-  if (dl && typeof dl === 'object') out.dispatch = { t: num(dl.t), status: num(dl.status) };
+  if (dl && typeof dl === 'object') {
+    out.dispatch = { t: num(dl.t), status: num(dl.status) };
+    /* 2026-10-12 (antenna-ondemand): which path sent it, 'visit' (a /planes request) or 'cron' */
+    if (typeof dl.why === 'string' && dl.why) out.dispatch.why = dl.why;
+  }
+  /* 2026-10-12 (antenna-ondemand): when the page last polled /planes (written at most once per
+     VISIT_WRITE_GAP_MS, 10 minutes since the third pass) */
+  const vl = await kvGetJson(deps.kv, 'visit:last');
+  if (vl && typeof vl === 'object') out.visit = { t: num(vl.t) };
   return jsonResponse(out, { cacheControl: 'no-store' });
 }
 
@@ -1227,16 +1271,20 @@ export async function refreshTfrs(deps, budget) {
 /*
  * 2026-10-11 (the collector). adsb.lol answers 429 and adsb.fi 403 to Cloudflare's shared egress,
  * so the aircraft tiles are gathered OUTSIDE Cloudflare: antenna/collect.mjs, run by the GitHub
- * Actions workflow .github/workflows/collect-antenna.yml once an hour, runs
+ * Actions workflow .github/workflows/collect-antenna.yml (every half hour while someone is watching,
+ * and on demand, since 2026-10-12), runs
  * runAircraftPhase below (the very function runCron runs) and writes snap:planes and agg:jam
  * into this Worker's KV through the Cloudflare KV REST API. A collector's snapshot names its
  * writer; the Worker's own never does. While a collector snapshot is younger than
  * COLLECTOR_FRESH_MS, runCron leaves the aircraft to it and spends its calls on the TFRs; when
  * the stored snapshot is older, absent or the Worker's own, runCron runs its own round as before
  * (the fallback). Hourly pass: 75 minutes, the hour plus the queue and the round, so the Worker
- * falls back only once an hourly run has really been missed.
+ * falls back only once an hourly run has really been missed. On-demand pass (2026-10-12): 45
+ * minutes, the half hour plus the queue and the round. With GH_DISPATCH_TOKEN set the fallback round
+ * also waits for a visit (fallbackHold below): a collector snapshot older than this is the normal
+ * state of a quiet night now, not a missed run.
  */
-export const COLLECTOR_FRESH_MS = 75 * 60 * 1000;
+export const COLLECTOR_FRESH_MS = 45 * 60 * 1000;
 /* Second pass: a writer snapshot whose t is more than this far AHEAD of the cron's clock is a
    skewed clock, not a fresh collector: it is treated as absent (the Worker runs its round, and the
    newer-t guard does not protect it). Within it, the age is clamped at 0. */
@@ -1376,7 +1424,8 @@ export async function runAircraftPhase(deps, budget, t, opts) {
  *   as late too), and
  *   KV dispatch:last {t, status} is absent or at least DISPATCH_GAP_MS old (a t more than
  *   COLLECTOR_SKEW_MS in the future is a skewed clock and counts as absent).
- * Both are 50 minutes (hourly pass, Keane: "Let's make the pull be every 60 mins"): the round a
+ * In the hourly pass both were 50 minutes (superseded by the on-demand pass below; Keane: "Let's make the
+ * pull be every 60 mins"): the round a
  * dispatch starts carries a t from a minute or more after the cron (the TFR stage, GitHub's queue,
  * the runner's boot), so the cron 50 minutes on finds it under 50 minutes old and skips, and the cron
  * 60 minutes on finds it 60 minutes less that delay old and sends: one run an hour while the delay
@@ -1392,10 +1441,52 @@ export async function runAircraftPhase(deps, budget, t, opts) {
  * Without the token nothing here runs: no call, no read, no write, and the cron's result has no
  * dispatch field, so it is byte-equal to the Worker before this trigger; dispatchLogLine then says
  * "dispatch: skipped, no token".
+ *
+ * On-demand pass (2026-10-12, Keane: "change the update frequency to every 30 mins then, but yes also
+ * make it on demand ... My website gets only about 20 visitors a day"). Three changes, the token, the
+ * endpoint and every guard above unchanged:
+ *   1. VISITS. A /planes request (the page polls it every three minutes while it is open) records KV
+ *      visit:last {t}, written only when the stored one is absent, skewed, or VISIT_WRITE_GAP_MS old,
+ *      so a watching tab costs one write per 10 minutes (planesOnDemand; 5 before the third pass).
+ *   2. ON DEMAND. The same request sends the dispatch itself, from the request path, when the stored
+ *      snapshot is absent or DISPATCH_STALE_MS old (the cron's own collectorAgeMs) and dispatch:last is
+ *      absent or DISPATCH_GAP_MS old. The answer is not delayed: the call and its dispatch:last write
+ *      {t, status, why: 'visit'} run in the background (ctx.waitUntil, or a promise with a catch where
+ *      there is none, the node dev server). The answer carries refresh {requestedAt, snapshotT}.
+ *   3. THE CRON waits for a visit: its dispatch (why: 'cron') goes only while visit:last is younger
+ *      than VISIT_WATCH_MS, so an open tab is refreshed every half hour and a quiet night costs nothing.
+ * Both are 25 minutes now: an open tab's poll finds the snapshot 25 minutes old and asks, the sample
+ * lands a few minutes later, so a watched page is never shown one much older than half an hour.
+ * `refresh` is on /planes and /jam while a dispatch is in flight: dispatch:last younger than
+ * REFRESH_INFLIGHT_MS, answered 204, and no snapshot newer than it (refreshInFlight).
  */
-export const DISPATCH_STALE_MS = 50 * 60 * 1000;
-export const DISPATCH_GAP_MS = 50 * 60 * 1000;
+export const DISPATCH_STALE_MS = 25 * 60 * 1000;
+export const DISPATCH_GAP_MS = 25 * 60 * 1000;
 export const DISPATCH_BODY_HEAD = 120;
+/* 2026-10-12 (antenna-ondemand): visit:last is rewritten at most this often. Third pass (Fable's ruling
+   on the review): 10 minutes, it was 5. KV caps writes per day for the namespace, and every Cloudflare
+   location a tab polls from writes its own (the review's P8: five always-open tabs in five locations read
+   up to about 1,080 writes a day at 5 minutes); a tab polling every three minutes now writes about every
+   twelve. */
+export const VISIT_WRITE_GAP_MS = 10 * 60 * 1000;
+/* the cron's dispatch (and, with the token, its own aircraft round) waits for a visit this recent.
+   Second pass (Fable's ruling): 20 minutes, it was 35. A page that is open polls /planes every three
+   minutes and starts the collector itself, so the cron's window only has to cover a tab between polls;
+   at 35 it added a run after most visits had ended (6 to 8 runs for two one-hour visits a day in the
+   simulation); at 20 the day has 6 in every combination, one of them by the cron just after a visit
+   ends in some, in place of a third run inside it. */
+export const VISIT_WATCH_MS = 20 * 60 * 1000;
+/* third pass (Fable's ruling on the review): the cron leaves the dispatch to the page while visit:last
+   is younger than this. An open tab polls every three minutes and asks for itself from the request
+   path when the snapshot is late, so a cron dispatch then only doubles it (the review's P9: one tab and
+   the cron in two locations, phase-locked, could both ask inside KV's propagation, 95 runs a day where
+   48 were due). The ruling said about 6 minutes, written for a visit:last rewritten every 5; at the
+   10 minute write an open tab's visit:last is up to about 12 minutes old, so the window is the write gap
+   plus one of the page's 3 minute polls (13 minutes) and an open tab is always inside it (measured: P9
+   48 runs a day at every KV lag, P8 one tab 48; at 6 minutes 57.5 on average and up to 95). */
+export const VISIT_SELF_MS = VISIT_WRITE_GAP_MS + 3 * 60 * 1000;
+/* a dispatch younger than this, answered 204, with no snapshot newer than it, is "in flight" */
+export const REFRESH_INFLIGHT_MS = 4 * 60 * 1000;
 
 export function dispatchConfigured(deps) {
   const s = (deps && deps.secrets) || {};
@@ -1416,14 +1507,186 @@ function dispatchHead(text, token) {
   return s.replace(/\s+/g, ' ').trim().slice(0, DISPATCH_BODY_HEAD);
 }
 
+/* 2026-10-12 (antenna-ondemand): a stored time read the way dispatch:last is read: null when absent or
+   not a number, and null when more than COLLECTOR_SKEW_MS ahead of the clock (a skewed clock holds
+   nothing off). */
+function keptTime(v, t) {
+  const vt = (v && typeof v === 'object') ? num(v.t) : null;
+  if (vt === null) return null;
+  return (t - vt < -COLLECTOR_SKEW_MS) ? null : vt;
+}
+
+/* The refresh a /planes or /jam answer carries, or null: dispatch:last younger than
+   REFRESH_INFLIGHT_MS (a t ahead of the clock inside the skew allowance counts as just sent), answered
+   204 (a refused or unanswered dispatch is not on its way), and no stored snapshot newer than it
+   (snapT is the snapshot's, or the jam aggregate's, own t; the collector's round t is after its
+   dispatch). Pure. */
+export function refreshInFlight(last, snapT, t) {
+  const lt = keptTime(last, t);
+  if (lt === null || num(last.status) !== 204) return null;
+  if (t - lt >= REFRESH_INFLIGHT_MS) return null;
+  if (snapT !== null && snapT !== undefined && snapT > lt) return null;
+  return { requestedAt: lt, snapshotT: (snapT === undefined) ? null : snapT };
+}
+
+/* refreshInFlight from KV, for a route that does not dispatch (/jam). Without the token nothing is
+   read. Never throws. */
+export async function relayRefresh(deps, snapT, t) {
+  if (!dispatchConfigured(deps)) return null;
+  try { return refreshInFlight(await kvGetJson(deps.kv, 'dispatch:last'), snapT, t); } catch (e) { return null; }
+}
+
+/* The one POST, shared by the cron and the request path, and its dispatch:last record
+   {t, status, why}. Returns the log line text after "dispatch: ". The caller has decided to send. */
+async function sendDispatch(deps, t, why) {
+  const token = String((deps && deps.secrets && deps.secrets.ghDispatchToken) || '');
+  const init = {
+    method: 'POST',
+    headers: {
+      'Accept': 'application/vnd.github+json',
+      'Authorization': 'Bearer ' + token,
+      'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': USER_AGENT,
+      'Content-Type': 'application/json',
+    },
+    /* workflow_dispatch: the ref the workflow runs on, and nothing else (it declares no inputs) */
+    body: JSON.stringify({ ref: GH_REF }),
+    /* second pass: never follow a redirect (a renamed repository or workflow answers 301, and a
+       followed POST becomes a GET elsewhere); a 3xx is recorded like any other answer that is not 204 */
+    redirect: 'manual',
+  };
+  if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) {
+    init.signal = AbortSignal.timeout(UPSTREAM_TIMEOUT_MS);
+  }
+  let status = null;
+  let line;
+  try {
+    const res = await deps.fetchFn(GH_DISPATCH_URL, init);
+    status = (res && typeof res.status === 'number') ? res.status : null;
+    line = 'sent, status ' + status;
+    if (status !== 204) {
+      let body = '';
+      try { body = (res && typeof res.text === 'function') ? await res.text() : ''; } catch (e) { body = ''; }
+      const head = dispatchHead(body, token);
+      if (head) line += ', body ' + head;
+    }
+  } catch (e) {
+    line = 'tried, no answer: ' + dispatchHead((e && e.message) || e, token);
+  }
+  /* recorded whatever GitHub answered, so a refused token is asked again only after DISPATCH_GAP_MS */
+  try {
+    await kvPutJson(deps.kv, 'dispatch:last', { t: t, status: status, why: why });
+  } catch (e) {
+    line += '; dispatch:last not written: ' + dispatchHead((e && e.message) || e, token);
+  }
+  return line;
+}
+
+/*
+ * 2026-10-12 (antenna-ondemand): the on-demand stage of one /planes request. snap is the stored
+ * snapshot (or null), t the request's clock. With the token (and only with it: without it this reads
+ * and writes nothing, so the answer is byte-equal to the Worker before) it
+ *   - writes visit:last {t} when the stored one is absent, skewed or VISIT_WRITE_GAP_MS old,
+ *   - sends ONE dispatch (why 'visit') when the snapshot is absent or DISPATCH_STALE_MS old by the
+ *     cron's own collectorAgeMs, and dispatch:last is absent, skewed, or DISPATCH_GAP_MS old,
+ * both in the BACKGROUND: deps.waitUntil (the Workers ctx) when there is one, else a promise left to
+ * run with a catch (the node dev server), so the answer never waits for GitHub or a KV write.
+ * Returns { refresh, visit, dispatch, job }: refresh {requestedAt, snapshotT} when this request sent a
+ * dispatch or one is in flight (refreshInFlight), else null; job the background promise (null when
+ * there is none; it never rejects). Never throws.
+ */
+export async function planesOnDemand(deps, snap, t) {
+  const out = { refresh: null, visit: null, dispatch: null, job: null };
+  if (!dispatchConfigured(deps)) return out;
+  const jobs = [];
+  try {
+    const vt = keptTime(await kvGetJson(deps.kv, 'visit:last'), t);
+    if (vt === null || t - vt >= VISIT_WRITE_GAP_MS) {
+      out.visit = 'written';
+      jobs.push(function () { return kvPutJson(deps.kv, 'visit:last', { t: t }); });
+    } else {
+      out.visit = 'held, the last was written ' + Math.round(Math.max(0, t - vt) / 1000) + ' s ago';
+    }
+    const snapT = snap ? num(snap.t) : null;
+    const age = collectorAgeMs(snap, t);
+    const last = await kvGetJson(deps.kv, 'dispatch:last');
+    const lt = keptTime(last, t);
+    if (age !== null && age < DISPATCH_STALE_MS) {
+      out.dispatch = 'skipped, the collector snapshot is ' + Math.round(age / 1000) + ' s old';
+    } else if (lt !== null && t - lt < DISPATCH_GAP_MS) {
+      out.dispatch = 'skipped, the last dispatch was ' + Math.round(Math.max(0, t - lt) / 1000) + ' s ago';
+    } else {
+      out.dispatch = 'sending';
+      /* third pass (Fable's ruling on the review's P2): announced at once only when the previous
+         dispatch:last is absent or was answered 204. After a refused or unanswered one this one is most
+         likely refused too, and the page must never say "loading" for a sample nobody is fetching; if it
+         is accepted, the next poll reads it in flight. */
+      if (!last || num(last.status) === 204) out.refresh = { requestedAt: t, snapshotT: snapT };
+      jobs.push(function () {
+        return sendDispatch(deps, t, 'visit').then(function (line) {
+          if (typeof deps.log === 'function') deps.log('dispatch: ' + line + ' (on a visit)');
+          return line;
+        });
+      });
+    }
+    if (!out.refresh) out.refresh = refreshInFlight(last, snapT, t);
+  } catch (e) {
+    out.dispatch = out.dispatch || ('failed, ' + dispatchHead((e && e.message) || e,
+      String((deps && deps.secrets && deps.secrets.ghDispatchToken) || '')));
+  }
+  if (jobs.length) {
+    const job = Promise.all(jobs.map(function (fn) {
+      return Promise.resolve().then(fn).catch(function () { return null; });
+    }));
+    out.job = job;
+    if (typeof deps.waitUntil === 'function') deps.waitUntil(job);
+    else job.catch(function () {});
+  }
+  return out;
+}
+
+/*
+ * 2026-10-12 (antenna-ondemand): why a cron, with the token set and no collector snapshot to defer
+ * to, leaves its own aircraft round out, or null to run it. A collector snapshot older than
+ * COLLECTOR_FRESH_MS is the normal state of a quiet night now, and without this the Worker's fallback
+ * round would call the two volunteer feeds every ten minutes all night (from Cloudflare's egress they
+ * refuse it, which still costs them a call per source per tile until the breaker trips). So it runs
+ * only while someone visited in the last VISIT_WATCH_MS, and not while a dispatch is in flight (the
+ * collector is on its way). Without the token the fallback is the only aircraft source and runs as
+ * before. Never throws.
+ */
+export async function fallbackHold(deps, snapT, t) {
+  if (!dispatchConfigured(deps)) return null;
+  try {
+    const vt = keptTime(await kvGetJson(deps.kv, 'visit:last'), t);
+    if (vt === null || t - vt >= VISIT_WATCH_MS) {
+      return 'held: no visit in the last ' + Math.round(VISIT_WATCH_MS / 60000) + ' minutes, so no aircraft round';
+    }
+    const inflight = refreshInFlight(await kvGetJson(deps.kv, 'dispatch:last'), snapT, t);
+    if (inflight) {
+      return 'held: the collector was asked ' + Math.round(Math.max(0, t - inflight.requestedAt) / 1000) + ' s ago';
+    }
+  } catch (e) { return null; }
+  return null;
+}
+
 /* One dispatch decision. collectorAge is the cron's collectorAgeMs for the stored snapshot (null when
-   it is absent, the Worker's own, skewed, or 75 minutes old or more). Returns the text of the log line
+   it is absent, the Worker's own, skewed, or 45 minutes old or more). Returns the text of the log line
    after "dispatch: ", and never throws. */
 export async function dispatchCollector(deps, budget, collectorAge, t) {
   const token = String((deps && deps.secrets && deps.secrets.ghDispatchToken) || '');
   try {
     if (collectorAge !== null && collectorAge < DISPATCH_STALE_MS) {
       return 'skipped, the collector snapshot is ' + Math.round(collectorAge / 1000) + ' s old';
+    }
+    /* 2026-10-12 (antenna-ondemand): the cron asks only while someone is watching */
+    const vt = keptTime(await kvGetJson(deps.kv, 'visit:last'), t);
+    if (vt === null || t - vt >= VISIT_WATCH_MS) {
+      return 'skipped, no visit in the last ' + Math.round(VISIT_WATCH_MS / 60000) + ' minutes';
+    }
+    /* third pass: a page that polled in the last VISIT_SELF_MS asks for itself from the request path */
+    if (t - vt < VISIT_SELF_MS) {
+      return 'skipped, a page polled ' + Math.round(Math.max(0, t - vt) / 1000) + ' s ago and asks for itself';
     }
     const last = await kvGetJson(deps.kv, 'dispatch:last');
     const lt = last ? num(last.t) : null;
@@ -1438,46 +1701,7 @@ export async function dispatchCollector(deps, budget, collectorAge, t) {
       budget.left = budget.left - 1;
       budget.used = (budget.used || 0) + 1;
     }
-    const init = {
-      method: 'POST',
-      headers: {
-        'Accept': 'application/vnd.github+json',
-        'Authorization': 'Bearer ' + token,
-        'X-GitHub-Api-Version': '2022-11-28',
-        'User-Agent': USER_AGENT,
-        'Content-Type': 'application/json',
-      },
-      /* workflow_dispatch: the ref the workflow runs on, and nothing else (it declares no inputs) */
-      body: JSON.stringify({ ref: GH_REF }),
-      /* second pass: never follow a redirect (a renamed repository or workflow answers 301, and a
-         followed POST becomes a GET elsewhere); a 3xx is recorded like any other answer that is not 204 */
-      redirect: 'manual',
-    };
-    if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) {
-      init.signal = AbortSignal.timeout(UPSTREAM_TIMEOUT_MS);
-    }
-    let status = null;
-    let line;
-    try {
-      const res = await deps.fetchFn(GH_DISPATCH_URL, init);
-      status = (res && typeof res.status === 'number') ? res.status : null;
-      line = 'sent, status ' + status;
-      if (status !== 204) {
-        let body = '';
-        try { body = (res && typeof res.text === 'function') ? await res.text() : ''; } catch (e) { body = ''; }
-        const head = dispatchHead(body, token);
-        if (head) line += ', body ' + head;
-      }
-    } catch (e) {
-      line = 'tried, no answer: ' + dispatchHead((e && e.message) || e, token);
-    }
-    /* recorded whatever GitHub answered, so a refused token is asked again only after DISPATCH_GAP_MS */
-    try {
-      await kvPutJson(deps.kv, 'dispatch:last', { t: t, status: status });
-    } catch (e) {
-      line += '; dispatch:last not written: ' + dispatchHead((e && e.message) || e, token);
-    }
-    return line;
+    return await sendDispatch(deps, t, 'cron');
   } catch (e) {
     return 'failed, ' + dispatchHead((e && e.message) || e, token);
   }
@@ -1501,9 +1725,14 @@ export async function runCron(deps) {
   /* 2026-10-11 (the collector): a fresh collector snapshot means the tiles were gathered where
      the upstreams answer, so this cron leaves the aircraft to it (no tile call, no snapshot or
      jam write) and its whole budget goes to the TFRs. Otherwise its own round runs, as always. */
-  const deferAge = collectorAgeMs(await snapHead(deps.kv), t);
+  const head = await snapHead(deps.kv);
+  const deferAge = collectorAgeMs(head, t);
+  /* 2026-10-12 (antenna-ondemand): with the token, the fallback round waits for a visit too */
+  const hold = deferAge === null ? await fallbackHold(deps, head ? num(head.t) : null, t) : null;
   if (deferAge !== null) {
     result.aircraft = 'deferred to the collector, age ' + Math.round(deferAge / 1000) + ' s';
+  } else if (hold) {
+    result.aircraft = hold;
   } else {
     const air = await runAircraftPhase(deps, budget, t, { yieldToCollector: true, keepWriterOverDark: true });
     result.tiles = air.tiles;
@@ -1535,7 +1764,8 @@ export async function runCron(deps) {
   }
 
   /* 2026-10-11 (the dispatch): with GH_DISPATCH_TOKEN, start the collector when its snapshot is late
-     (dispatchCollector above), judged by the deferral's own age; last, on the call the stages above leave */
+     (dispatchCollector above), judged by the deferral's own age; last, on the call the stages above leave.
+     2026-10-12 (antenna-ondemand): only while someone visited in the last 20 minutes (VISIT_WATCH_MS) */
   if (dispatchConfigured(deps)) result.dispatch = await dispatchCollector(deps, budget, deferAge, t);
 
   result.subrequests = budget.used;
@@ -1554,12 +1784,17 @@ export function makeDeps(env, over) {
     sleep: o.sleep || defaultSleep,
     secrets: o.secrets || { faaClientId: e.FAA_CLIENT_ID || '', faaClientSecret: e.FAA_CLIENT_SECRET || '',
                             ghDispatchToken: String(e.GH_DISPATCH_TOKEN || '').trim() },
+    /* 2026-10-12 (antenna-ondemand): the request path's background work and its one log line */
+    waitUntil: o.waitUntil || null,
+    log: o.log || null,
   };
 }
 
 export default {
   async fetch(request, env, ctx) {
-    return handleRequest(request, makeDeps(env, null));
+    /* 2026-10-12 (antenna-ondemand): the dispatch a /planes request may start runs after the answer */
+    const bg = (ctx && typeof ctx.waitUntil === 'function') ? function (p) { ctx.waitUntil(p); } : null;
+    return handleRequest(request, makeDeps(env, { waitUntil: bg, log: function (s) { console.log(s); } }));
   },
   async scheduled(event, env, ctx) {
     const p = runCron(makeDeps(env, null)).then(function (result) {

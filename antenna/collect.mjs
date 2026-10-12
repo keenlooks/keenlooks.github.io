@@ -8,13 +8,13 @@
  * it. It imports runAircraftPhase from worker.js, the very function the Worker's cron runs (the
  * tiles of worker.js TILES with the same spacing and the same refusal breaker, then the agg:jam
  * roll), so the snapshot has the Worker's shape by construction. It adds one field, `writer`, and
- * the Worker defers to a snapshot that names a writer while it is younger than 75 minutes.
+ * the Worker defers to a snapshot that names a writer while it is younger than 45 minutes.
  *
  *   node antenna/collect.mjs          real upstreams, writes snap:planes and agg:jam to OBS_KV
  *   node antenna/collect.mjs --dry    real upstreams, an in-memory KV, nothing written anywhere
  *
- * Node 20 or newer, no dependencies. Run by .github/workflows/collect-antenna.yml once an hour
- * (the antenna Worker starts it). Environment (not needed for --dry):
+ * Node 20 or newer, no dependencies. Run by .github/workflows/collect-antenna.yml, which the antenna
+ * Worker starts every half hour while someone is watching the page and on demand when a visit begins. Environment (not needed for --dry):
  *   CLOUDFLARE_API_TOKEN    the deploy's repository secret (needs Workers KV Storage: Edit)
  *   CLOUDFLARE_ACCOUNT_ID   the deploy's repository secret
  *   OBS_KV_ID               optional: the namespace id; otherwise the namespace titled OBS_KV is
@@ -23,8 +23,9 @@
  * Exit status: 0 the snapshot and the jam ring were written, or a REFUSED round: fewer than a
  * quarter of the tiles came back, nothing was written, and a `::warning::` line names the tile
  * count and the statuses seen (a refused runner is an upstream's choice, not a fault, and would
- * otherwise make a red run every hour, each emailed); the Worker's own round takes over once the
- * last collector snapshot is 75 minutes old, and never replaces it with a dark round of its own.
+ * otherwise make a red run each time, each emailed); the Worker's own round takes over once the
+ * last collector snapshot is 45 minutes old (with the dispatch token, only while someone is
+ * watching), and never replaces it with a dark round of its own.
  * 2 configuration or KV trouble, a real fault (the message says what was and was not written).
  *
  * Politeness: a runner is ONE address, and adsb.lol refuses one address from about the fourth call

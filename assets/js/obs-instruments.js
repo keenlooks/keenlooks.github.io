@@ -371,8 +371,10 @@
        clause left the page for the second half of every hour while the feed
        was on time (_tests/observatory/antenna-hourly-2026-10-11/logs/
        age-probe-before.txt). The tick never moves and the key row says how old
-       it is ("Heard up to N minutes ago"). */
-    AMB_PLANE_MAX_AGE_MS: 75 * 60000,
+       it is ("Heard up to N minutes ago"). 2026-10-12 (antenna-ondemand): the
+       snapshot is rewritten every half hour while someone is watching, so the
+       window is the planes feed's 45 minutes. */
+    AMB_PLANE_MAX_AGE_MS: 45 * 60000,
     AMB_TILE_MARGIN: 1.08,       /* the antenna's own radius, plus a little */
     AMB_TILE_DEFAULT_NM: 250,    /* what /planes asks for when it does not say */
     /* the non-lazy antenna feed whose health tells this file whether the relay
@@ -385,8 +387,20 @@
     /* fourth pass: how old a dark snapshot may be and still be the reason a
        row or a line gives. The /planes route's own staleAfterMs (antenna/
        worker.js ROUTES; obs-feeds.js planes manifest), 75 minutes since the
-       hourly collector (2026-10-11; it was 15 at a ten minute cron). */
-    RELAY_REACH_MAX_AGE_MS: 4500000,
+       hourly collector (2026-10-11; it was 15 at a ten minute cron), 45 since
+       the half hour, on demand (2026-10-12). */
+    RELAY_REACH_MAX_AGE_MS: 2700000,
+    /* 2026-10-12 (antenna-ondemand): a fresh aircraft sample the antenna asked
+       its collector for (the /planes and /jam answers carry `refresh` while it
+       has not landed) is LOADING for at most this long after it was asked,
+       the antenna's own REFRESH_INFLIGHT_MS; past it every surface falls back
+       to its stale or not-reporting form, so a sample that never lands is
+       never "loading" forever (relayLoading, section 1b). */
+    RELAY_LOADING_MAX_MS: 4 * 60000,
+    /* and the time since it was asked for is said in whole steps of this, the
+       number floored, so the key, the lines and the chips say one number; the
+       ambient card's honesty text discloses the step */
+    RELAY_LOADING_STEP_MS: 10000,
 
     /* --- happenings (r10 item 4) ---
        The always-armed context instrument that keeps the tour supplied. It
@@ -845,6 +859,105 @@
                      (health === 'stale' && fin(age) && age <= K.RELAY_REACH_MAX_AGE_MS));
     return reach;
   }
+  /* ---- 1c. 2026-10-12 (antenna-ondemand): A FRESH SAMPLE IS LOADING ----
+     Keane: "make it on demand, and also change the page to tell the user for
+     those layers that they are loading (if it's the case that they need to
+     load after a quiet spell)". After a quiet spell the snapshot can be hours
+     old, and the page's first /planes poll asks the antenna's collector for a
+     fresh one; until it lands both relay answers carry `refresh`
+     (obs-feeds.js refreshOf keeps {requestedAt, snapshotT, serverNow,
+     checkedAt}). The verdict is one for both feeds: the newest request that
+     has not been answered by a snapshot or an aggregate newer than it, and is
+     younger than K.RELAY_LOADING_MAX_MS. Its age is the antenna's own
+     (serverNow - requestedAt) plus the time since this page read it, so a
+     machine whose clock disagrees with the antenna's gets the same number.
+     Pure. Null when nothing is loading. */
+  function refreshAgoMs(r, nowMs) {
+    if (!r || !fin(r.requestedAt) || !fin(nowMs)) return NaN;
+    var ago = (fin(r.serverNow) && fin(r.checkedAt))
+      ? (r.serverNow - r.requestedAt) + (nowMs - r.checkedAt)
+      : nowMs - r.requestedAt;
+    return ago < 0 ? 0 : ago;
+  }
+  function relayLoadingAt(r, nowMs) {
+    var ago = refreshAgoMs(r, nowMs), step = K.RELAY_LOADING_STEP_MS;
+    if (!fin(ago) || ago >= K.RELAY_LOADING_MAX_MS) return null;
+    return { requestedAt: r.requestedAt, serverNow: numOr(r.serverNow, NaN),
+             checkedAt: numOr(r.checkedAt, NaN), agoMs: ago,
+             agoS: Math.floor(ago / step) * step / 1000,
+             leftMs: K.RELAY_LOADING_MAX_MS - ago };
+  }
+  function relayLoading(planes, jam, nowMs) {
+    var feeds = [planes, jam], landed = NaN, best = null, i, f, r, v;
+    for (i = 0; i < feeds.length; i++) {
+      f = feeds[i];
+      if (f && typeof f === 'object' && fin(f.t) && (!fin(landed) || f.t > landed)) landed = f.t;
+    }
+    for (i = 0; i < feeds.length; i++) {
+      f = feeds[i];
+      r = (f && typeof f === 'object') ? f.refresh : null;
+      if (!r || !fin(r.requestedAt)) continue;
+      /* a sample newer than the request has landed, through either feed */
+      if (fin(landed) && landed > r.requestedAt) continue;
+      v = relayLoadingAt(r, nowMs);
+      if (v && (!best || v.requestedAt > best.requestedAt)) best = v;
+    }
+    return best;
+  }
+  /* "40 s ago", "under 10 s ago": the floored step, never a guess */
+  function loadingAgoWords(ld) {
+    var sec = ld ? numOr(ld.agoS, NaN) : NaN;
+    if (!fin(sec)) return '';
+    return sec < K.RELAY_LOADING_STEP_MS / 1000
+      ? ('under ' + numFmt(K.RELAY_LOADING_STEP_MS / 1000) + ' s ago')
+      : (numFmt(sec) + ' s ago');
+  }
+  /* "31 min old", "3 hours old": how old the sample on screen is */
+  function sampleAgeWords(ms) {
+    if (!fin(ms) || ms < 0) return '';
+    var m = Math.round(ms / 60000), h;
+    if (m < 1) return 'under a minute old';
+    if (m < 90) return numFmt(m) + ' min old';
+    h = Math.round(ms / 3600000);
+    return numFmt(h) + (h === 1 ? ' hour old' : ' hours old');
+  }
+  /* The phrase every loading surface uses, after its own lead: "loading, a
+     fresh aircraft sample was requested 40 s ago; the last one, 3 hours old,
+     is drawn". The second clause only where this surface drew the last one
+     (`drawnAgeMs` finite), with that sample's own age. A phrase: the callers
+     finish it ("Small ticks: " + phrase + "." on a key row, capitalised on a
+     status line). */
+  function loadingPhrase(ld, drawnAgeMs) {
+    if (!ld) return '';
+    var age = sampleAgeWords(drawnAgeMs);
+    return 'loading, a fresh aircraft sample was requested ' + loadingAgoWords(ld) +
+           (age ? ('; the last one, ' + age + ', is drawn') : '');
+  }
+  /* The status line form, for an instrument whose input is loading. The
+     instrument's own result is unchanged; only its line and its readout's
+     `relayLoading` say so, which the page reads for the chip's light. */
+  /* third pass: `keepLine` leaves the status line alone and only puts the
+     verdict on the readout (the ambient instrument's line is about quakes,
+     clouds and aurora too, and its rack row takes the light and the word) */
+  function withRelayLoading(out, state, nowMs, drawnT, keepLine) {
+    var v = state ? state.relayLoading : null;
+    var ld = v ? relayLoadingAt(v, nowMs) : null;
+    if (!ld || !out) return out;
+    /* an instrument that is down for a reason of its own (no kernel, no
+       magnetic model: an offline line about no relay input) keeps its line */
+    var li = arr(out.lineInputs) ? out.lineInputs : [];
+    if (out.status === 'offline' && !(li.indexOf && (li.indexOf('planes') >= 0 || li.indexOf('jam') >= 0))) return out;
+    var drawnAge = (fin(drawnT) && fin(nowMs)) ? Math.max(0, nowMs - drawnT) : NaN;
+    var phrase = loadingPhrase(ld, drawnAge);
+    var ro = (out.readout && typeof out.readout === 'object') ? out.readout : (out.readout = {});
+    ro.relayLoading = { requestedAt: ld.requestedAt, agoS: ld.agoS, leftMs: ld.leftMs,
+                        drawnAgeMs: drawnAge, phrase: phrase };
+    if (keepLine) return out;
+    out.statusLine = phrase.charAt(0).toUpperCase() + phrase.slice(1) + '.';
+    out.lineInputs = lineInputsOf(arr(out.lineInputs) ? out.lineInputs : [], 'planes');
+    return out;
+  }
+
   /* the planes feed's kernel word, from whichever door the kernel has */
   function planesHealthOf(c) {
     var fs = null;
@@ -7921,8 +8034,8 @@
     },
     ambient: {
       what: 'The planet itself: day and night, cloud cover, aurora probability, every earthquake located in the last 24 hours, and the aircraft the other instruments measure from.',
-      recipe: 'Drawn from the solar sub-point, NOAA OVATION aurora probability, GOES cloud imagery, the USGS earthquake feed and aircraft positions sampled once an hour around a fixed set of regions of the world.',
-      honesty: 'Quake ripples are stylized surface waves, not measured wavefronts. Flying to an earthquake replays its ripple from the moment you arrive, not the moment it happened. Dot size is a magnitude band, not a measured size. Everything located in the last hour is drawn in the live colour; the rest of the day sits behind it in muted grey, smaller for being older, down to the smallest dot this map will draw, so the smallest quakes of the day all sit at that floor. Clouds come from the GOES satellites, so a hemisphere with no image loaded is unshaded, not cloudless. Aurora shading is NOAA\'s OVATION model probability, not a sighting. It is scaled to the strongest probability the model is carrying right now, so it reads within one night rather than between two. The aircraft are a snapshot of a fixed set of sample regions rather than the whole world, taken once an hour, so it can be up to about an hour old: they are the same aircraft the winds and jamming instruments measure from, the tick is the track each one broadcast, and empty sky means nobody was sampling there, not that nobody was flying. The extremes this layer reports are extremes of that snapshot and of those regions: the busiest region, the highest aircraft and the strongest tailwind are the highest numbers the relay saw when it last looked, not records. A tailwind is ground speed minus true airspeed, which is what the wind did to that aircraft, and it is only reported where the aircraft broadcast both. An aircraft squawking 7500, 7600 or 7700 is reported as a code that was set: it is a setting, not a confirmed emergency, and codes get set by mistake and cleared seconds later. A swarm here means at least ' + K.SWARM_MIN_N + ' earthquakes within ' + K.SWARM_RADIUS_KM + ' km of each other in 24 hours, which is a threshold this page chose rather than a standard one, and the sentence says the number out loud. The tsunami flag is a flag USGS puts on a report in a warning zone, and it is never a warning on its own. The planetary K index is published in three hour bins, so a Kp quoted here belongs to a window and is named with it, never as a reading taken now.',
+      recipe: 'Drawn from the solar sub-point, NOAA OVATION aurora probability, GOES cloud imagery, the USGS earthquake feed and aircraft positions sampled every half hour while someone is watching this page, and on request after a quiet spell, around a fixed set of regions of the world.',
+      honesty: 'Quake ripples are stylized surface waves, not measured wavefronts. Flying to an earthquake replays its ripple from the moment you arrive, not the moment it happened. Dot size is a magnitude band, not a measured size. Everything located in the last hour is drawn in the live colour; the rest of the day sits behind it in muted grey, smaller for being older, down to the smallest dot this map will draw, so the smallest quakes of the day all sit at that floor. Clouds come from the GOES satellites, so a hemisphere with no image loaded is unshaded, not cloudless. Aurora shading is NOAA\'s OVATION model probability, not a sighting. It is scaled to the strongest probability the model is carrying right now, so it reads within one night rather than between two. The aircraft are a snapshot of a fixed set of sample regions rather than the whole world, taken every half hour while someone is watching this page and on request after a quiet spell, so it can be up to about half an hour old, or older for the first minutes of a visit: they are the same aircraft the winds and jamming instruments measure from, the tick is the track each one broadcast, and empty sky means nobody was sampling there, not that nobody was flying. While a fresh sample is loading, the rows waiting for it count the time since it was asked for in steps of ten seconds. The extremes this layer reports are extremes of that snapshot and of those regions: the busiest region, the highest aircraft and the strongest tailwind are the highest numbers the relay saw when it last looked, not records. A tailwind is ground speed minus true airspeed, which is what the wind did to that aircraft, and it is only reported where the aircraft broadcast both. An aircraft squawking 7500, 7600 or 7700 is reported as a code that was set: it is a setting, not a confirmed emergency, and codes get set by mistake and cleared seconds later. A swarm here means at least ' + K.SWARM_MIN_N + ' earthquakes within ' + K.SWARM_RADIUS_KM + ' km of each other in 24 hours, which is a threshold this page chose rather than a standard one, and the sentence says the number out loud. The tsunami flag is a flag USGS puts on a report in a warning zone, and it is never a warning on its own. The planetary K index is published in three hour bins, so a Kp quoted here belongs to a window and is named with it, never as a reading taken now.',
       credits: [
         { text: 'USGS', href: 'https://earthquake.usgs.gov/' },
         { text: 'EMSC', href: 'https://www.seismicportal.eu/' },
@@ -8555,7 +8668,9 @@
   /* The five states ruling (4) names, and nothing else. There is no `stale`
      here: a class whose reading has aged is still a class with data, and
      "the last reading has aged" is the rack's sentence, not a row's. */
-  var CLASS_STATES = Object.freeze(['live', 'off', 'waiting', 'blocked', 'down']);
+  /* 2026-10-12 (antenna-ondemand): and a sixth, `loading`: a relay class whose
+     fresh sample was asked for and has not landed (section 1c) */
+  var CLASS_STATES = Object.freeze(['live', 'off', 'waiting', 'blocked', 'down', 'loading']);
 
   /* ---- ruling (22): WHICH WORD A FAILURE EARNS -------------------------
 
@@ -8638,10 +8753,15 @@
        allowance: the relay ANSWERED, so neither the cold window nor a drawn
        mark makes it a live class; the reach is the row's reason. */
     var thin = [];
+    /* 2026-10-12 (antenna-ondemand): a relay input whose fresh sample is on its way */
+    var loading = null;
     var ids = [];
     for (i = 0; i < list.length; i++) {
       f = list[i] || {};
       ids.push(f.id || '');
+      if (RELAY_FEEDS[f.id] && f.loading && !loading && (f.health === 'live' || f.health === 'stale')) {
+        loading = { id: f.id, ld: f.loading };
+      }
       /* second pass: only while the relay is answering (live or stale). A relay
          gone silent is an outage, and an old snapshot's reach is not its reason. */
       if (RELAY_FEEDS[f.id] && f.reach && (f.health === 'live' || f.health === 'stale')) {
@@ -8670,6 +8790,11 @@
     var drew = !!s.drew;
     var state = 'live';
     if (!s.armed && !s.always) state = 'off';
+    /* 2026-10-12 (antenna-ondemand): a fresh sample asked for and not landed
+       outranks every other word: the relay answered (so neither the cold
+       window nor an outage applies), a dark old snapshot is about to be
+       replaced, and a class that drew the last one says so in its phrase */
+    else if (loading) state = 'loading';
     /* r27b (12)(b): the spent allowance goes STRAIGHT to its own state. The
        r27 light judge watched the wind row say "none in this frame" for
        several seconds and then correct itself to the allowance, and only the
@@ -8720,6 +8845,10 @@
       input = thin[0].id;
       /* fourth pass: a silent verdict is an outage, in the outage's words */
       reason = thin[0].reach.silent ? CLASS_REASON.relay : reachPhrase(thin[0].reach, 'the relay');
+    }
+    if (state === 'loading') {
+      input = loading.id;
+      reason = loadingPhrase(loading.ld, drew ? numOr(loading.ld.lastAgeMs, NaN) : NaN);
     }
     return { cls: s.cls || '', state: state, input: input, inputs: ids,
              reason: reason, inst: s.inst || '',
@@ -8773,6 +8902,14 @@
       if (RELAY_FEEDS[id] && typeof c.data === 'function' && fs &&
           (fs.health === 'live' || fs.health === 'stale')) {
         inputs[inputs.length - 1].reach = relayVerdict(c.data('planes'), planesHealthOf(c), t);
+        /* 2026-10-12 (antenna-ondemand): one loading verdict for both relay
+           feeds, and the age of THIS input's own last sample */
+        var ldv = relayLoading(c.data('planes'), c.data('jam'), t);
+        var own = c.data(id);
+        if (ldv) {
+          ldv.lastAgeMs = (own && fin(own.t) && fin(t)) ? Math.max(0, t - own.t) : NaN;
+          inputs[inputs.length - 1].loading = ldv;
+        }
       }
     }
     var st = (typeof c.state === 'function') ? c.state(map.inst) : null;
@@ -9057,6 +9194,51 @@
     return { n: 0, step: NaN, level: '', short: true, ageMs: NaN, from: 'none' };
   }
 
+  /* 2026-10-12 (antenna-ondemand): the winds and jamming residuals, each with
+     its line saying a fresh sample is loading while it is (section 1c). The
+     computes are unchanged; the bridge (section 11b) puts the verdict on each
+     state. The sample "on screen" is what the layer really draws from the
+     aircraft: for the winds layer its measured residual, painted onto the
+     forecast streaks it falls in (`nGridWithResidual`, PIN Z3-S8) or, with no
+     grid, the residual cells themselves (never the sample dots, which the
+     renderer stands down while the streaks are on); for the jamming layer its
+     boxes. */
+  function drewAircraft(out) {
+    var r = out && out.readout, mk = r && arr(r.marks) ? r.marks : [], i;
+    if (!r) return false;
+    if (numOr(r.nGridWithResidual, 0) > 0) return true;
+    for (i = 0; i < mk.length; i++) {
+      if (!mk[i] || !(numOr(mk[i].n, 0) > 0)) continue;
+      if (mk[i].key === 'cells' && /aircraft/.test(String(mk[i].source || ''))) return true;
+    }
+    return false;
+  }
+  /* third pass (Fable's ruling on the verifier's minor 1): the planet's own
+     row, which draws the Small ticks, wears the loading light and word too.
+     Drawn: the aircraft ticks it put on the planet, from the snapshot on its
+     state (the section 11b bridge). */
+  function ambientWithLoading(data, state, nowMs) {
+    var out = computeAmbient(data, state, nowMs);
+    var r = out && out.readout, mk = r && arr(r.marks) ? r.marks : [], drew = false, i;
+    for (i = 0; i < mk.length; i++) {
+      if (mk[i] && mk[i].key === 'aircraft' && numOr(mk[i].n, 0) > 0) { drew = true; break; }
+    }
+    var pl = state ? state.planes : null;
+    return withRelayLoading(out, state, nowMs, (drew && pl && fin(pl.t)) ? pl.t : NaN, true);
+  }
+  function windsWithLoading(data, state, nowMs) {
+    var out = computeWinds(data, state, nowMs);
+    var pl = data ? data.planes : null;
+    return withRelayLoading(out, state, nowMs,
+      (drewAircraft(out) && pl && fin(pl.t)) ? pl.t : NaN);
+  }
+  function jamWithLoading(data, state, nowMs) {
+    var out = computeJam(data, state, nowMs);
+    var jm = data ? data.jam : null;
+    var drew = !!(out && arr(out.primitives) && out.primitives.length);
+    return withRelayLoading(out, state, nowMs, (drew && jm && fin(jm.t)) ? jm.t : NaN);
+  }
+
   /* ======================================================================
      11. Registration
      ====================================================================== */
@@ -9071,13 +9253,13 @@
          planet row out. Same rule tfrs has always had. */
       inputs: ['usgs_quakes', 'ovation', 'clouds', 'tfrs', 'kp_rtsw'],
       context: ['tfrs', 'kp_rtsw'],
-      card: CARDS.ambient, compute: computeAmbient, narrate: narrateAmbient },
+      card: CARDS.ambient, compute: ambientWithLoading, narrate: narrateAmbient },
     { id: 'flare_shadow', name: 'The flare shadow',
       inputs: ['drap', 'wspr', 'goes_xray'],
       card: CARDS.flare_shadow, compute: computeFlareShadow, narrate: narrateFlare },
     { id: 'winds_residual', name: 'Winds aloft, observed',
       inputs: ['planes', 'openmeteo'],
-      card: CARDS.winds_residual, compute: computeWinds, narrate: null },
+      card: CARDS.winds_residual, compute: windsWithLoading, narrate: null },
     /* r13 item 8. Only `jam` is measured here: the layer is computed, drawn and
        narrated from the aircraft bins alone, and the other three only take
        things AWAY from it (a storm gate, an announced window, a restriction
@@ -9089,7 +9271,7 @@
     { id: 'jam_residual', name: 'The jamming residual',
       inputs: ['jam', 'kp_rtsw', 'gps_notams', 'tfrs'],
       context: ['kp_rtsw', 'gps_notams', 'tfrs'],
-      card: CARDS.jam_residual, compute: computeJam, narrate: narrateJam },
+      card: CARDS.jam_residual, compute: jamWithLoading, narrate: narrateJam },
     /* Always armed, like ambient: the tour is never allowed to run out of
        somewhere to go (r10 item 3). tfrs and jam are CONTEXT here, the same
        way tfrs is context for ambient: their layers belong to other
@@ -9202,6 +9384,48 @@
       js.relayReach = reach;
       changed = true;
       if (typeof c.recompute === 'function') c.recompute(RELAY_REACH_STATES[i]);
+    }
+    return changed;
+  }
+
+  /* 2026-10-12 (antenna-ondemand): the loading verdict (section 1c) goes onto
+     the winds and jamming states the way the reach does, and each recomputes
+     in a task of its own when it changes. While a sample is loading the
+     verdict is re-read at every K.RELAY_LOADING_STEP_MS step of its age and
+     once more as it expires, so the number on the lines moves in the step the
+     card discloses and the lines fall back on time even between polls. The
+     timer is unref'd, so a node suite is never held open by it. */
+  /* third pass: and the planet's own row (ambientWithLoading) */
+  var LOADING_STATES = ['winds_residual', 'jam_residual', 'ambient'];
+  var LOAD = { timer: null };
+  function syncRelayLoading(core) {
+    var c = core || AMB.core || CORE();
+    if (!c || typeof c.state !== 'function' || typeof c.data !== 'function') return false;
+    var now = (typeof c.now === 'function') ? c.now() : NaN;
+    var ld = relayLoading(c.data('planes'), c.data('jam'), now);
+    var keep = ld ? { requestedAt: ld.requestedAt, serverNow: ld.serverNow, checkedAt: ld.checkedAt } : null;
+    var key = ld ? [ld.requestedAt, ld.serverNow, ld.checkedAt, ld.agoS].join('|') : '';
+    var changed = false, i, js;
+    var later = (typeof global.setTimeout === 'function') ? global.setTimeout : null;
+    for (i = 0; i < LOADING_STATES.length; i++) {
+      js = c.state(LOADING_STATES[i]);
+      if (!js || (js.relayLoadingKey || '') === key) continue;
+      js.relayLoading = keep;
+      js.relayLoadingKey = key;
+      changed = true;
+      if (typeof c.recompute === 'function') {
+        (function (id) {
+          if (later) later(function () { c.recompute(id); }, 0); else c.recompute(id);
+        })(LOADING_STATES[i]);
+      }
+    }
+    if (LOAD.timer !== null && typeof global.clearTimeout === 'function') global.clearTimeout(LOAD.timer);
+    LOAD.timer = null;
+    if (ld && later) {
+      var step = K.RELAY_LOADING_STEP_MS;
+      var wait = Math.min(step - (ld.agoMs % step), ld.leftMs) + 20;
+      LOAD.timer = later(function () { LOAD.timer = null; syncRelayLoading(c); }, Math.max(20, wait));
+      if (LOAD.timer && typeof LOAD.timer.unref === 'function') LOAD.timer.unref();
     }
     return changed;
   }
@@ -9372,8 +9596,13 @@
     AMB.wired = true;
     c.on('feed:health', function (p) {
       if (p && (p.id === K.AMB_PROBE_FEED || p.id === 'planes')) syncPlanes(c);
+      /* 2026-10-12 (antenna-ondemand) */
+      if (p && (p.id === 'planes' || p.id === 'jam')) syncRelayLoading(c);
     });
-    c.on('feed:update', function (p) { if (p && p.id === 'planes') syncPlanes(c); });
+    c.on('feed:update', function (p) {
+      if (p && p.id === 'planes') syncPlanes(c);
+      if (p && (p.id === 'planes' || p.id === 'jam')) syncRelayLoading(c);
+    });
     c.on('instrument:arm', function () { syncArmed(c); syncWindRegion(c); });
     c.on('instrument:disarm', function () { syncArmed(c); syncWindRegion(c); });
     /* r24 (7): the field moves every time the winds instrument recomputes, so
@@ -9608,9 +9837,9 @@
 
     /* computes */
     flareShadow: computeFlareShadow,
-    winds: computeWinds,
-    jam: computeJam,
-    ambient: computeAmbient,
+    winds: windsWithLoading,
+    jam: jamWithLoading,
+    ambient: ambientWithLoading,
     happenings: computeHappenings,
 
     /* the autopilot arrival seam: mark a quake for a ripple replay */
@@ -9857,6 +10086,13 @@
       reachPhrase: reachPhrase,
       relayDarkOut: relayDarkOut,
       relayVerdict: relayVerdict,
+      /* 2026-10-12 (antenna-ondemand) */
+      relayLoading: relayLoading,
+      relayLoadingAt: relayLoadingAt,
+      loadingPhrase: loadingPhrase,
+      sampleAgeWords: sampleAgeWords,
+      withRelayLoading: withRelayLoading,
+      syncRelayLoading: syncRelayLoading,
       /* (10) PIN Z3-S7 */
       JAM_POP_NOUNS: JAM_POP_NOUNS,
       jamPopulations: jamPopulations,

@@ -1098,6 +1098,13 @@ html[data-theme="light"] .obs-dot { background: rgba(38,38,38,0.28); }
 .obs-dot--live { background: #82a6cc; }
 .obs-dot--stale { background: rgba(214,214,214,0.55); border: 2px solid rgba(214,214,214,0.90); }
 .obs-dot--offline { background: transparent; border: 2px solid rgba(214,214,214,0.90); }
+/* 2026-10-12 (antenna-ondemand): the sixth light. A fresh aircraft sample was
+   asked for and has not landed: a small solid accent centre (it is coming)
+   inside a DASHED accent ring, a border style no other light uses, so it is
+   told apart from connecting (grey centre, dotted ring) and from live (a
+   filled dot, no ring) by shape and not by hue alone. */
+.obs-dot--loading { background: radial-gradient(circle, #82a6cc 0 34%, transparent 40%); border: 2px dashed #82a6cc; }
+html[data-theme="light"] .obs-dot--loading { background: radial-gradient(circle, #34568a 0 34%, transparent 40%); border-color: #34568a; }
 html[data-theme="light"] .obs-dot--connecting { background: rgba(38,38,38,0.28); border-color: rgba(52,86,138,0.80); }
 html[data-theme="light"] .obs-dot--live { background: #34568a; }
 html[data-theme="light"] .obs-dot--stale { background: rgba(38,38,38,0.45); border-color: rgba(38,38,38,0.80); }
@@ -1107,6 +1114,7 @@ html[data-theme="light"] .obs-dot--offline { background: transparent; border-col
   html:not([data-theme="dark"]) .obs-dot--live { background: #34568a; }
   html:not([data-theme="dark"]) .obs-dot--stale { background: rgba(38,38,38,0.45); border-color: rgba(38,38,38,0.80); }
   html:not([data-theme="dark"]) .obs-dot--offline { background: transparent; border-color: rgba(38,38,38,0.80); }
+  html:not([data-theme="dark"]) .obs-dot--loading { background: radial-gradient(circle, #34568a 0 34%, transparent 40%); border-color: #34568a; }
 }
 
 /* ------------------------------------------------- the instruments rack --- */
