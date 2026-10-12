@@ -1745,16 +1745,18 @@
   var OM_URL = 'https://api.open-meteo.com/v1/forecast';
   var OM_LEVELS = [300, 250, 200];
   /*
-   * The same 24 sample centres the antenna flies over, so one batched request covers every
+   * The same sample centres the antenna flies over, so one batched request covers every
    * tile the winds instrument can have data for. Copied from antenna/worker.js TILES; if
-   * that list changes, this one has to change with it.
+   * that list changes, this one has to change with it. 2026-10-11 (antenna-hourly): the
+   * antenna dropped Lapland (65, 25), Mesopotamia (33.3, 44.4) and northern Andes (4.7, -74.1),
+   * and so does this list.
    */
   var OM_SITES = [
-    [51, 3], [55, 20.5], [44, 33], [37.5, 25], [65, 25], [40, -3.5],
-    [33.5, 35], [33.3, 44.4], [26, 52],
+    [51, 3], [55, 20.5], [44, 33], [37.5, 25], [40, -3.5],
+    [33.5, 35], [26, 52],
     [41, -74], [33.5, -84.5], [41.9, -87.6], [32.8, -96.8], [36.5, -119.5], [47.6, -122.3],
     [37.5, 127], [35.7, 139.7], [24.5, 120], [1.35, 103.8],
-    [-23.5, -46.6], [4.7, -74.1],
+    [-23.5, -46.6],
     [-33.9, 151.2], [-37, 175],
     [-26.1, 28]
   ];
@@ -1775,10 +1777,11 @@
 
      PIN Z3-R27-FIX arms a recorded GRID, and C measured what my own note
      claimed was nothing: a harness lane with the grid armed still sent one
-     request to the forecast service, for the 24 sample centres this feed
-     reads. 24 locations against the grid's 576 is the smaller part by far,
-     but it is not zero, and a round whose lanes are supposed to cost the
-     address's daily allowance nothing cannot leave it spending 24 a lane.
+     request to the forecast service, for the sample centres this feed reads
+     (24 then, OM_SITES' 21 since 2026-10-11). A few dozen locations against
+     the grid's 576 is the smaller part by far, but it is not zero, and a
+     round whose lanes are supposed to cost the address's daily allowance
+     nothing cannot leave it spending them every lane.
 
      The same law as the grid's arm, for the same reasons: only an init script
      can set it (nothing the served page does reaches it), the recording is
@@ -3982,24 +3985,28 @@
       license: 'ODbL 1.0 (adsb.lol), adsb.fi terms require the credit link',
       kind: 'antenna',
       /* r19d item 8. An antenna feed does not read a source: it reads the
-         relay's snapshot, and the relay's cron rewrites that snapshot every
-         ten minutes and takes about a minute over it. So the copy we hold is
-         at worst one cron plus that write plus one cadence old, and the
-         window that decides "past it" has to be the antenna's own
-         staleAfterMs for this route (15 minutes, antenna/worker.js ROUTES).
+         relay's snapshot, and the window that decides "past it" has to be the
+         antenna's own staleAfterMs for this route (antenna/worker.js ROUTES).
          A shorter window rings a snapshot stale that the antenna itself still
-         calls fresh, which is what 750000 here was doing. Two numbers, one
-         rule: cadence + 10 min cron + 1 min write must stay inside the
-         window, so the cadence comes down to three minutes with it. The extra
-         polls are nearly free because planesUrl sends ?since= and an
-         unchanged snapshot answers in about eighty bytes. This is one of
+         calls fresh. 2026-10-11 (antenna-hourly, Keane: "Let's make the pull
+         be every 60 mins"): the collector rewrites the snapshot once an hour,
+         started by the antenna when the stored one is 50 minutes old, and
+         GitHub's queue and the round add a minute or two, so the copy we hold
+         is at worst about an hour plus that delay plus one cadence old, and
+         the window is 75 minutes on both sides (it was 15 at a ten minute
+         cron). Two numbers, one rule:
+         cadence + 60 min + the queue and round must stay inside the window.
+         The three minute cadence stays: the polls are nearly free because
+         planesUrl sends ?since= and an unchanged snapshot answers in about
+         eighty bytes, and a new snapshot reaches the page within three
+         minutes of landing. This is one of
          exactly three exceptions to the r19 item 7 ratio (this feed, jam
          below, and gps_notams). The age the page prints is the snapshot's own
          age throughout: the parse keeps the snapshot's t and the kernel dates
          the feed from it, never from the poll. */
       url: '/planes',
       cadenceMs: 180000,
-      staleAfterMs: 900000,
+      staleAfterMs: 4500000,
       lazy: true,
       fetcher: fetchPlanes,
       parse: parsePlanes
@@ -4013,14 +4020,15 @@
       url: '/jam',
       cadenceMs: 300000,
       /* r19d item 8, the same exception as planes above and for the same
-         reason: this is the relay's aggregate, rewritten by the same ten
-         minute cron, and the antenna calls it stale at 30 minutes
-         (antenna/worker.js ROUTES). The bins are a running 24 hour count, so
-         the relay's window is wider than the aircraft snapshot's, and five
-         minutes plus the cron plus its write is well inside it: this route
-         has no ?since= and every poll costs the whole aggregate, so the
-         cadence stays where it was. */
-      staleAfterMs: 1800000,
+         reason: this is the relay's aggregate, rolled by the same writer in
+         the same round as the snapshot, so since the hourly collector
+         (2026-10-11) it is rewritten once an hour and the antenna calls it
+         stale at 75 minutes (antenna/worker.js ROUTES), as this window does.
+         At the old 30 minutes the kernel would call an aggregate that is on
+         time stale for half of every hour. Five minutes plus the hour
+         plus the delay is inside it: this route has no ?since= and every poll
+         costs the whole aggregate, so the cadence stays where it was. */
+      staleAfterMs: 4500000,
       lazy: false,
       responseType: 'text',   /* text so the kernel can measure and slice the payload */
       parse: parseJam
@@ -4228,7 +4236,7 @@
     windGridState: windGridState,
     windGridStats: windGridStats,
     setWindFixture: setWindFixture,
-    /* r27b, SEAM C-R27B-6: the 24 sample centres' own arm, so a harness lane
+    /* r27b, SEAM C-R27B-6: the sample centres' own arm (OM_SITES), so a harness lane
        can cost the forecast service's daily allowance nothing at all */
     setOmSitesFixture: setOmSitesFixture,
     omSitesFixture: omSitesFixture,

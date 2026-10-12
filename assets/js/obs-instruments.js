@@ -351,8 +351,9 @@
 
     /* --- the ambient aircraft layer (H2) ---
        The same snapshot the winds and jamming instruments measure from, drawn
-       quietly as what it is: where aircraft were, in 24 sampled regions, a few
-       minutes ago. It is a VECTORS primitive because that is the only one that
+       quietly as what it is: where aircraft were, in the sampled regions, when
+       the relay last looked (once an hour since 2026-10-11, so up to about an
+       hour ago). It is a VECTORS primitive because that is the only one that
        draws a small dot (1.6 px, under the renderer's 3.5 px point floor) with
        a short tick. The renderer draws at most CAPS.vectors = 800 of them a
        frame and takes them in array order, which is why the layer is emitted
@@ -363,7 +364,15 @@
        the layer rather than an arbitrary number here. */
     AMB_PLANE_CAP: 800,
     AMB_PLANE_TICK_PX: 5.5,      /* with scalePxPerKt 1 this is exactly pixels */
-    AMB_PLANE_MAX_AGE_MS: 30 * 60000,  /* older than this is not the sky any more */
+    /* older than this is not the sky any more. 2026-10-11 (antenna-hourly): the
+       relay's snapshot is rewritten once an hour, so this is the planes feed's
+       own stale window (75 minutes, obs-feeds.js and antenna/worker.js ROUTES).
+       At 30 minutes the ticks, the tour's aircraft sights and the aircraft
+       clause left the page for the second half of every hour while the feed
+       was on time (_tests/observatory/antenna-hourly-2026-10-11/logs/
+       age-probe-before.txt). The tick never moves and the key row says how old
+       it is ("Heard up to N minutes ago"). */
+    AMB_PLANE_MAX_AGE_MS: 75 * 60000,
     AMB_TILE_MARGIN: 1.08,       /* the antenna's own radius, plus a little */
     AMB_TILE_DEFAULT_NM: 250,    /* what /planes asks for when it does not say */
     /* the non-lazy antenna feed whose health tells this file whether the relay
@@ -374,9 +383,10 @@
        (relayReach, section 1b). */
     RELAY_DARK_FRAC: 0.25,
     /* fourth pass: how old a dark snapshot may be and still be the reason a
-       row or a line gives. The /planes route's own staleAfterMs (15 min,
-       antenna/worker.js ROUTES; obs-feeds.js planes manifest). */
-    RELAY_REACH_MAX_AGE_MS: 900000,
+       row or a line gives. The /planes route's own staleAfterMs (antenna/
+       worker.js ROUTES; obs-feeds.js planes manifest), 75 minutes since the
+       hourly collector (2026-10-11; it was 15 at a ten minute cron). */
+    RELAY_REACH_MAX_AGE_MS: 4500000,
 
     /* --- happenings (r10 item 4) ---
        The always-armed context instrument that keeps the tour supplied. It
@@ -3420,7 +3430,11 @@
     var wmm = (e && e.wmm) ? e.wmm : null;
 
     var pl = NORM.planes(data ? data.planes : null);
-    var fc = NORM.forecast(data ? data.openmeteo : null, nowMs);
+    /* 2026-10-12 (antenna-hourly second pass): the aircraft are compared with the forecast hour
+       nearest the SNAPSHOT's own time. The snapshot can be up to about an hour old now, and the
+       hour nearest now could be the next one; while both times share a nearest hour (a fresh
+       sample) the reference is the same one as before. */
+    var fc = NORM.forecast(data ? data.openmeteo : null, (pl && fin(pl.t)) ? pl.t : nowMs);
 
     /* ---- r26 (20), PIN Z3-S8 --------------------------------------------
        The FIELD is drawn from the forecast grid and the RESIDUAL is measured
@@ -4193,6 +4207,16 @@
     return best;
   }
 
+  /* every bin's newest-sample count is 0 (or missing): no latest reading at all */
+  function jamHourEmpty(jm) {
+    var b = jm && jm.bins, i;
+    if (!b || !b.length) return false;
+    for (i = 0; i < b.length; i++) {
+      if (b[i] && fin(b[i].n) && b[i].n > 0) return false;
+    }
+    return true;
+  }
+
   function computeJam(data, state, nowMs) {
     var P = PURE();
     if (!P) return noCoreOut();
@@ -4206,6 +4230,12 @@
        latest snapshot's reach arrives on this state through the bridge
        (syncRelayReach, section 11b) */
     if (state && state.relayReach) return relayDarkOut(['jam'], state.relayReach, nowMs);
+    /* 2026-10-12 (antenna-hourly second pass): an aggregate whose newest-sample column is 0 in
+       every bin while the 24 hour column still counts aircraft has no latest reading: an antenna
+       from before the second pass empties that column on the request clock (70 minutes after a
+       sample) while the route still calls it fresh. That is the relay not reporting, never "no
+       cell has 5 aircraft", which would say the sky was sampled and found thin. */
+    if (jamHourEmpty(jm)) return offlineOut(['jam'], state, nowMs);
 
     var sp = NORM.space(data ? data.kp_rtsw : null);
     var nt = NORM.notams(data ? data.gps_notams : null);
@@ -4713,7 +4743,7 @@
      does not compute at all: a tour stop that only exists when a visitor has
      armed a panel row is a stop that never happens.
 
-     Every one of these is a claim about the 24 sampled regions and the moment
+     Every one of these is a claim about the sampled regions and the moment
      the relay last looked, never about the sky. `ofTiles` and the snapshot age
      ride along so a sentence can say which. */
   function planeSights(raw, nowMs, P) {
@@ -5476,8 +5506,13 @@
     var planeLine = '';
     if (apAll && apAll.rows > 0) {
       var mins = fin(apAll.ageMs) ? Math.round(apAll.ageMs / 60000) : NaN;
+      /* 2026-10-11 (antenna-hourly): how many regions the relay samples, from
+         the snapshot's own tile list (tilesTotal), never a typed count; a
+         snapshot that says nothing about its coverage names none */
+      var nReg = fin(apAll.tilesTotal) && apAll.tilesTotal > 0 ? apAll.tilesTotal : NaN;
       planeLine = ' ' + numFmt(apAll.rows) + (apAll.rows === 1 ? ' aircraft was' : ' aircraft were') +
-                  ' in the air over the 24 sampled regions ' +
+                  ' in the air over the ' +
+                  (fin(nReg) ? nWord(nReg, 'sampled region ', 'sampled regions ') : 'sampled regions ') +
                   (!fin(mins) ? 'when the relay last looked'
                               : (mins <= 1 ? 'a minute ago' : numFmt(mins) + ' minutes ago')) +
                   /* r24 (7): the share clause is about ink, so it goes with the
@@ -7886,8 +7921,8 @@
     },
     ambient: {
       what: 'The planet itself: day and night, cloud cover, aurora probability, every earthquake located in the last 24 hours, and the aircraft the other instruments measure from.',
-      recipe: 'Drawn from the solar sub-point, NOAA OVATION aurora probability, GOES cloud imagery, the USGS earthquake feed and aircraft positions sampled around 24 regions of the world.',
-      honesty: 'Quake ripples are stylized surface waves, not measured wavefronts. Flying to an earthquake replays its ripple from the moment you arrive, not the moment it happened. Dot size is a magnitude band, not a measured size. Everything located in the last hour is drawn in the live colour; the rest of the day sits behind it in muted grey, smaller for being older, down to the smallest dot this map will draw, so the smallest quakes of the day all sit at that floor. Clouds come from the GOES satellites, so a hemisphere with no image loaded is unshaded, not cloudless. Aurora shading is NOAA\'s OVATION model probability, not a sighting. It is scaled to the strongest probability the model is carrying right now, so it reads within one night rather than between two. The aircraft are a snapshot, minutes old, of 24 sample regions rather than the whole world: they are the same aircraft the winds and jamming instruments measure from, the tick is the track each one broadcast, and empty sky means nobody was sampling there, not that nobody was flying. The extremes this layer reports are extremes of that snapshot and of those 24 regions: the busiest region, the highest aircraft and the strongest tailwind are the highest numbers the relay saw when it last looked, not records. A tailwind is ground speed minus true airspeed, which is what the wind did to that aircraft, and it is only reported where the aircraft broadcast both. An aircraft squawking 7500, 7600 or 7700 is reported as a code that was set: it is a setting, not a confirmed emergency, and codes get set by mistake and cleared seconds later. A swarm here means at least ' + K.SWARM_MIN_N + ' earthquakes within ' + K.SWARM_RADIUS_KM + ' km of each other in 24 hours, which is a threshold this page chose rather than a standard one, and the sentence says the number out loud. The tsunami flag is a flag USGS puts on a report in a warning zone, and it is never a warning on its own. The planetary K index is published in three hour bins, so a Kp quoted here belongs to a window and is named with it, never as a reading taken now.',
+      recipe: 'Drawn from the solar sub-point, NOAA OVATION aurora probability, GOES cloud imagery, the USGS earthquake feed and aircraft positions sampled once an hour around a fixed set of regions of the world.',
+      honesty: 'Quake ripples are stylized surface waves, not measured wavefronts. Flying to an earthquake replays its ripple from the moment you arrive, not the moment it happened. Dot size is a magnitude band, not a measured size. Everything located in the last hour is drawn in the live colour; the rest of the day sits behind it in muted grey, smaller for being older, down to the smallest dot this map will draw, so the smallest quakes of the day all sit at that floor. Clouds come from the GOES satellites, so a hemisphere with no image loaded is unshaded, not cloudless. Aurora shading is NOAA\'s OVATION model probability, not a sighting. It is scaled to the strongest probability the model is carrying right now, so it reads within one night rather than between two. The aircraft are a snapshot of a fixed set of sample regions rather than the whole world, taken once an hour, so it can be up to about an hour old: they are the same aircraft the winds and jamming instruments measure from, the tick is the track each one broadcast, and empty sky means nobody was sampling there, not that nobody was flying. The extremes this layer reports are extremes of that snapshot and of those regions: the busiest region, the highest aircraft and the strongest tailwind are the highest numbers the relay saw when it last looked, not records. A tailwind is ground speed minus true airspeed, which is what the wind did to that aircraft, and it is only reported where the aircraft broadcast both. An aircraft squawking 7500, 7600 or 7700 is reported as a code that was set: it is a setting, not a confirmed emergency, and codes get set by mistake and cleared seconds later. A swarm here means at least ' + K.SWARM_MIN_N + ' earthquakes within ' + K.SWARM_RADIUS_KM + ' km of each other in 24 hours, which is a threshold this page chose rather than a standard one, and the sentence says the number out loud. The tsunami flag is a flag USGS puts on a report in a warning zone, and it is never a warning on its own. The planetary K index is published in three hour bins, so a Kp quoted here belongs to a window and is named with it, never as a reading taken now.',
       credits: [
         { text: 'USGS', href: 'https://earthquake.usgs.gov/' },
         { text: 'EMSC', href: 'https://www.seismicportal.eu/' },

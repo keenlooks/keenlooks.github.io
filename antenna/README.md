@@ -4,8 +4,9 @@ A small Cloudflare Worker that stands between `keanelucas.com/observatory/` and 
 upstream sources a browser cannot reach directly, because they send no CORS headers:
 adsb.lol, adsb.fi, `tfr.faa.gov`, and the FAA NOTAM API.
 
-The Worker fetches on a five minute cron, aggregates, and serves small CORS open JSON
-snapshots. The page works without it: with no antenna deployed, the plane, jamming and TFR
+The Worker runs a ten minute cron (the TFRs, the NOTAM sweep, and the start of the aircraft
+collector, which gathers the aircraft once an hour off Cloudflare; see "The collector"),
+aggregates, and serves small CORS open JSON snapshots. The page works without it: with no antenna deployed, the plane, jamming and TFR
 layers report themselves offline and everything else on the page still runs.
 
 Files here: `worker.js` (all the logic), `wrangler.toml` (deploy config), `collect.mjs` (the
@@ -18,8 +19,8 @@ exclude list.
 
 | Route | Serves | Edge cache | Source |
 |---|---|---|---|
-| `GET /planes` | KV `snap:planes`, the aircraft sample | `s-maxage=90` | adsb.lol tiles, adsb.fi per-tile fallback, gathered by the collector (`collect.mjs` on GitHub Actions); the Worker's own cron is the fallback |
-| `GET /jam` | KV `agg:jam`, summarized to one row per bin | `s-maxage=120` | derived from the same tiles, rolled by whichever wrote `/planes` |
+| `GET /planes` | KV `snap:planes`, the aircraft sample | `s-maxage=90` | adsb.lol tiles, adsb.fi per-tile fallback, gathered once an hour by the collector (`collect.mjs` on GitHub Actions); the Worker's own cron is the fallback |
+| `GET /jam` | KV `agg:jam`, summarized to one row per bin: the newest sample and the last 24 hours | `s-maxage=120` | derived from the same tiles, rolled by whichever wrote `/planes` |
 | `GET /tfrs` | KV `tfrs`, the list plus geometry | `s-maxage=600` | `tfr.faa.gov` list plus per-TFR detail |
 | `GET /notams/gps` | KV `notams:gps` | `s-maxage=900` | FAA NOTAM API, needs secrets |
 | `GET /health` | computed | `no-store` | per route KV ages, tile coverage, and the last collector dispatch `{t, status}` once there is one |
@@ -28,12 +29,15 @@ Every response carries `Access-Control-Allow-Origin: *` (public data, no credent
 `OPTIONS` is answered with 204. Nothing here ever returns a 500: if an upstream or KV read
 fails, the route serves the last stored value with `stale: true` and an `ageMs`, or answers
 503 with `offline: true` and a reason in plain words when there is nothing stored at all.
+`/planes` and `/jam` call their value stale at 75 minutes (the hourly collector, its queue and its
+round; `ROUTES` in `worker.js`, the same window as the page's two feeds), `/tfrs` at 6 hours and
+`/notams/gps` at 24 hours.
 
 Two extras on `/planes` that the page uses to stay polite:
 
-- `?since=<t>` where `t` is the `t` of the copy the client already holds. The snapshot only
-  changes once per cron, so a matching `since` returns `{ ok, t, unchanged: true }` instead of
-  the whole tile set.
+- `?since=<t>` where `t` is the `t` of the copy the client already holds. The snapshot changes
+  once an hour (once per cron only while the Worker's fallback writes it), so a matching `since`
+  returns `{ ok, t, unchanged: true }` instead of the whole tile set.
 - `?min_alt=<feet>` trims the rows to the altitudes an instrument actually uses (the winds
   instrument only looks above 27,000 ft).
 
@@ -56,49 +60,59 @@ until then those routes answer 503 offline and the page says so honestly.
 ## The collector
 
 adsb.lol answers 429 and adsb.fi answers 403 to the addresses Cloudflare Workers call out from
-(diagnosed 2026-10-11), so the Worker's own cron reaches 0 or 1 of its 24 tiles. From outside
+(diagnosed 2026-10-11), so the Worker's own cron reached 0 or 1 of its then 24 tiles. From outside
 Cloudflare both answer. `collect.mjs` gathers the tiles there and writes them into this Worker's
 KV, where the Worker serves them exactly as before.
 
 - **What it runs.** `collect.mjs` (node 20 or newer, no dependencies) imports `runAircraftPhase`
-  from `worker.js`, the same function the cron runs: the 24 tiles with the same spacing and the
-  same refusal breaker, the `snap:planes` write, then the `agg:jam` roll. Its snapshot therefore
+  from `worker.js`, the same function the cron runs: the tiles of `TILES` (21 since the hourly
+  trim, below) with the same spacing and the same refusal breaker, the `snap:planes` write, then the `agg:jam` roll. Its snapshot therefore
   has the Worker's shape by construction, plus one field ahead of `tiles`: `writer`
   (`github-actions` from the workflow, `collect.mjs` from a hand run). It writes through the
   Cloudflare KV REST API with `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` (the deploy's
   repository secrets) into the namespace titled `OBS_KV`, or the one named by `OBS_KV_ID` when that
-  is set. Off Cloudflare there is no 50 call cap, so every tile may try both sources (at most 50
-  calls). A runner is one address, and adsb.lol refuses one address from about the fourth call at
+  is set. Off Cloudflare there is no 50 call cap, so every tile may try both sources
+  (`COLLECTOR_BUDGET`, two calls a tile plus two: 44 for the 21 tiles). A runner is one address, and adsb.lol refuses one address from about the fourth call at
   the Worker's 250 ms spacing, so the collector alone spaces adsb.lol calls 1,000 ms apart
   (`COLLECTOR_SPACING_MS`, carried on its round's budget); the Worker keeps its own spacing. The
   TFRs and the NOTAM sweep stay the Worker's.
-- **When it runs.** `.github/workflows/collect-antenna.yml`, started every ten minutes by the
+- **When it runs.** `.github/workflows/collect-antenna.yml`, started once an hour by the
   Worker's cron (next bullet), by hand, and once by a push that changes the collector. It has no
   schedule trigger: GitHub's cron for it never fired in the five hours after the push, and one that
   started firing would double every run against the Worker's dispatch. GitHub queues a dispatched
   run for a while before a runner starts it; the snapshot's own `t`, the age `/planes` serves and the
   page's stale label show that honestly.
-- **Who starts it (2026-10-11).** The Worker's own Cloudflare cron, every ten minutes: it is the
-  collector's one scheduler. Keane's repository secret `GH_DISPATCH_TOKEN` is a fine-grained GitHub
-  token limited to this repository, with Contents: Read and write (the permission GitHub's REST docs
-  name for creating a repository dispatch event) beside the read-only Metadata access every
-  fine-grained token carries. Contents: Read and write is the least permission `repository_dispatch`
-  accepts and it also allows pushes to master, so this token is the site's write key and must be
-  rotated if the Worker is ever compromised. `deploy-antenna.yml` pushes it to the Worker with
-  `wrangler secret put` when the repository has it, from its own step's environment, never echoed.
-  Each cron, after the deferral decision and after every other stage (so it spends a call the others
-  leave in the 44 call budget and none of them loses one; in the rare round whose tiles alone spend
-  43 calls nothing is left, and it skips with `no subrequest left`), the Worker sends ONE `POST
-  https://api.github.com/repos/keenlooks/keenlooks.github.io/dispatches` with
-  `{"event_type":"collect-antenna"}`, never following a redirect, when the stored snapshot is absent,
-  its own, or a collector's 5 minutes old or more (`DISPATCH_STALE_MS`), and KV `dispatch:last` is
-  absent or 5 minutes old or more (`DISPATCH_GAP_MS`). The round a dispatch starts begins a minute or
-  more after the cron (GitHub's queue, the runner's boot), so at the next cron its snapshot is between
-  5 and 10 minutes old and that cron sends again: one run per cron, and in a simulation with that
-  delay at 60 to 290 s the snapshot was never more than 10.4 minutes old (11.9 with every third cron
-  90 s late). Past about 295 s of delay every other cron skips and the snapshot reaches about 20
-  minutes. It records `dispatch:last` `{t, status}` whatever GitHub answers (a redirect is recorded
-  with its 3xx status), so a broken token costs one call per cron and no more, and logs one line
+- **Who starts it (2026-10-11, hourly since the same day).** The Worker's own Cloudflare cron: it
+  is the collector's one scheduler, and it starts the collector once an hour (Keane: "Let's make
+  the pull be every 60 mins to be super nice"). Keane's repository secret `GH_DISPATCH_TOKEN` is a
+  fine-grained GitHub token limited to this repository with Actions: Read and write (beside the
+  read-only Metadata access every fine-grained token carries) and no Contents permission, so the
+  Worker uses the workflow's own `workflow_dispatch` endpoint, which that permission covers (GitHub
+  refuses a repository dispatch without Contents: Read and write). What the token can do if it ever
+  leaks: start, re-run, cancel and disable this repository's workflows (`collect-antenna.yml`,
+  `deploy-antenna.yml` and `update-claude-context.yml` carry a `workflow_dispatch` trigger, each
+  runs on a ref that already exists) and delete their runs and logs; it cannot change a file or
+  push. Rotate it if the Worker is ever compromised. `deploy-antenna.yml` pushes it to the Worker
+  with `wrangler secret put` when the repository has it, from its own step's environment, never
+  echoed. Each cron, after the deferral decision and after every other stage (so it spends a call
+  the others leave in the 44 call budget and none of them loses one; the 21 tiles spend at most 42,
+  so it always has its call, and with no call left it would skip with `no subrequest left`), the
+  Worker sends ONE `POST
+  https://api.github.com/repos/keenlooks/keenlooks.github.io/actions/workflows/collect-antenna.yml/dispatches`
+  with `{"ref":"master"}` (`GH_REPO`, `GH_WORKFLOW` and `GH_REF` in `worker.js`; GitHub answers 204),
+  never following a redirect, when the stored snapshot is absent, its own, or a collector's 50
+  minutes old or more (`DISPATCH_STALE_MS`), and KV `dispatch:last` is absent or 50 minutes old or
+  more (`DISPATCH_GAP_MS`). The round a dispatch starts carries a `t` a minute or two after the
+  cron (GitHub's queue, the runner's boot), so the cron 50 minutes on finds it under 50 minutes old
+  and skips, and the cron an hour on sends: one run an hour. In a 24 hour simulation
+  (`_tests/observatory/antenna-hourly-2026-10-11/`) with that delay at 45 to 590 s, crons 70 or 90 s
+  late included, there were 24 runs, never two inside 50 minutes, and the snapshot was never more
+  than 60.4 minutes old; past about 595 s of delay the slot moves to every 70 minutes (21 runs a
+  day). A refused run writes nothing and the next dispatch goes 50 minutes after it (the snapshot
+  then reaches about 110 minutes, with the Worker's own round running from 75); a collector that
+  never lands is asked every 50 minutes, 29 times a day. It records `dispatch:last` `{t, status}`
+  whatever GitHub answers (a redirect is recorded with its 3xx status), so a broken token costs one
+  call per 50 minutes and no more, and logs one line
   after the cron line: `dispatch: sent, status 204`, `dispatch: sent, status 401, body <the first 120
   characters>`, or `dispatch: skipped, <why>`; `/health` shows `dispatch: {t, status}`. The token goes
   to `api.github.com` and nowhere else, and never into a log, a KV value or `/health`. Without the
@@ -108,25 +122,38 @@ KV, where the Worker serves them exactly as before.
 - **The deferral rule.** Each cron first reads the head of the stored snapshot (the fields before
   `tiles`, without parsing the tile array: `snapHead`, a few microseconds where a full parse of a
   250 to 750 KB snapshot costs 0.5 to 2 ms of a cron's 10 ms). When it names a writer and is younger
-  than 25 minutes (`COLLECTOR_FRESH_MS`; a `t` more than 5 minutes in the future is a skewed
+  than 75 minutes (`COLLECTOR_FRESH_MS`, the hour plus the queue and the round; a `t` more than 5 minutes in the future is a skewed
   clock and counts as absent, and ages are clamped at 0), the cron makes no tile call and no snapshot or jam
   write, logs `deferred to the collector, age N s` in its log line, and its whole call budget goes
   to the TFRs. When the stored snapshot is older, absent, or the Worker's own (the Worker never
   names a writer), the cron runs its own round as before: that is the fallback. The fallback
-  never replaces a collector snapshot with a DARK round (fewer than 6 of 24 tiles), whatever that
+  never replaces a collector snapshot with a DARK round (fewer than a quarter of the tiles, 6 of the 21), whatever that
   snapshot's age: `/planes` serves the age honestly, and a dark overwrite would only erase good
   data. Whoever writes, a stored snapshot with a newer `t` is never overwritten, the Worker also leaves alone a fresh
   collector snapshot that landed during its own round, and a round that leaves the snapshot alone
-  leaves the jam ring alone too. KV is eventually consistent (about a minute), which a ten minute
+  leaves the jam ring alone too. KV is eventually consistent (about a minute), which an hourly
   cadence absorbs.
 - **When the runner is refused too.** A collection that reaches fewer than a quarter of the tiles
-  (under 6 of 24) writes nothing and exits 0 with one `::warning::` line naming the tile count
-  and the statuses seen (a refusal is the upstream's choice, not a fault; red runs would mean 144
-  failures and emails a day). Once the last collector snapshot is 25 minutes old the Worker's own
-  round runs again. Exit 2, a red run, is kept for real faults (missing secrets, a namespace the
+  (under 6 of the 21) writes nothing and exits 0 with one `::warning::` line naming the tile count
+  and the statuses seen (a refusal is the upstream's choice, not a fault; red runs would mean a
+  failure and an email every hour). Once the last collector snapshot is 75 minutes old the Worker's
+  own round runs again. Exit 2, a red run, is kept for real faults (missing secrets, a namespace the
   token cannot list, a KV read or write that failed) and says what was and was not written. A
   key whose read failed in the run, including a 200 whose body never arrived, is never written,
   so the jam ring is never rebuilt from nothing.
+- **The tile list (hourly pass, 2026-10-11).** Keane: "Yes remove tiles that aren't important if
+  that saves a lot of data being pulled." Three of the 24 tiles were dropped by measurement: in
+  every sample taken (three dev antenna rounds, the public snapshot, two collector dry runs for the
+  share, one fetch of the Highveld tile) each was under 2 percent of the aircraft, fed no GPS cell
+  with 5 or more aircraft reporting `nac_p` and fewer than 3 winds cells: Lapland and the Gulf of
+  Bothnia (1 to 19 aircraft), Mesopotamia (0) and northern Andes (0 or 1). The Highveld tile was a
+  candidate until its 07:13 local sample fed a GPS cell, so it stays; the page's copy names none of
+  the regions only the three reached. Their answers weighed 7,036, 101 and 786 bytes at 05:20Z, so
+  the trim saves 3 requests a round (72 a day) and about 0.2 MB a day; the hourly cadence is the
+  saving. The table and every number: `_tests/observatory/antenna-hourly-2026-10-11/README.md`.
+  `TILES` is the one list (the collector and the Worker's fallback both read it), the snapshot
+  carries `tilesTotal`, and the page reads its counts from the snapshot. `assets/js/obs-feeds.js`
+  `OM_SITES` follows `TILES` (t-feeds checks the two match).
 - **Run it by hand.** `gh workflow run collect-antenna.yml --repo keenlooks/keenlooks.github.io --ref master`,
   then `gh run watch` (or `gh run list --workflow collect-antenna.yml --limit 1`). `/health`
   names the writer in its `tiles` summary once the edge serves the new snapshot.
@@ -172,7 +199,7 @@ Prerequisites: node and a Cloudflare account. No install step: `npx` fetches wra
    curl https://obs-antenna.<your-subdomain>.workers.dev/health
    ```
 
-   The first cron runs within five minutes of deploy; before it does, `/planes` and `/jam`
+   The first cron runs within ten minutes of deploy; before it does, `/planes` and `/jam`
    answer 503 with `offline: true`, which is expected.
 
 4. If the printed subdomain is not `obs-antenna.keenlooks-cloudflare.workers.dev`, update the default in
@@ -200,7 +227,7 @@ That binds `127.0.0.1:8788` with a local KV namespace. The page accepts
 `?antenna=http://127.0.0.1:8788` as a dev override. To fill local KV, trigger the cron once:
 
 ```
-curl "http://127.0.0.1:8788/__scheduled?cron=*/5+*+*+*+*"
+curl "http://127.0.0.1:8788/__scheduled?cron=*/10+*+*+*+*"
 ```
 
 ### Tests
@@ -210,8 +237,8 @@ The Worker's logic is written as functions that take an injected
 no wrangler. The suite lives outside the repo, in the run directory:
 
 ```
-node %LOCALAPPDATA%\Temp\observatory\run1\tests\node\t-antenna.js
-ANT_BREAK=1 node ...\t-antenna.js     (proves the assertions bite: this run must fail)
+node _tests/observatory/run1/tests/node/t-antenna.js
+ANT_BREAK=1 node _tests/observatory/run1/tests/node/t-antenna.js   (proves the assertions bite: this run must fail)
 ```
 
 ## Upstream politeness, licensing and credit
@@ -237,19 +264,25 @@ apart, its documented rate (`SOURCE_MIN_SPACING_MS` in `worker.js`).
   `https://tfr.faa.gov/download/detail_<notam id with the slash replaced by an underscore>.xml`,
   verified live on 2026-08-15 against notams 6/5250, 6/4583 and 6/5153.
 
-Bandwidth note for the owner: 24 tiles at roughly 370 KB each, every five minutes, is about
-2.5 GB a day pulled from a volunteer funded feed network. If adsb.lol or adsb.fi ever asks
-for less, the two knobs are the cron interval in `wrangler.toml` and the tile list at the top
-of `worker.js`, and both can be changed without touching anything else.
+Bandwidth note for the owner, measured on 2026-10-12 (`_tests/observatory/antenna-hourly-2026-10-11/`):
+one collector round of the 21 tiles at 05:40Z, a quiet hour with 2,132 aircraft, pulled 1.61 MB of
+JSON (gzip on the wire, so less over the network; a tile averaged 77 KB, the busiest 405 KB). At
+the busiest round measured (4,519 aircraft, 2026-10-11 14:22Z) a round is about 3.4 MB. Once an
+hour that is about 39 to 82 MB a day from a volunteer funded feed network, where a round every ten
+minutes was about 230 to 490 MB. If adsb.lol or adsb.fi ever asks for less, the two knobs are the
+collector's start (`DISPATCH_STALE_MS` and `DISPATCH_GAP_MS` in `worker.js`) and the tile list at
+the top of `worker.js`; the cron interval in `wrangler.toml` paces only the TFRs, the NOTAM sweep
+and the Worker's own fallback round.
 
 ## What the cron does
 
-Steps 1 to 3 are the aircraft phase (`runAircraftPhase`), which the collector runs too; the cron
-skips them while a collector snapshot is fresh (see "The collector").
+Steps 1 to 3 are the aircraft phase (`runAircraftPhase`), which the collector runs once an hour;
+the cron skips them while a collector snapshot is younger than 75 minutes (see "The collector").
 
-Every five minutes:
+Every ten minutes (`wrangler.toml`):
 
-1. Fetch the 24 pinned 250 nm tiles, serialized, at least 250 ms apart. adsb.lol first,
+1. Fetch the pinned 250 nm tiles (21 since the hourly pass; the snapshot's `tilesTotal` says how
+   many), serialized, at least 250 ms apart. adsb.lol first,
    adsb.fi for any tile that fails. Each tile is wrapped in its own try/catch, so a failed
    tile is written with `ok: false` and a reason rather than taking the cron down.
    `alt_baro` is the string `"ground"` for about a tenth of the aircraft in a busy tile;
@@ -257,13 +290,29 @@ Every five minutes:
 2. Write KV `snap:planes`: `{ t, distNm, tilesOk, tilesTotal, planes, tiles: [{ clat, clon,
    region, ok, src, planes: [[lat, lon, altFt, gsKt, trackDeg, tasKt, magHeadingDeg, nacP,
    nic, wd, ws], ...] }] }`. Latitude and longitude keep three decimals, everything else one.
-3. Bin the same aircraft into 2 by 2 degree cells and roll the rings in KV `agg:jam`: twelve
-   five minute buckets for the last hour, twenty four hourly buckets for the last day. Each
-   bin holds `[n, nLow]`, where `n` counts aircraft that reported `nac_p` and `nLow` counts
-   those reporting 6 or lower. Aircraft that do not report `nac_p` are in neither number, so
-   the fraction stays meaningful.
+3. Bin the same aircraft into 2 by 2 degree cells and roll the rings in KV `agg:jam`: six ten
+   minute buckets for the last hour (`JAM_BUCKETS_1H` of `JAM_BUCKET_MS`), twenty four hourly
+   buckets for the last day. Each bin holds `[n, nLow]`, where `n` counts aircraft that reported
+   `nac_p` and `nLow` counts those reporting 6 or lower. Aircraft that do not report `nac_p` are
+   in neither number, so the fraction stays meaningful. With the collector writing once an hour,
+   each sample opens its own ten minute bucket, so the six buckets hold the last six samples. A
+   repeated write inside one ten minute slot (a hand run beside a scheduled one) replaces that
+   bucket, so a bucket is always one sample; the hourly bucket still sums its hour.
+   `/jam`'s hour column (`n1h`, `nLow1h`) is the NEWEST sample only: the bucket within
+   `JAM_LATEST_SPAN_MS` (one bucket) of the aggregate's own `t` (second pass, 2026-10-12). It used
+   to sum every bucket of the last 70 minutes on the request clock, which at the hourly cadence
+   emptied the column 70 minutes after a sample's cron while `/jam` still called it fresh (the
+   page then said no cell had five aircraft), and for up to ten minutes after each new sample
+   summed two samples an hour apart (cells 137, 212, 129 and clusters neither sample had). Ageing
+   is left to the 75 minute stale windows: an old aggregate serves its last sample marked stale.
+   At either cadence `n` is the aircraft of one snapshot; at the ten minute cadence (the dev
+   antenna, the Worker's fallback) the column used to sum six or seven. Measured on 2026-10-12,
+   one snapshot gives 129 to 157 cells with 5 or more aircraft reporting `nac_p` (the page judges
+   those), where the dev antenna's six-sample hour gave 303 to 306: the jamming layer judges about
+   half as many cells, and its counts are distinct aircraft of one reading, dated exactly by that
+   reading's own `t` ("in the latest reading, N min ago").
 4. Fetch the TFR list. For new TFRs of type VIP, SECURITY, HAZARDS or SPACE, fetch the detail
-   document (at most four per cron) and parse the polygon and circle geometry out of it,
+   document (at most `MAX_TFR_DETAIL_PER_CRON`, eight, per cron) and parse the polygon and circle geometry out of it,
    caching the result under `tfrgeo:<notam id>`. Anything without geometry falls back to the
    state centroid with `approx: true`, which the page shows as an approximate location rather
    than a precise one. The `tfrs` write is skipped whenever the enriched payload is identical
@@ -273,6 +322,8 @@ Every five minutes:
    their `coordinates` and `radius` into circles. The FAA API has no free text search and caps
    `locationRadius` at 100 nm, so this sweep is coarser than its own footprint: coverage is
    partial by construction, and only US NOTAMs exist at all. The page says both.
+6. With `GH_DISPATCH_TOKEN`, start the collector when its snapshot is 50 minutes old (see "The
+   collector"), last, on a call the stages above leave.
 
 ## Budgets
 
@@ -282,15 +333,15 @@ cap, and the cron caps detail fetches and sweep points per run.
 
 | Key | Writes per day | Notes |
 |---|---|---|
-| `snap:planes` | 144 | one per ten minute round, the collector's (through the KV REST API, which counts here too) or the Worker's fallback |
-| `agg:jam` | 144 | rolled with each snapshot write |
+| `snap:planes` | 24 | one per hourly collector round (through the KV REST API, which counts here too); up to 144 only while the collector is down and the Worker's own fallback rounds reach 6 or more tiles |
+| `agg:jam` | 24 | rolled with each snapshot write (up to 144 with the fallback, as above) |
 | `tfrs` | roughly 10 to 60 | skipped when the payload is unchanged, 144 in the worst case |
 | `tfrgeo:<id>` | roughly 10 to 30 | only new TFRs, plus a backfill of about 95 on the first day |
 | `notams:gps` | 4 | one per six hour sweep |
-| `dispatch:last` | at most 144 | one per collector dispatch, at most one per cron, only with `GH_DISPATCH_TOKEN` |
-| **Typical total** | **roughly 460 to 530** | worst case about 705 (144 x 4, a first-day `tfrgeo` backfill of about 125, 4); the 1,000 cap holds with about 295 to spare. Each extra collector run (a hand dispatch, a push) adds 2 |
+| `dispatch:last` | 24, at most 29 | one per collector dispatch, at most one per 50 minutes, only with `GH_DISPATCH_TOKEN` |
+| **Typical total** | **roughly 96 to 166** | worst case about 590 (144 x 3 with the collector down, a first-day `tfrgeo` backfill of about 125, 4, 29); the 1,000 cap holds with about 410 to spare. Each extra collector run (a hand dispatch, a push) adds 2 |
 
-Payload sizes, measured against the live fixtures (24 tiles, about 12,500 aircraft):
+Payload sizes, measured against the live fixtures (24 tiles, about 12,500 aircraft; the list is 21 tiles since 2026-10-11, and the live snapshots measured on 2026-10-11 and 12 were 114 to 254 KB):
 
 | Route | Uncompressed | Notes |
 |---|---|---|

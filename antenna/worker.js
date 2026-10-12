@@ -24,6 +24,8 @@
  *
  * 2026-10-11: with the secret GH_DISPATCH_TOKEN the cron also starts the GitHub Actions aircraft
  * collector (dispatchCollector below), one POST to api.github.com when the collector is late.
+ * Since the hourly pass the collector runs once an hour (a workflow_dispatch when the stored
+ * snapshot is 50 minutes old), and the Worker's own ten minute cron keeps the TFRs.
  */
 
 /* ------------------------------------------------------------------ constants */
@@ -40,9 +42,14 @@ export const TFR_LIST_URL = 'https://tfr.faa.gov/tfrapi/exportTfrList';
 export const TFR_DETAIL_BASE = 'https://tfr.faa.gov/download/detail_';
 export const FAA_NOTAM_URL = 'https://external-api.faa.gov/notamapi/v1/notams';
 /* 2026-10-11 (the dispatch): the repository whose collector workflow this Worker starts, and the one
-   GitHub endpoint it calls. GH_DISPATCH_TOKEN is sent to this URL and nowhere else. */
+   GitHub endpoint it calls. GH_DISPATCH_TOKEN is sent to this URL and nowhere else. Hourly pass: the
+   endpoint is the workflow's own workflow_dispatch (the workflow file and the ref it runs on are the
+   next two constants), because Keane's token carries Actions: Read and write and no Contents
+   permission, which this endpoint accepts and the repository dispatch endpoint refuses. */
 export const GH_REPO = 'keenlooks/keenlooks.github.io';
-export const GH_DISPATCH_URL = 'https://api.github.com/repos/' + GH_REPO + '/dispatches';
+export const GH_WORKFLOW = 'collect-antenna.yml';
+export const GH_REF = 'master';
+export const GH_DISPATCH_URL = 'https://api.github.com/repos/' + GH_REPO + '/actions/workflows/' + GH_WORKFLOW + '/dispatches';
 
 export const TILE_DIST_NM = 250;
 export const TILE_SPACING_MS = 250;      /* serialized upstream calls; adsb.fi's own 1/s is SOURCE_MIN_SPACING_MS */
@@ -61,7 +68,7 @@ export const REFUSALS_TO_SKIP = 3;
  * cron, start to start. adsb.fi documents one request per second, and after an adsb.lol burst
  * trips the breaker every tile goes to adsb.fi at the 250 ms tile spacing, so its calls
  * (fallback or primary) wait for their own second. adsb.lol keeps the tile spacing. Waiting
- * costs wall time only (24 tiles at 1 s is about 24 s), never a subrequest.
+ * costs wall time only (the 21 tiles at 1 s is about 21 s), never a subrequest.
  */
 export const SOURCE_MIN_SPACING_MS = { 'adsb.lol': TILE_SPACING_MS, 'adsb.fi': 1000 };
 
@@ -69,14 +76,15 @@ export const SOURCE_MIN_SPACING_MS = { 'adsb.lol': TILE_SPACING_MS, 'adsb.fi': 1
 export const MAX_SUBREQUESTS = 44;
 /*
  * TFR geometries enriched per cron (r12 item 16, raised from 4). The arithmetic on the
- * 44 call budget, worst case first: 24 tiles at up to 2 calls each is 48, which is already
- * over the cap, so collectTiles stops adding tiles once budget.left <= 2, and the tiles leave
- * at least 1 (2026-10-11, measured in t-antenna 6f: a tile started with 3 left can spend 2).
- * On a normal round the primary source answers first time, so the tiles spend 24, the TFR
- * list spends 1 and the GPS sweep spends at most 1: 18 calls are left. (2026-10-11: the
- * collector dispatch, only with GH_DISPATCH_TOKEN, goes last and spends 1 of what the stages
- * before it left; the sweep stops with 1 left, so only a round whose tiles alone spend 43
- * leaves it none.) The detail loop is gated on budget.left > 2 as well as on this ceiling, so
+ * 44 call budget, worst case first: the tiles take up to 2 calls each, and collectTiles stops
+ * adding tiles once budget.left <= 2. Since the hourly pass trimmed TILES to 21, the worst round
+ * spends 42 and leaves 2 (with 24 tiles it was 48, over the cap, and a tile started with 3 left
+ * could leave 1). On a normal round the primary source answers first time, so the tiles spend
+ * one call each (21), the TFR list spends 1 and the GPS sweep spends at most 1: 21 calls are
+ * left. (2026-10-11: the collector dispatch, only with GH_DISPATCH_TOKEN, goes last and spends
+ * 1 of what the stages before it left; the tiles leave at least 2, the TFR list takes 1 and the
+ * sweep stops with 1 left, so the trimmed list always leaves it its call.) The detail loop is
+ * gated on budget.left > 2 as well as on this ceiling, so
  * 8 is the most it will ever take and it takes fewer whenever the tiles had a bad round. At 8 per
  * 10 minute cron a list of 60 restrictions is fully enriched in about 75 minutes instead of
  * two and a half hours, which is the difference between tfr_active being a tour class on a
@@ -89,6 +97,12 @@ export const TFR_FAIL_MAX_TRIES = 3;
 export const JAM_BIN_DEG = 2;
 export const JAM_BUCKET_MS = 10 * 60 * 1000;
 export const JAM_BUCKETS_1H = 6;
+/* antenna-hourly second pass (2026-10-12): the /jam "1h" column is the NEWEST sample only: the
+   buckets written within this span before the aggregate's own t, which is the one bucket holding
+   that t (each bucket is one sample, rollJam replaces a repeated write within a slot). It is under
+   an hour on purpose, so one hourly sample is the hour, and the column no longer ages on the
+   request clock: the 75 minute stale windows (ROUTES, the page's feeds) do the ageing. */
+export const JAM_LATEST_SPAN_MS = JAM_BUCKET_MS;
 export const JAM_HOURS_24H = 24;
 export const NACP_LOW_MAX = 6;           /* nac_p <= 6 counts as degraded position integrity */
 
@@ -98,8 +112,15 @@ export const GPS_SWEEP_RADIUS_NM = 100;
 export const GPS_NOTAM_TTL_MS = 36 * 3600 * 1000;
 
 /*
- * The 24 sample tiles, 250 nm radius each. Chosen for volunteer receiver density crossed with
+ * The sample tiles, 250 nm radius each. Chosen for volunteer receiver density crossed with
  * the regions where GPS interference is actually reported. Every entry names its region.
+ *
+ * Hourly pass (2026-10-11, Keane: "remove tiles that aren't important"): three of the original 24
+ * were dropped by measurement, each under 2 percent of the aircraft, feeding no judged GPS cell
+ * and fewer than 3 winds cells in every sample taken (tile table and samples in
+ * _tests/observatory/antenna-hourly-2026-10-11/README.md): Lapland and the Gulf of Bothnia
+ * (65, 25), Mesopotamia (33.3, 44.4) and northern Andes (4.7, -74.1). The collector and the
+ * Worker's fallback both read this one list, and the snapshot carries its own tilesTotal.
  *
  * COUPLED: assets/js/obs-feeds.js OM_SITES is this list of centres, in this order. The winds
  * instrument compares an Open-Meteo forecast at those points against the aircraft sampled in
@@ -108,16 +129,14 @@ export const GPS_NOTAM_TTL_MS = 36 * 3600 * 1000;
  * OM_SITES follows.
  */
 export const TILES = [
-  /* Europe (6) */
+  /* Europe (5) */
   { lat: 51.0, lon: 3.0, region: 'Benelux and the southern North Sea' },
   { lat: 55.0, lon: 20.5, region: 'Baltic Sea and Kaliningrad' },
   { lat: 44.0, lon: 33.0, region: 'Black Sea' },
   { lat: 37.5, lon: 25.0, region: 'Aegean and the eastern Mediterranean' },
-  { lat: 65.0, lon: 25.0, region: 'Lapland and the Gulf of Bothnia' },
   { lat: 40.0, lon: -3.5, region: 'Iberia' },
-  /* Middle East (3) */
+  /* Middle East (2) */
   { lat: 33.5, lon: 35.0, region: 'Levant and Cyprus' },
-  { lat: 33.3, lon: 44.4, region: 'Mesopotamia' },
   { lat: 26.0, lon: 52.0, region: 'Persian Gulf' },
   /* North America (6) */
   { lat: 41.0, lon: -74.0, region: 'United States northeast' },
@@ -131,9 +150,8 @@ export const TILES = [
   { lat: 35.7, lon: 139.7, region: 'Kanto and the Japanese coast' },
   { lat: 24.5, lon: 120.0, region: 'Taiwan Strait' },
   { lat: 1.35, lon: 103.8, region: 'Singapore and the Malacca Strait' },
-  /* South America (2) */
+  /* South America (1) */
   { lat: -23.5, lon: -46.6, region: 'southeast Brazil' },
-  { lat: 4.7, lon: -74.1, region: 'northern Andes' },
   /* Oceania (2) */
   { lat: -33.9, lon: 151.2, region: 'southeast Australia' },
   { lat: -37.0, lon: 175.0, region: 'northern New Zealand' },
@@ -143,11 +161,15 @@ export const TILES = [
 
 /*
  * Route table. kv is the key each route serves; staleAfterMs is when the served value starts
- * announcing itself as stale (the value is still served, honestly labelled).
+ * announcing itself as stale (the value is still served, honestly labelled). Hourly pass: the
+ * collector rewrites snap:planes and agg:jam once an hour, so both are stale at 75 minutes (the
+ * hour, the queue before a runner starts, and the round itself), the same window as
+ * COLLECTOR_FRESH_MS and the page's planes and jam feeds. At 15 and 30 minutes they would call a
+ * snapshot that is on time stale for most of every hour.
  */
 export const ROUTES = [
-  { path: '/planes', kv: 'snap:planes', maxAge: 45, sMaxAge: 90, staleAfterMs: 15 * 60 * 1000 },
-  { path: '/jam', kv: 'agg:jam', maxAge: 60, sMaxAge: 120, staleAfterMs: 30 * 60 * 1000 },
+  { path: '/planes', kv: 'snap:planes', maxAge: 45, sMaxAge: 90, staleAfterMs: 75 * 60 * 1000 },
+  { path: '/jam', kv: 'agg:jam', maxAge: 60, sMaxAge: 120, staleAfterMs: 75 * 60 * 1000 },
   { path: '/tfrs', kv: 'tfrs', maxAge: 300, sMaxAge: 600, staleAfterMs: 6 * 3600 * 1000 },
   { path: '/notams/gps', kv: 'notams:gps', maxAge: 450, sMaxAge: 900, staleAfterMs: 24 * 3600 * 1000 },
   { path: '/health', kv: null, maxAge: 0, sMaxAge: 0 },
@@ -529,7 +551,7 @@ export function binCenter(key, deg) {
 }
 
 /*
- * One 5-minute sample: how many aircraft reported nac_p in each bin, and how many of those
+ * One sample (one snapshot): how many aircraft reported nac_p in each bin, and how many of those
  * reported a degraded value. Aircraft that do not report nac_p at all are not counted either
  * way, so the fraction stays meaningful.
  */
@@ -571,9 +593,13 @@ function mergeBins(into, from) {
 }
 
 /*
- * Roll the ring buffers: twelve 5-minute buckets for the last hour, twenty four hourly
- * buckets for the last day. A repeated cron inside the same 5-minute slot merges into the
- * open bucket instead of creating a second one.
+ * Roll the ring buffers: JAM_BUCKETS_1H buckets of JAM_BUCKET_MS (six of ten minutes), twenty four
+ * hourly buckets for the last day. Hourly pass: the collector writes once an hour, so each sample
+ * opens its own ten minute bucket and the six buckets hold the last six samples. Second pass
+ * (2026-10-12): a repeated write inside the same ten minute slot REPLACES that bucket, so a bucket is
+ * always one sample and summarizeJam's newest-sample column never sums two (it used to merge, which
+ * at the hourly cadence put a hand run and a scheduled run minutes apart into one count). The hourly
+ * bucket still sums every sample of its hour: the 24 hour column is a count over the day.
  */
 export function rollJam(prev, sample, nowMs) {
   const binDeg = (prev && prev.binDeg) || JAM_BIN_DEG;
@@ -584,7 +610,7 @@ export function rollJam(prev, sample, nowMs) {
   const bt = Math.floor(nowMs / JAM_BUCKET_MS) * JAM_BUCKET_MS;
   const last = buckets.length ? buckets[buckets.length - 1] : null;
   if (last && last.t === bt) {
-    buckets[buckets.length - 1] = { t: bt, bins: mergeBins(copyBins(last.bins), sample) };
+    buckets[buckets.length - 1] = { t: bt, bins: copyBins(sample) };
   } else {
     buckets.push({ t: bt, bins: copyBins(sample) });
   }
@@ -606,6 +632,12 @@ export function rollJam(prev, sample, nowMs) {
 /*
  * The /jam payload: one row per bin, [latCenter, lonCenter, n1h, nLow1h, n24h, nLow24h].
  * The client decides what counts as bad; the antenna only counts.
+ * Second pass (2026-10-12, the review's two STANDS): n1h and nLow1h are the NEWEST sample, the
+ * buckets within JAM_LATEST_SPAN_MS before the aggregate's own t. On the request clock (buckets
+ * within 70 minutes of now) an hourly sample left the column at its cron plus 70 minutes while /jam
+ * and the page still called it fresh until 75, so every bin read 0 and the page said no cell had
+ * five aircraft; and from a new sample's landing until then the column summed two samples an hour
+ * apart, which made clusters neither sample had. The 24 hour column stays on the request clock.
  */
 export function summarizeJam(agg, nowMs) {
   const binDeg = (agg && agg.binDeg) || JAM_BIN_DEG;
@@ -613,8 +645,10 @@ export function summarizeJam(agg, nowMs) {
   const h24 = {};
   const buckets = (agg && agg.buckets) || [];
   const daily = (agg && agg.daily) || [];
+  const aggT = agg ? num(agg.t) : null;
   for (let i = 0; i < buckets.length; i++) {
-    if (buckets[i].t >= nowMs - 3600000 - JAM_BUCKET_MS) mergeBins(h1, buckets[i].bins);
+    const newest = aggT !== null ? buckets[i].t > aggT - JAM_LATEST_SPAN_MS : i === buckets.length - 1;
+    if (newest) mergeBins(h1, buckets[i].bins);
   }
   for (let i = 0; i < daily.length; i++) {
     if (daily[i].t >= nowMs - 24 * 3600000) mergeBins(h24, daily[i].bins);
@@ -1193,15 +1227,16 @@ export async function refreshTfrs(deps, budget) {
 /*
  * 2026-10-11 (the collector). adsb.lol answers 429 and adsb.fi 403 to Cloudflare's shared egress,
  * so the aircraft tiles are gathered OUTSIDE Cloudflare: antenna/collect.mjs, run by the GitHub
- * Actions workflow .github/workflows/collect-antenna.yml every ten minutes, runs
+ * Actions workflow .github/workflows/collect-antenna.yml once an hour, runs
  * runAircraftPhase below (the very function runCron runs) and writes snap:planes and agg:jam
  * into this Worker's KV through the Cloudflare KV REST API. A collector's snapshot names its
  * writer; the Worker's own never does. While a collector snapshot is younger than
  * COLLECTOR_FRESH_MS, runCron leaves the aircraft to it and spends its calls on the TFRs; when
  * the stored snapshot is older, absent or the Worker's own, runCron runs its own round as before
- * (the fallback).
+ * (the fallback). Hourly pass: 75 minutes, the hour plus the queue and the round, so the Worker
+ * falls back only once an hourly run has really been missed.
  */
-export const COLLECTOR_FRESH_MS = 25 * 60 * 1000;
+export const COLLECTOR_FRESH_MS = 75 * 60 * 1000;
 /* Second pass: a writer snapshot whose t is more than this far AHEAD of the cron's clock is a
    skewed clock, not a fresh collector: it is treated as absent (the Worker runs its round, and the
    newer-t guard does not protect it). Within it, the age is clamped at 0. */
@@ -1275,7 +1310,7 @@ async function aircraftWriteSkip(deps, t, ok, total, o) {
 }
 
 /*
- * The aircraft phase: the 24 tiles (spacing, breaker and budget exactly as collectTiles has
+ * The aircraft phase: the TILES (spacing, breaker and budget exactly as collectTiles has
  * them), the snap:planes write, then the agg:jam roll. runCron and antenna/collect.mjs both run
  * this one function, so a collector's snapshot has the Worker's shape by construction. t is the
  * round's start: the snapshot's t and the jam slot. opts, all optional (runCron passes only
@@ -1292,7 +1327,8 @@ async function aircraftWriteSkip(deps, t, ok, total, o) {
  * Whoever runs it, a stored snapshot with a NEWER t is never overwritten, and a round that
  * leaves the snapshot alone leaves the jam ring alone too (the newer writer rolled that slot).
  * KV is eventually consistent (a write can take about a minute to reach every location), so
- * these checks hold for writes more than about a minute apart, which a ten minute cadence is.
+ * these checks hold for writes more than about a minute apart, which the hourly collector and
+ * the ten minute cron are.
  */
 export async function runAircraftPhase(deps, budget, t, opts) {
   const o = opts || {};
@@ -1332,24 +1368,24 @@ export async function runAircraftPhase(deps, budget, t, opts) {
  * 2026-10-11 (the dispatch). GitHub did not fire the collector's schedule once in five hours, while
  * this Worker's own cron fires every ten minutes, so this cron IS the collector's scheduler (the
  * schedule trigger is gone from collect-antenna.yml; a schedule that started firing would double
- * every run). With the secret GH_DISPATCH_TOKEN (Keane's fine-grained token, Contents: Read and write
- * on this repository only; deploy-antenna.yml pushes it when the repository has it) a cron sends ONE
- * repository_dispatch of type collect-antenna to GH_DISPATCH_URL when
+ * every run). With the secret GH_DISPATCH_TOKEN (Keane's fine-grained token on this repository only,
+ * Actions: Read and write and nothing else; deploy-antenna.yml pushes it when the repository has it)
+ * a cron sends ONE workflow_dispatch of collect-antenna.yml on GH_REF to GH_DISPATCH_URL when
  *   the stored snapshot is absent, the Worker's own, or a collector's at least DISPATCH_STALE_MS old
  *   (read through the deferral's own collectorAgeMs, so a snapshot the cron does not defer to counts
  *   as late too), and
  *   KV dispatch:last {t, status} is absent or at least DISPATCH_GAP_MS old (a t more than
  *   COLLECTOR_SKEW_MS in the future is a skewed clock and counts as absent).
- * Both are 5 minutes (second pass): the round a dispatch starts carries a t from minutes after the
- * cron (the TFR stage, GitHub's queue, the runner's boot), so at the next cron its snapshot is 10
- * minutes less that delay old, and 5 minutes of slack keeps every cron sending while the delay is
- * under about 5 minutes; a cron that fires late is still more than 5 minutes after the one before,
- * so it never skips a slot either. At a ten minute cron that is one dispatch per cron at most.
- * Every call is recorded in dispatch:last whatever GitHub answers, so a broken token costs one call
- * per cron and no more; t is the cron's own start, the clock the next cron compares. The
+ * Both are 50 minutes (hourly pass, Keane: "Let's make the pull be every 60 mins"): the round a
+ * dispatch starts carries a t from a minute or more after the cron (the TFR stage, GitHub's queue,
+ * the runner's boot), so the cron 50 minutes on finds it under 50 minutes old and skips, and the cron
+ * 60 minutes on finds it 60 minutes less that delay old and sends: one run an hour while the delay
+ * is under about ten minutes, and the 50 minute gap holds a second dispatch off whatever the snapshot
+ * says. Every call is recorded in dispatch:last whatever GitHub answers, so a broken token costs one
+ * call per 50 minutes and no more; t is the cron's own start, the clock the next cron compares. The
  * call counts in the subrequest budget and goes LAST in the cron, so no other stage ever loses a call
- * to it: it spends one the stages before it left (the TFR details stop at 2 left, the sweep at 1), and
- * in the rare round whose tiles alone spend 43 of the 44 it skips with "no subrequest left". The
+ * to it: it spends one the stages before it left (the TFR details stop at 2 left, the sweep at 1, and
+ * the trimmed tiles leave at least 2), and with no call left it skips with "no subrequest left". The
  * answer is one line, never the token or a header: "sent, status 204", "sent, status 401, body <its
  * first 120 characters>" (no body clause when the answer had none), "tried, no answer: <error>", or
  * "skipped, <why>".
@@ -1357,9 +1393,8 @@ export async function runAircraftPhase(deps, budget, t, opts) {
  * dispatch field, so it is byte-equal to the Worker before this trigger; dispatchLogLine then says
  * "dispatch: skipped, no token".
  */
-export const GH_DISPATCH_EVENT = 'collect-antenna';
-export const DISPATCH_STALE_MS = 5 * 60 * 1000;
-export const DISPATCH_GAP_MS = 5 * 60 * 1000;
+export const DISPATCH_STALE_MS = 50 * 60 * 1000;
+export const DISPATCH_GAP_MS = 50 * 60 * 1000;
 export const DISPATCH_BODY_HEAD = 120;
 
 export function dispatchConfigured(deps) {
@@ -1382,7 +1417,7 @@ function dispatchHead(text, token) {
 }
 
 /* One dispatch decision. collectorAge is the cron's collectorAgeMs for the stored snapshot (null when
-   it is absent, the Worker's own, skewed, or 25 minutes old or more). Returns the text of the log line
+   it is absent, the Worker's own, skewed, or 75 minutes old or more). Returns the text of the log line
    after "dispatch: ", and never throws. */
 export async function dispatchCollector(deps, budget, collectorAge, t) {
   const token = String((deps && deps.secrets && deps.secrets.ghDispatchToken) || '');
@@ -1412,9 +1447,10 @@ export async function dispatchCollector(deps, budget, collectorAge, t) {
         'User-Agent': USER_AGENT,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ event_type: GH_DISPATCH_EVENT }),
-      /* second pass: never follow a redirect (a renamed repository answers 301, and a followed POST
-         becomes a GET elsewhere); a 3xx is recorded like any other answer that is not 204 */
+      /* workflow_dispatch: the ref the workflow runs on, and nothing else (it declares no inputs) */
+      body: JSON.stringify({ ref: GH_REF }),
+      /* second pass: never follow a redirect (a renamed repository or workflow answers 301, and a
+         followed POST becomes a GET elsewhere); a 3xx is recorded like any other answer that is not 204 */
       redirect: 'manual',
     };
     if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) {

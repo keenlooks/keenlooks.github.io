@@ -2,19 +2,19 @@
  * The Observatory antenna's aircraft collector (2026-10-11).
  *
  * Why it exists: adsb.lol answers 429 and adsb.fi answers 403 to Cloudflare's shared egress
- * addresses, so the Worker's own cron reaches 0 or 1 of its 24 aircraft tiles, while the same
+ * addresses, so the Worker's own cron reached 0 or 1 of its 24 aircraft tiles, while the same
  * request from outside Cloudflare gets 200 from both. This script runs the antenna's aircraft
  * phase OUTSIDE Cloudflare and writes the result into the Worker's KV, where the Worker serves
  * it. It imports runAircraftPhase from worker.js, the very function the Worker's cron runs (the
- * 24 tiles with the same spacing and the same refusal breaker, then the agg:jam roll), so the
- * snapshot has the Worker's shape by construction. It adds one field, `writer`, and the Worker
- * defers to a snapshot that names a writer while it is younger than 25 minutes.
+ * tiles of worker.js TILES with the same spacing and the same refusal breaker, then the agg:jam
+ * roll), so the snapshot has the Worker's shape by construction. It adds one field, `writer`, and
+ * the Worker defers to a snapshot that names a writer while it is younger than 75 minutes.
  *
  *   node antenna/collect.mjs          real upstreams, writes snap:planes and agg:jam to OBS_KV
  *   node antenna/collect.mjs --dry    real upstreams, an in-memory KV, nothing written anywhere
  *
- * Node 20 or newer, no dependencies. Run by .github/workflows/collect-antenna.yml every ten
- * minutes. Environment (not needed for --dry):
+ * Node 20 or newer, no dependencies. Run by .github/workflows/collect-antenna.yml once an hour
+ * (the antenna Worker starts it). Environment (not needed for --dry):
  *   CLOUDFLARE_API_TOKEN    the deploy's repository secret (needs Workers KV Storage: Edit)
  *   CLOUDFLARE_ACCOUNT_ID   the deploy's repository secret
  *   OBS_KV_ID               optional: the namespace id; otherwise the namespace titled OBS_KV is
@@ -23,8 +23,8 @@
  * Exit status: 0 the snapshot and the jam ring were written, or a REFUSED round: fewer than a
  * quarter of the tiles came back, nothing was written, and a `::warning::` line names the tile
  * count and the statuses seen (a refused runner is an upstream's choice, not a fault, and would
- * otherwise make 144 red runs a day, each emailed); the Worker's own round takes over once the
- * last collector snapshot is 25 minutes old, and never replaces it with a dark round of its own.
+ * otherwise make a red run every hour, each emailed); the Worker's own round takes over once the
+ * last collector snapshot is 75 minutes old, and never replaces it with a dark round of its own.
  * 2 configuration or KV trouble, a real fault (the message says what was and was not written).
  *
  * Politeness: a runner is ONE address, and adsb.lol refuses one address from about the fourth call
