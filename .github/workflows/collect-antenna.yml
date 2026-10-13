@@ -14,15 +14,16 @@ name: Collect Observatory aircraft tiles
 #
 # Who starts it (2026-10-12, on-demand pass): the antenna Worker, with one workflow_dispatch of this
 # file on master whenever the stored snapshot is 25 minutes old or more and its last dispatch is 25
-# minutes old or more, sent by the page's own /planes request (a visit) or by the Worker's ten minute
-# cron while someone visited in the last 20 minutes, so this job runs every half hour while the page
-# is watched, once when a visit begins after a quiet spell, and never on a quiet night (Keane's
+# minutes old or more, sent by the page's own /planes request (a visit; since 2026-10-12's fourth pass
+# the Worker's cron sends none), so this job runs every half hour while the page is watched, once
+# when a visit begins after a quiet spell, and never on a quiet night or after a visitor has left (Keane's
 # decision, 2026-10-12: "Let's change the update frequency to every 30 mins then, but yes also make it
 # on demand"; it was once an hour from 2026-10-11). It uses the GH_DISPATCH_TOKEN
 # secret that deploy-antenna.yml pushes to it (Actions: Read and write). There is NO schedule
 # trigger here on purpose: GitHub's cron for this workflow never fired in five hours after the push,
-# and if it ever started it would double every run against the Worker's dispatch. The Worker's
-# cron is the one scheduler; without the token nothing starts this job but a hand or a push.
+# and if it ever started it would double every run against the Worker's dispatch. The Worker (on a
+# page's /planes request) is the one scheduler; without the token nothing starts this job but a hand
+# or a push.
 #
 # What this cannot promise:
 # - GitHub queues a dispatched run for a while before a runner starts it. Nothing hides that:
@@ -41,8 +42,8 @@ name: Collect Observatory aircraft tiles
 # Run it by hand: gh workflow run collect-antenna.yml --repo keenlooks/keenlooks.github.io --ref master
 
 on:
-  # No schedule: the antenna Worker sends this workflow_dispatch on a visit, and every half hour
-  # while someone is watching, when the snapshot is 25 minutes old or more (see the header).
+  # No schedule: the antenna Worker sends this workflow_dispatch from a page's /planes request when
+  # the snapshot is 25 minutes old or more, so every half hour while someone is watching (see the header).
   workflow_dispatch:
   # A push that changes the collector runs it once, as its own check. repository_dispatch stays as
   # a hand trigger for a token with Contents: Read and write and no Actions permission:

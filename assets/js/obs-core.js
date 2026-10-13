@@ -701,6 +701,14 @@
       fails: 0,
       seq: 0,
       timer: null,
+      /* fourth pass: when `timer` fires (schedulePoll), read by pullPeers */
+      timerAt: NaN,
+      /* fourth pass: the start of the cadence step the feed is in (stepAt), and while it polls sooner
+         than its cadence, the grid it returns to afterwards (gridAt) */
+      stepAt: NaN,
+      gridAt: NaN,
+      /* fifth pass: the delay of the last sooner step (own or pulled), so the grid return is never closer */
+      soonerMs: NaN,
       staleTimer: null,
       lingerTimer: null,
       hardTimer: null,
@@ -898,15 +906,82 @@
     return Math.max(base, Math.round(d * j));   /* jitter may not undercut it either */
   }
 
+  /* 2026-10-12 (antenna-ondemand, fourth pass): the next poll after a good parse. When the sooner polls
+     end, the feed goes back to the cadence grid it was on (finishParse, gridAt), so they are extra polls
+     and move none of its others (measured in the day sim: without this every later poll of a visit moved,
+     and with them the visit's later collector runs). A manifest may ask
+     for it SOONER than its cadence for the payload it holds (pollSoonerMs(data, nowMs), a number of
+     ms; anything else means no), never later. Only a good parse and a resume use it: a failure keeps
+     its backoff, and nothing is polled while the feed is disconnected (a hidden tab). The antenna's
+     planes and jam feeds use it to poll every 30 s while a sample they asked for is loading, and name
+     each other in pollPeers: a feed whose peer's last good answer asked for a sooner step takes it too. */
+  /* rec's own hook on its own last good payload; `other` is a peer's payload when the step is asked on
+     the peer's behalf (the hook may say no when that payload already holds what rec is waiting for) */
+  function soonerOf(rec, other) {
+    if (typeof rec.m.pollSoonerMs !== 'function' || !rec.data) return NaN;
+    var s = NaN;
+    try { s = rec.m.pollSoonerMs(rec.data, now(), other); } catch (e) { s = NaN; }
+    return (isNum(s) && s > 0) ? s : NaN;
+  }
+  /* a peer that is connected and healthy, whose own hook asks for a step right now, sets it here too */
+  function peerOk(rec, p) {
+    return !!(p && p !== rec && p.connected && isPollKind(p) && !(p.fails > 0) && !p.offlineFlag &&
+              p.reason !== 'rate-limited');
+  }
+  function cadenceOf(rec) {
+    var cad = num(rec.m.cadenceMs, 60000), s = soonerOf(rec), ids = rec.m.pollPeers, i, p, ps;
+    for (i = 0; ids && i < ids.length; i++) {
+      p = feeds[ids[i]];
+      if (!peerOk(rec, p)) continue;
+      ps = soonerOf(p, rec.data);
+      if (isNum(ps) && (!isNum(s) || ps < s)) s = ps;
+    }
+    return (isNum(s) && s < cad) ? s : cad;
+  }
+  /* fourth pass: a feed that is polling sooner than its cadence pulls the pending poll of each feed its
+     manifest names in pollPeers forward to the same delay, so a sample two feeds share is read by both
+     (a peer asked just BEFORE the request that started the sample never saw it loading). Only a peer
+     that is connected, waiting on a timer later than that, and healthy: a peer backing off, offline or
+     rate limited keeps its own clock. While this feed's own payload keeps asking, the peer's next polls
+     take the same step (cadenceOf asks this feed's hook, live, with the peer's payload beside it); once
+     it stops asking, or the peer holds what it was waiting for, the peer is back on its own clock. */
+  function pullPeers(rec, ms) {
+    var ids = rec.m.pollPeers, i, p;
+    if (!ids || !ids.length) return;
+    for (i = 0; i < ids.length; i++) {
+      p = feeds[ids[i]];
+      if (!peerOk(rec, p) || p.timer === null) continue;
+      if (!(p.timerAt > now() + ms)) continue;
+      if (!isNum(p.gridAt)) p.gridAt = isNum(p.stepAt) ? p.stepAt : now();
+      p.soonerMs = ms;
+      schedulePoll(p, ms);
+    }
+  }
+
   function schedulePoll(rec, ms) {
     cancel(rec.timer);
+    rec.timerAt = now() + Math.max(0, ms);
     rec.timer = later(function () { pollNow(rec); }, Math.max(0, ms));
+  }
+
+  /* 2026-10-12 (antenna-ondemand, fifth pass, Fable's ruling on the review): a poll made while the sooner
+     rule asks (cadenceOf: this feed's own hook, or a connected healthy peer's) is a poll the page makes
+     because it knows something is loading, and a manifest may say so to the server: its `soonerQuery`
+     (a query string such as 'loading=1') is appended to that poll's URL, and to no other. The antenna
+     sends no second collector dispatch from such a poll (antenna/worker.js planesOnDemand), which KV's
+     propagation delay could otherwise cause at the 30 s step (the review's probe-lag30: 2 POSTs at 60 s
+     of lag). A custom fetcher receives the URL with the query on it. */
+  function soonerUrl(rec, url) {
+    var q = rec.m.soonerQuery;
+    if (!url || typeof q !== 'string' || !q) return url;
+    if (!(cadenceOf(rec) < num(rec.m.cadenceMs, 60000))) return url;
+    return url + (url.indexOf('?') < 0 ? '?' : '&') + q;
   }
 
   function pollNow(rec) {
     rec.timer = null;
     if (!rec.connected) return;
-    var url = feedUrl(rec);
+    var url = soonerUrl(rec, feedUrl(rec));
     if (!url && typeof rec.m.fetcher !== 'function') { failFeed(rec, new Error('no url')); return; }
     var seq = ++rec.seq;
     var p;
@@ -1008,7 +1083,32 @@
     armStale(rec);
     emit('feed:update', { id: rec.id, t: rec.t });
     markDirtyForFeed(rec.id);
-    if (reschedule && isPollKind(rec)) schedulePoll(rec, num(rec.m.cadenceMs, 60000));
+    if (reschedule && isPollKind(rec)) {
+      var cad = num(rec.m.cadenceMs, 60000), nextMs = cadenceOf(rec), tNow = now();
+      if (nextMs < cad) {
+        /* polling sooner: remember the cadence grid this feed was on */
+        if (!isNum(rec.gridAt)) rec.gridAt = isNum(rec.stepAt) ? rec.stepAt : tNow;
+        rec.soonerMs = nextMs;
+        schedulePoll(rec, nextMs);
+        /* only a feed whose OWN payload asks pulls its peers (a peer's step never makes it a source) */
+        if (isNum(soonerOf(rec))) pullPeers(rec, nextMs);
+      } else {
+        /* back to the grid it was on, so the sooner polls were extra and moved none of the others */
+        var d = cad;
+        if (isNum(rec.gridAt)) {
+          d = rec.gridAt + (Math.floor((tNow - rec.gridAt) / cad) + 1) * cad - tNow;
+          /* fifth pass (Fable's ruling on the review's probe-grid): a grid point closer than the last
+             sooner step is skipped for the one after it, so no feed is ever polled sooner than that step
+             after its previous poll (fetch latency and a pulled peer's phase put the last sooner poll
+             5.5 s before planes' grid point and 11.9 s before jam's, in 772 and 888 of 12,000 runs) */
+          if (isNum(rec.soonerMs) && d < rec.soonerMs) d += cad;
+          rec.gridAt = NaN;
+        }
+        rec.soonerMs = NaN;
+        rec.stepAt = tNow + d - cad;
+        schedulePoll(rec, d);
+      }
+    }
   }
 
   function isPollKind(rec) { return rec.m.kind === 'poll' || rec.m.kind === 'antenna'; }
@@ -1208,6 +1308,8 @@
     if (!rec.data || !rec.lastOkMs || rec.fails > 0) return 0;
     var cad = num(rec.m.cadenceMs, 0);
     if (!(cad > 0)) return 0;
+    /* fourth pass: the feed's own clock, which is the sooner one while a sample is loading */
+    cad = cadenceOf(rec);
     var age = now() - rec.lastOkMs;
     if (!(age >= 0) || age >= cad) return 0;
     return cad - age;
@@ -1236,6 +1338,9 @@
   function disconnectFeed(rec) {
     if (!rec.connected) return;
     rec.connected = false;
+    rec.gridAt = NaN;
+    rec.stepAt = NaN;
+    rec.soonerMs = NaN;
     rec.seq++;
     cancel(rec.timer); rec.timer = null;
     cancel(rec.staleTimer); rec.staleTimer = null;

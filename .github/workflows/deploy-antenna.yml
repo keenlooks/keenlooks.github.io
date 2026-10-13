@@ -126,7 +126,7 @@ jobs:
             printf '%s' "$GH_DISPATCH_TOKEN" | wrangler secret put GH_DISPATCH_TOKEN
             echo "GH_DISPATCH_TOKEN pushed: the Worker starts the collector on a visit and every half hour while someone is watching, when its snapshot is 25 minutes old."
           else
-            echo "GH_DISPATCH_TOKEN not configured; the Worker does not start the collector (its cron logs dispatch: skipped, no token)."
+            echo "GH_DISPATCH_TOKEN not configured; the Worker does not start the collector (and /health shows no dispatch)."
           fi
 
       - name: Smoke the deployed routes

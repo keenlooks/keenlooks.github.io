@@ -4,10 +4,10 @@ A small Cloudflare Worker that stands between `keanelucas.com/observatory/` and 
 upstream sources a browser cannot reach directly, because they send no CORS headers:
 adsb.lol, adsb.fi, `tfr.faa.gov`, and the FAA NOTAM API.
 
-The Worker runs a ten minute cron (the TFRs, the NOTAM sweep, and the start of the aircraft
-collector, which gathers the aircraft off Cloudflare every half hour while someone is watching the
-page and on demand when a visit begins after a quiet spell; see "The collector"),
-aggregates, and serves small CORS open JSON snapshots. The page works without it: with no antenna deployed, the plane, jamming and TFR
+The Worker runs a ten minute cron (the TFRs and the NOTAM sweep), starts the aircraft collector,
+which gathers the aircraft off Cloudflare, from the page's own `/planes` request (every half hour
+while someone is watching and on demand when a visit begins after a quiet spell; see "The
+collector"), aggregates, and serves small CORS open JSON snapshots. The page works without it: with no antenna deployed, the plane, jamming and TFR
 layers report themselves offline and everything else on the page still runs.
 
 Files here: `worker.js` (all the logic), `wrangler.toml` (deploy config), `collect.mjs` (the
@@ -20,11 +20,11 @@ exclude list.
 
 | Route | Serves | Edge cache | Source |
 |---|---|---|---|
-| `GET /planes` | KV `snap:planes`, the aircraft sample, plus `refresh` while a requested sample is on its way | `s-maxage=90` | adsb.lol tiles, adsb.fi per-tile fallback, gathered by the collector (`collect.mjs` on GitHub Actions) every half hour while watched and on demand; the Worker's own cron is the fallback. Each request is a visit and may start the collector (see "On demand") |
-| `GET /jam` | KV `agg:jam`, summarized to one row per bin: the newest sample and the last 24 hours, plus `refresh` as on `/planes` | `s-maxage=120` | derived from the same tiles, rolled by whichever wrote `/planes` |
-| `GET /tfrs` | KV `tfrs`, the list plus geometry | `s-maxage=600` | `tfr.faa.gov` list plus per-TFR detail |
+| `GET /planes` | KV `snap:planes`, the aircraft sample, plus `refresh` while a requested sample is on its way (that answer `no-store`) | `s-maxage=90` | adsb.lol tiles, adsb.fi per-tile fallback, gathered by the collector (`collect.mjs` on GitHub Actions) every half hour while watched and on demand; the Worker's own cron is the fallback. Each request is a visit and may start the collector (see "On demand") |
+| `GET /jam` | KV `agg:jam`, summarized to one row per bin: the newest sample and the last 24 hours, plus `refresh` as on `/planes` (that answer `no-store`) | `s-maxage=120` | derived from the same tiles, rolled by whichever wrote `/planes` |
+| `GET /tfrs` | KV `tfrs`, the list plus geometry, with `t` (when it last changed) and `checked` (the last cron that fetched it; the served `ageMs` and `stale` count from it) | `s-maxage=600` | `tfr.faa.gov` list plus per-TFR detail |
 | `GET /notams/gps` | KV `notams:gps` | `s-maxage=900` | FAA NOTAM API, needs secrets |
-| `GET /health` | computed | `no-store` | per route KV ages, tile coverage, the last collector dispatch `{t, status, why}` once there is one (`why` is `visit` or `cron`), and the last visit `{t}` |
+| `GET /health` | computed | `no-store` | per route KV ages (the `/tfrs` entry also `checked`, its age counted from it), tile coverage, the last collector dispatch `{t, status, why}` once there is one (`why` is `visit`; `cron` only in a record from before the fourth pass), and the last visit `{t}` |
 
 Every response carries `Access-Control-Allow-Origin: *` (public data, no credentials), and
 `OPTIONS` is answered with 204. Nothing here ever returns a 500: if an upstream or KV read
@@ -32,7 +32,7 @@ fails, the route serves the last stored value with `stale: true` and an `ageMs`,
 503 with `offline: true` and a reason in plain words when there is nothing stored at all.
 `/planes` and `/jam` call their value stale at 45 minutes (the half hour, the collector's queue and
 its round; `ROUTES` in `worker.js`, the same window as the page's two feeds; it was 75 at the hourly
-cadence), `/tfrs` at 6 hours and `/notams/gps` at 24 hours. After a quiet spell the stored snapshot
+cadence), `/tfrs` at 6 hours (from its last check, `checked`) and `/notams/gps` at 24 hours. After a quiet spell the stored snapshot
 is older than that, and is served as stale until the sample the visit asked for lands.
 
 Two extras on `/planes` that the page uses to stay polite:
@@ -79,9 +79,9 @@ KV, where the Worker serves them exactly as before.
   the Worker's 250 ms spacing, so the collector alone spaces adsb.lol calls 1,000 ms apart
   (`COLLECTOR_SPACING_MS`, carried on its round's budget); the Worker keeps its own spacing. The
   TFRs and the NOTAM sweep stay the Worker's.
-- **When it runs.** `.github/workflows/collect-antenna.yml`, started by the Worker (the next two
-  bullets: on a visit, and by the cron every half hour while someone is watching), by hand, and once
-  by a push that changes the collector. It has no
+- **When it runs.** `.github/workflows/collect-antenna.yml`, started by the Worker from a page's
+  `/planes` request (the next two bullets: every half hour while someone is watching, and once when a
+  visit begins after a quiet spell), by hand, and once by a push that changes the collector. It has no
   schedule trigger: GitHub's cron for it never fired in the five hours after the push, and one that
   started firing would double every run against the Worker's dispatch. GitHub queues a dispatched
   run for a while before a runner starts it; the snapshot's own `t`, the age `/planes` serves and the
@@ -100,27 +100,23 @@ KV, where the Worker serves them exactly as before.
   runs on a ref that already exists) and delete their runs and logs; it cannot change a file or
   push. Rotate it if the Worker is ever compromised. `deploy-antenna.yml` pushes it to the Worker
   with `wrangler secret put` when the repository has it, from its own step's environment, never
-  echoed. Each cron, after the deferral decision and after every other stage (so it spends a call
-  the others leave in the 44 call budget and none of them loses one; the 21 tiles spend at most 42,
-  so it always has its call, and with no call left it would skip with `no subrequest left`), the
-  Worker sends ONE `POST
+  echoed. Until the fourth pass (2026-10-12) each cron also sent it, last, on a call the other
+  stages left; since then only a `/planes` request does (see "On demand"). The Worker sends ONE `POST
   https://api.github.com/repos/keenlooks/keenlooks.github.io/actions/workflows/collect-antenna.yml/dispatches`
   with `{"ref":"master"}` (`GH_REPO`, `GH_WORKFLOW` and `GH_REF` in `worker.js`; GitHub answers 204),
   never following a redirect, when the stored snapshot is absent, its own, or a collector's 25
   minutes old or more (`DISPATCH_STALE_MS`), KV `dispatch:last` is absent or 25 minutes old or
-  more (`DISPATCH_GAP_MS`), and (since 2026-10-12) someone visited in the last 20 minutes
-  (`VISIT_WATCH_MS`, KV `visit:last`). The hourly pass had both at 50 minutes and no visit gate:
+  more (`DISPATCH_GAP_MS`). The hourly pass had both at 50 minutes and sent from the cron:
   its 24 hour simulation (`_tests/observatory/antenna-hourly-2026-10-11/`) gave 24 runs a day, the
   snapshot never more than 60.4 minutes old. A refused run writes nothing and the next dispatch
   goes 25 minutes after it. It records `dispatch:last` `{t, status, why}` whatever GitHub answers
   (a redirect is recorded with its 3xx status), so a broken token costs one call per 25 minutes of
-  watching and no more, and logs one line after the cron line: `dispatch: sent, status 204`,
-  `dispatch: sent, status 401, body <the first 120 characters>`, or `dispatch: skipped, <why>`
-  (`skipped, no visit in the last 20 minutes` on a quiet night); `/health` shows
-  `dispatch: {t, status, why}`. The token goes
-  to `api.github.com` and nowhere else, and never into a log, a KV value or `/health`. Without the
-  secret the Worker makes no call, reads and writes nothing for it, and logs `dispatch: skipped, no
-  token`; everything else it does is byte-for-byte what it did before. Hand dispatches add runs on
+  watching and no more, and logs one line: `dispatch: sent, status 204 (on a visit)` or
+  `dispatch: sent, status 401, body <the first 120 characters> (on a visit)` (the cron's own
+  `dispatch: ...` line went with its stage); `/health` shows `dispatch: {t, status, why}`. The token
+  goes to `api.github.com` and nowhere else, and never into a log, a KV value or `/health`. Without
+  the secret the Worker makes no call and reads and writes nothing for it; everything else it does is
+  byte-for-byte what it did before. Hand dispatches add runs on
   top of the Worker's (two more KV writes each), so they stop once this trigger is live.
 - **On demand (2026-10-12).** Keane: "Let's change the update frequency to every 30 mins then, but
   yes also make it on demand, and also change the page to tell the user for those layers that they
@@ -129,8 +125,10 @@ KV, where the Worker serves them exactly as before.
   every answer is byte-for-byte what it was):
   1. *Visits.* A `/planes` request (the page polls it every three minutes while it is open) records
      KV `visit:last {t}`, written only when the stored one is absent or 10 minutes old
-     (`VISIT_WRITE_GAP_MS`; 5 before the third pass), so a watching tab costs one KV write about every
-     twelve minutes, and at most 144 a day from one Cloudflare location. `/health` shows `visit {t}`.
+     (`VISIT_WRITE_GAP_MS`; 5 before the third pass) and (fourth pass) no requested sample is in
+     flight, so a watching tab costs one KV write about every twelve minutes, and at most 144 a day
+     from one Cloudflare location; the page's 30 s polls while a sample loads only read. `/health`
+     shows `visit {t}`.
   2. *The request starts the collector.* When the stored snapshot is absent or 25 minutes old (the
      cron's own rule) and `dispatch:last` is absent or 25 minutes old, the request sends the same ONE
      `workflow_dispatch`, from the request path, WITHOUT delaying its answer: the call and its
@@ -145,29 +143,48 @@ KV, where the Worker serves them exactly as before.
      `/jam` answers (the full one, the short `since` one and a 503) carry
      `refresh: {requestedAt, snapshotT}`, so the page can say the layers are loading. A refused or
      unanswered dispatch is not in flight. The answer of the request that sent it already carries it.
-  4. *The cron waits for a visit.* Its dispatch (`why: 'cron'`) goes only while `visit:last` is
-     younger than 20 minutes (Fable's ruling in the second pass; it was 35), so an open tab is
-     refreshed every half hour and a quiet night costs nothing. An open page polls `/planes` every
-     three minutes and asks for itself, so the cron's window only has to cover a tab between polls.
-     Third pass: while `visit:last` is younger than `VISIT_SELF_MS` (13 minutes, the write gap plus one
-     poll, so an open tab is always inside it) the cron leaves the dispatch to the page (`skipped, a
-     page polled N s ago and asks for itself`); before this a tab and the cron in two Cloudflare
-     locations could both ask inside KV's propagation (the review's probe P9: up to 95 runs a day
-     where 48 were due; now 48 at every lag). With the token set, its own aircraft round (the fallback) waits for a visit too, and
-     for a dispatch in flight (`fallbackHold`; a collector snapshot older than 45 minutes is the
-     normal state of a quiet night now, and without this hold the fallback would call the two
-     volunteer feeds every ten minutes all night: 124 refused rounds, 744 calls, a day in the
-     simulation).
-  The simulation (`_tests/observatory/antenna-ondemand-2026-10-12/`, third pass, 24 hours, two
-  one-hour visits, 90 phase and delay combinations): 6 runs a day in 72 combinations and 4 in 18;
-  none outside a visit and its 20 minute window, and in 42 combinations two runs (one per visit) are
-  the cron's, 1 to 9 minutes after the visitor left (the last `visit:last` written then is up to about
-  12 minutes old), in place of a third run inside the visit; the first poll of every visit starts the
-  run whose sample is the first new one the page sees, 3 to 8 minutes in; while the visitor stays the
-  stored snapshot is at most 29.0 minutes old at a poll and 30.4 when replaced. With the first pass's
-  35 minute window the same days had 6 or 8 runs, with the second pass's 20 minutes 6. KV is eventually
-  consistent (about a minute), so two dispatches from two Cloudflare locations inside that minute
-  are possible (the workflow's concurrency group then runs the second after the first).
+     Fourth pass (Fable's ruling on the live test, which read "loading" for a full 180 s poll although
+     the sample was in KV about 35 s after the dispatch): such an answer is served `no-store`, and the
+     page polls `/planes` and `/jam` every 30 s while it carries `refresh` (obs-feeds.js
+     `loadingPollMs` through obs-core.js `pollSoonerMs`; the two feeds pull each other's next poll
+     forward, `pollPeers`, because on a cold page `/jam` is asked a few ms before the `/planes` request
+     that starts the sample), until an answer comes without it or 4 minutes have passed since the
+     request, then goes back to its 180 / 300 s grid (the 30 s polls are extra and move none of the
+     others; fifth pass: a grid point closer than 30 s is skipped for the next one, so no poll comes
+     less than 30 s after the previous one). Fifth pass (Fable's ruling on the review): those polls
+     carry `?loading=1` (obs-core.js `soonerQuery`), and a `/planes` request that carries it never
+     sends a dispatch and records no visit, whatever KV shows, while it still answers `refresh` when a
+     dispatch is in flight. KV takes about 60 s to reach other Cloudflare locations, so a 30 s poll
+     could read no `dispatch:last` with the snapshot still old and send a second one (the review's
+     probe: 2 POSTs at 60 s of lag; 1 now). On `/jam` the parameter changes nothing. The page asks
+     those `/planes` polls with `cache: 'no-store'` (every other `/planes` poll is due 180 s after the
+     last, past the 45 s max-age, and is sent as before).
+  4. *The cron sends nothing (fourth pass).* Until then its dispatch (`why: 'cron'`) went while
+     `visit:last` was younger than 20 minutes (`VISIT_WATCH_MS`, second pass) and, from the third pass,
+     not while it was under 13 (`VISIT_SELF_MS`). The live test (2026-10-12,
+     `_tests/public-check-2026-10-12/ondemand/REPORT.txt`) found it never sent with a tab open (the
+     tab refreshes itself from the request path), so its only sends were runs after a visitor had
+     left, fetching for nobody (a third of the day's runs in the third pass's simulation). Fable's
+     ruling removed the stage and both windows; `visit:last` stays for the fallback hold and `/health`.
+     With the token set, the Worker's own aircraft round (the fallback) waits for a visit in the last
+     25 minutes (`VISIT_RECENT_MS`) and for no dispatch in flight (`fallbackHold`; a collector
+     snapshot older than 45 minutes is the normal state of a quiet night now, and without this hold
+     the fallback would call the two volunteer feeds every ten minutes all night: 124 refused rounds,
+     744 calls, a day in the simulation).
+  The simulation (`_tests/observatory/antenna-ondemand-2026-10-12/`, fourth pass, 24 hours, two
+  one-hour visits, 120 phase and delay combinations, the collector's delay 10 s as measured live to
+  240 s): 4 runs a day in 60 combinations (delays 121 and 240 s) and 6 in 60 (10 and 45 s: a third
+  run inside each visit, at minute 54 to 56, while the visitor is still there); no run outside a visit
+  and none whose sample lands after the visitor has left; the first poll of every visit starts the run
+  whose sample is the first new one the page sees, 1 to 8 minutes in; while the visitor stays the
+  stored snapshot is at most 30.0 minutes old at a poll and 30.4 when replaced. The page says
+  "loading" for 60 to 360 s per run (median 90 s; with the 180 s polls 180 to 360, median 180) and
+  reads a stored sample 4 to 95 s after it lands (median 25 s; was 34 to 145, median 110). In 9 of
+  the 120 combinations (all at 240 s, a sample landing after the 4 minute window) the fallback round
+  runs once after each visit, its 12 calls a day refused, and `visit:last` takes 12 writes a day
+  where 10 are usual. KV is eventually consistent (about a minute), so two dispatches from two
+  Cloudflare locations inside that minute are possible (the workflow's concurrency group then runs
+  the second after the first).
 - **The deferral rule.** Each cron first reads the head of the stored snapshot (the fields before
   `tiles`, without parsing the tile array: `snapHead`, a few microseconds where a full parse of a
   250 to 750 KB snapshot costs 0.5 to 2 ms of a cron's 10 ms). When it names a writer and is younger
@@ -177,7 +194,7 @@ KV, where the Worker serves them exactly as before.
   write, logs `deferred to the collector, age N s` in its log line, and its whole call budget goes
   to the TFRs. When the stored snapshot is older, absent, or the Worker's own (the Worker never
   names a writer), the cron runs its own round as before: that is the fallback (with the token set,
-  only while someone visited in the last 20 minutes and no dispatch is in flight; see "On demand"). The fallback
+  only while someone visited in the last 25 minutes and no dispatch is in flight; see "On demand"). The fallback
   never replaces a collector snapshot with a DARK round (fewer than a quarter of the tiles, 6 of the 21), whatever that
   snapshot's age: `/planes` serves the age honestly, and a dark overwrite would only erase good
   data. Whoever writes, a stored snapshot with a newer `t` is never overwritten, the Worker also leaves alone a fresh
@@ -316,9 +333,10 @@ apart, its documented rate (`SOURCE_MIN_SPACING_MS` in `worker.js`).
   verified live on 2026-08-15 against notams 6/5250, 6/4583 and 6/5153.
 
 Bandwidth since the on-demand pass (2026-10-12): the collector runs only while someone is watching
-(every half hour) and once when a visit begins after a quiet spell, so the feeds are pulled about 3
-times per hour-long visit and not at all on a quiet day; two one-hour visits a day is 6 runs, about
-10 to 20 MB at the per-round sizes below, against 39 to 82 MB at once an hour.
+(every half hour) and once when a visit begins after a quiet spell, so the feeds are pulled 2 or 3
+times per hour-long visit and not at all on a quiet day or after a visitor has left (fourth pass);
+two one-hour visits a day is 4 to 6 runs, about 6 to 20 MB at the per-round sizes below, against 39
+to 82 MB at once an hour.
 
 Bandwidth note for the owner, measured on 2026-10-12 (`_tests/observatory/antenna-hourly-2026-10-11/`):
 one collector round of the 21 tiles at 05:40Z, a quiet hour with 2,132 aircraft, pulled 1.61 MB of
@@ -328,13 +346,13 @@ hour that is about 39 to 82 MB a day from a volunteer funded feed network, where
 minutes was about 230 to 490 MB. If adsb.lol or adsb.fi ever asks for less, the two knobs are the
 collector's start (`DISPATCH_STALE_MS` and `DISPATCH_GAP_MS` in `worker.js`) and the tile list at
 the top of `worker.js`; the cron interval in `wrangler.toml` paces only the TFRs, the NOTAM sweep
-and the Worker's own fallback round.
+and the Worker's own fallback round (the cron starts no collector run since the fourth pass).
 
 ## What the cron does
 
 Steps 1 to 3 are the aircraft phase (`runAircraftPhase`), which the collector runs every half hour
 while someone is watching and on demand; the cron skips them while a collector snapshot is younger
-than 45 minutes, and (with the token) while nobody has visited in 20 minutes or a dispatch is in
+than 45 minutes, and (with the token) while nobody has visited in 25 minutes or a dispatch is in
 flight (see "The collector").
 
 Every ten minutes (`wrangler.toml`):
@@ -373,16 +391,24 @@ Every ten minutes (`wrangler.toml`):
    document (at most `MAX_TFR_DETAIL_PER_CRON`, eight, per cron) and parse the polygon and circle geometry out of it,
    caching the result under `tfrgeo:<notam id>`. Anything without geometry falls back to the
    state centroid with `approx: true`, which the page shows as an approximate location rather
-   than a precise one. The `tfrs` write is skipped whenever the enriched payload is identical
-   to the stored one, which is most crons.
+   than a precise one. When the enriched payload is identical to the stored one (most crons) its
+   `t` stays where it was (when the list last changed), and since the fourth pass (2026-10-12,
+   Fable's ruling on the live test) the same value is rewritten with `checked` set to this cron's
+   time, at most once per `TFR_CHECK_GAP_MS` (5 minutes, so once per cron); a changed list is written
+   with `t` and `checked` both this cron's. Before this an unchanged list kept a `t` hours old, so the
+   page called the airspace restriction feed stale 25 minutes after its last change and the Jamming
+   chip showed "1 input stale: the airspace restriction feed" to every visitor while `/health` said
+   fresh. A field and not a key of its own: either costs one write per cron, but a `tfrs:checked` key
+   would take a second write on every cron whose list changed and a second KV read on every `/tfrs`
+   and `/health` request. A cron whose list call fails writes nothing, so `checked` stays at the last
+   real check.
 5. Every six hours, if the FAA secrets are configured, sweep a slice of a pinned CONUS and
    Alaska grid for FDC NOTAMs, keep the ones whose text mentions GPS, GNSS or WAAS, and parse
    their `coordinates` and `radius` into circles. The FAA API has no free text search and caps
    `locationRadius` at 100 nm, so this sweep is coarser than its own footprint: coverage is
    partial by construction, and only US NOTAMs exist at all. The page says both.
-6. With `GH_DISPATCH_TOKEN`, start the collector when its snapshot is 25 minutes old and someone
-   visited in the last 20 minutes (see "The
-   collector"), last, on a call the stages above leave.
+6. (Until the fourth pass, 2026-10-12: with `GH_DISPATCH_TOKEN`, start the collector. Since then
+   only a page's `/planes` request does; see "The collector".)
 
 ## Budgets
 
@@ -394,14 +420,14 @@ cap, and the cron caps detail fetches and sweep points per run.
 |---|---|---|
 | `snap:planes` | 0 to about 6 | one per collector round, about 3 per hour-long visit and none on a quiet day (through the KV REST API, which counts here too); up to 144 only while the collector is down, someone is watching and the Worker's own fallback rounds reach 6 or more tiles |
 | `agg:jam` | 0 to about 6 | rolled with each snapshot write, so the same count as `snap:planes` (up to 144 with the fallback, as above) |
-| `tfrs` | roughly 10 to 60 | skipped when the payload is unchanged, 144 in the worst case |
+| `tfrs` | about 144 | one per cron whose FAA list call answers (fourth pass: an unchanged list rewrites its `checked` time; before, roughly 10 to 60), never two in one cron |
 | `tfrgeo:<id>` | roughly 10 to 30 | only new TFRs, plus a backfill of about 95 on the first day |
 | `notams:gps` | 4 | one per six hour sweep |
-| `dispatch:last` | 0 to about 6 | one per collector dispatch, at most one per 25 minutes from one Cloudflare location (58 a day), only with `GH_DISPATCH_TOKEN` and a visit |
-| `visit:last` | about 5 per hour watched | at most one per 10 minutes from one location (144 a day), only with `GH_DISPATCH_TOKEN` |
-| **Typical total** | **roughly 46 to 122** | two one-hour visits a day (simulated): visit:last 10, dispatch:last, snap:planes and agg:jam 4 to 6 each, tfrs 10 to 60, tfrgeo 10 to 30, notams 4. Each extra collector run (a hand dispatch, a push) adds 2 |
+| `dispatch:last` | 0 to about 6 | one per collector dispatch (a page's `/planes` request only, since the fourth pass), at most one per 25 minutes from one Cloudflare location (58 a day), only with `GH_DISPATCH_TOKEN` and a visit |
+| `visit:last` | about 5 per hour watched | at most one per 10 minutes from one location (144 a day), none while a requested sample is in flight, only with `GH_DISPATCH_TOKEN` |
+| **Typical total** | **roughly 180 to 210** | two one-hour visits a day (simulated, fourth pass): visit:last 10 to 12, dispatch:last, snap:planes and agg:jam 4 to 6 each, tfrs 144, tfrgeo 10 to 30, notams 4. Each extra collector run (a hand dispatch, a push) adds 2. The rise from the third pass's 46 to 122 is the TFR list's `checked` time (one write per cron) |
 | **Worst case, one location** | **about 591** | a page open all day in one Cloudflare location: visit:last 144, dispatch:last, snap:planes and agg:jam 58 each, tfrs 144, a first-day tfrgeo backfill of about 125, notams 4. If the collector were down and Cloudflare's egress let the Worker's own fallback through, snap:planes and agg:jam could reach 144 each: about 763 |
-| **The cap, honestly** | **1,000 a day** | the visit and dispatch caps are per Cloudflare location (KV takes about a minute to carry a write between them), so each further location with a page open all day adds up to 144 visit writes and its own dispatches: measured (the review's probe P8, third pass) 5 such locations reach about 750 to 850 a day and 8 about 1,040 to 1,140, over the cap. Past it KV refuses writes until 00:00 UTC: the routes go on serving the last values, the collector's run fails red, and `dispatch:last` can no longer hold the 25 minute gap. Twenty visitors a day who mostly do not open the observatory are far from it |
+| **The cap, honestly** | **1,000 a day** | the visit and dispatch caps are per Cloudflare location (KV takes about a minute to carry a write between them), so each further location with a page open all day adds up to 144 visit writes and its own dispatches: measured (the review's probe P8, fourth pass, `tfrs` at its 144) 5 such locations reach about 740 to 840 a day and 8 about 1,030 to 1,130, over the cap. Past it KV refuses writes until 00:00 UTC: the routes go on serving the last values, the collector's run fails red, and `dispatch:last` can no longer hold the 25 minute gap. Twenty visitors a day who mostly do not open the observatory are far from it |
 
 Payload sizes, measured against the live fixtures (24 tiles, about 12,500 aircraft; the list is 21 tiles since 2026-10-11, and the live snapshots measured on 2026-10-11 and 12 were 114 to 254 KB):
 

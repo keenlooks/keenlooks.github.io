@@ -1520,15 +1520,28 @@
   }
 
   function planesUrl(base) {
-    var url = base + '?min_alt=' + PLANES_MIN_ALT_FT;
+    /* fifth pass: the kernel may hand a base that already carries the loading poll's query (soonerQuery) */
+    var url = base + (String(base).indexOf('?') < 0 ? '?' : '&') + 'min_alt=' + PLANES_MIN_ALT_FT;
     var core = global.ObsCore;
     var prev = (core && typeof core.data === 'function') ? core.data('planes') : null;
     if (prev && isNum(prev.t)) url += '&since=' + prev.t;
     return url;
   }
 
+  /* 2026-10-12 (antenna-ondemand, fifth pass, Fable's ruling on the review): a loading poll (the kernel
+     put LOADING_QUERY on its URL because a sample this page was told about is on its way) is asked with
+     cache 'no-store', so the browser never answers it from a copy it kept (the review: a /planes answer
+     cached for 45 s, then a /jam answer carrying refresh pulls the planes poll forward inside those 45 s).
+     Only those polls: every other planes poll is due 180 s after the last, past the answer's max-age of
+     45 s, so the browser's cache could not answer it anyway, and its request stays byte-for-byte what it
+     was (no cache-control request header for an edge cache to read). Always 'no-store' would cost a
+     whole snapshot on a reload inside 45 s and buy nothing. */
+  function isLoadingPoll(url) {
+    return new RegExp('[?&]' + LOADING_QUERY + '(&|$)').test(String(url));
+  }
+
   function fetchPlanes(url) {
-    return fetchText(planesUrl(url)).then(function (text) {
+    return fetchText(planesUrl(url), isLoadingPoll(url) ? { cache: 'no-store' } : undefined).then(function (text) {
       var out = jsonOf(text, 'planes');
       try { Object.defineProperty(out, 'byteLength', { value: text.length, enumerable: false }); }
       catch (e) { /* byte accounting only */ }
@@ -1551,6 +1564,34 @@
       serverNow: (isNum(j.t) && isNum(j.ageMs)) ? j.t + j.ageMs : NaN,
       checkedAt: isNum(now) ? now : NaN
     };
+  }
+
+  /* 2026-10-12 (antenna-ondemand, fourth pass, Fable's ruling on the live test): while an answer carries
+     `refresh` (a sample the antenna asked for has not landed) the planes and jam feeds poll every
+     LOADING_POLL_MS instead of their cadence (the kernel's pollSoonerMs), until an answer comes without
+     it (the sample landed, so the antenna stops saying it) or LOADING_WINDOW_MS has passed since the
+     request on the antenna's own clock (its REFRESH_INFLIGHT_MS). The live test read "loading" for a
+     full 180 s poll both times while the sample had been in KV about 35 s after the dispatch. Polls
+     only read: the antenna writes visit:last at most once per 10 minutes whatever the rate, and an
+     answer that carries refresh is served no-store so the browser does not hand back the last one. */
+  var LOADING_POLL_MS = 30000;
+  var LOADING_WINDOW_MS = 240000;
+  /* fifth pass (Fable's ruling on the review): the query the kernel adds to a poll made while the rule
+     below asks (the manifests' soonerQuery), so the antenna knows this page already knows a sample is
+     loading and never sends a second collector dispatch from it (KV's propagation delay could make a 30 s
+     poll miss the first one's record: the review's probe-lag30) */
+  var LOADING_QUERY = 'loading=1';
+  function loadingPollMs(data, nowMs, other) {
+    var r = data && data.refresh;
+    if (!r || !isNum(r.requestedAt)) return NaN;
+    /* the sample landed: the copy held (or, asked on a peer's behalf, the peer's copy) is newer than
+       the one the request was made against */
+    if (isNum(data.t) && isNum(r.snapshotT) && data.t > r.snapshotT) return NaN;
+    if (other && isNum(other.t) && isNum(r.snapshotT) && other.t > r.snapshotT) return NaN;
+    var serverNow = (isNum(r.serverNow) && isNum(r.checkedAt) && isNum(nowMs))
+      ? r.serverNow + (nowMs - r.checkedAt) : NaN;
+    if (isNum(serverNow) && serverNow - r.requestedAt >= LOADING_WINDOW_MS) return NaN;
+    return LOADING_POLL_MS;
   }
 
   function parsePlanes(raw, ctx) {
@@ -1657,8 +1698,15 @@
   function parseTfrs(raw, ctx) {
     var j = jsonOf(raw, 'tfrs');
     if (!j || !isArr(j.items)) throw new Error('tfrs: no items');
-    var t = num(j.t, NaN);
-    if (!isFinite(t)) throw new Error('tfrs: no list time');
+    var listT = num(j.t, NaN);
+    if (!isFinite(listT)) throw new Error('tfrs: no list time');
+    /* 2026-10-12 (antenna-ondemand, fourth pass): the antenna rewrites the list only when it changes,
+       so its t is when it last CHANGED, which can be hours ago for a list the cron confirmed a minute
+       ago. Since the fourth pass the antenna also stores `checked`, the time of the last cron that
+       fetched the list; the feed is dated from that (so the kernel's staleness and every light that
+       reads it see a list as current as its last check), falling back to t when it is absent. */
+    var checked = num(j.checked, NaN);
+    var t = (isFinite(checked) && checked >= listT) ? checked : listT;
     var items = [], byId = {};
     for (var i = 0; i < j.items.length; i++) {
       var it = j.items[i];
@@ -1699,6 +1747,8 @@
     }
     return {
       t: t,
+      listT: listT,
+      checked: isFinite(checked) ? checked : NaN,
       ageMs: num(j.ageMs, NaN),
       stale: !!j.stale,
       items: items,
@@ -4033,6 +4083,13 @@
          the feed from it, never from the poll. */
       url: '/planes',
       cadenceMs: 180000,
+      /* fourth pass: every 30 s while a requested sample is loading (loadingPollMs above), pulling
+         the jam feed's next poll forward with it (it shares the sample) */
+      pollSoonerMs: loadingPollMs,
+      pollPeers: ['jam'],
+      /* fifth pass: those polls say so (?loading=1: the antenna sends no dispatch from them) and are
+         asked no-store (fetchPlanes) */
+      soonerQuery: LOADING_QUERY,
       staleAfterMs: 2700000,
       lazy: true,
       fetcher: fetchPlanes,
@@ -4046,6 +4103,18 @@
       kind: 'antenna',
       url: '/jam',
       cadenceMs: 300000,
+      /* fourth pass: every 30 s while a requested sample is loading (loadingPollMs above). On a cold
+         visit this feed is asked a few ms BEFORE /planes, whose request starts the sample, so its first
+         answer carries no refresh; the planes feed pulls this one's next poll forward (pollPeers) */
+      pollSoonerMs: loadingPollMs,
+      pollPeers: ['planes'],
+      /* fifth pass: those polls say so too (/jam never dispatches; the parameter changes nothing there
+         but the URL, which no copy the browser kept from a plain poll can answer) */
+      soonerQuery: LOADING_QUERY,
+      /* fourth pass: never from the browser's cache. The headful look found the pulled poll answered by the
+         browser's copy of the first answer (served with max-age 60 before anything was loading), so the
+         stub saw /jam at 0 and 60 s, not at 30. At the 300 s cadence the cache was never used anyway. */
+      fetchOpts: { cache: 'no-store' },
       /* r19d item 8, the same exception as planes above and for the same
          reason: this is the relay's aggregate, rolled by the same writer in
          the same round as the snapshot, so since the hourly collector

@@ -14,7 +14,8 @@
  *   2. Upstream failures never 500 a route. The last KV value is served with stale: true and
  *      an age, or a 503 with offline: true when there is nothing at all.
  *   3. Free-plan budgets are respected: at most one KV write per key per cron, the TFR write
- *      is skipped when the payload is unchanged, and subrequests are counted.
+ *      is skipped when the payload is unchanged (since the fourth pass, an unchanged list still
+ *      rewrites its `checked` time once per cron), and subrequests are counted.
  *   4. No side effects at module scope beyond constant and function declarations.
  *
  * Upstream politeness and licensing (see README.md for the full text):
@@ -22,17 +23,18 @@
  *   citation with a link. Both are volunteer feeder networks. Every upstream call carries the
  *   User-Agent below so the operators can see who we are.
  *
- * 2026-10-11: with the secret GH_DISPATCH_TOKEN the cron also starts the GitHub Actions aircraft
- * collector (dispatchCollector below), one POST to api.github.com when the collector is late.
+ * 2026-10-11: with the secret GH_DISPATCH_TOKEN the cron also started the GitHub Actions aircraft
+ * collector, one POST to api.github.com when the collector was late (the cron's stage was removed in
+ * the fourth pass of 2026-10-12: only a /planes request starts it now).
  * The hourly pass ran the collector once an hour (a workflow_dispatch when the stored snapshot was
  * 50 minutes old); the on-demand pass below supersedes it. The Worker's own ten minute cron keeps the TFRs.
  *
  * 2026-10-12 (antenna-ondemand, Keane: "Let's change the update frequency to every 30 mins then, but
  * yes also make it on demand"): a /planes request (the page's poll) records KV visit:last and, when
  * the snapshot is 25 minutes old and the last dispatch is too, starts the collector itself, in the
- * background (planesOnDemand); the cron's dispatch runs only while someone visited in the last 20
- * minutes (35 in the first pass; Fable's ruling, second pass), and /planes and /jam carry `refresh`
- * while a requested sample has not landed yet.
+ * background (planesOnDemand); the cron's dispatch ran only while someone visited in the last 20
+ * minutes (35 in the first pass; Fable's ruling, second pass) until the fourth pass removed it, and
+ * /planes and /jam carry `refresh` while a requested sample has not landed yet (never cached).
  */
 
 /* ------------------------------------------------------------------ constants */
@@ -98,6 +100,16 @@ export const MAX_SUBREQUESTS = 44;
  * first visit and being one tomorrow.
  */
 export const MAX_TFR_DETAIL_PER_CRON = 8;
+/* fourth pass (2026-10-12, Fable's ruling on the live test): the stored list carries `checked`, the time
+   of the last cron that fetched the FAA list, beside `t`, the time its content last changed. An
+   unchanged list used to be left alone (the write skip), so its t stayed hours old and the page called
+   a list the cron had just confirmed stale. An unchanged list now rewrites the same value with a new
+   `checked` at most once per TFR_CHECK_GAP_MS (shorter than the ten minute cron, so once per cron; a
+   second invocation inside it writes nothing). Why a field and not a key of its own: either costs one
+   write per cron, but a `tfrs:checked` key would take a second write on every cron whose list changed
+   and a second KV read on every /tfrs and /health request; the field rides the one write and the one
+   read there already are. */
+export const TFR_CHECK_GAP_MS = 5 * 60 * 1000;
 export const TFR_FAIL_RETRY_MS = 6 * 3600 * 1000;
 export const TFR_FAIL_MAX_TRIES = 3;
 
@@ -1021,6 +1033,13 @@ export function cacheControl(route) {
   return 'public, max-age=' + route.maxAge + ', s-maxage=' + route.sMaxAge;
 }
 
+/* fourth pass (2026-10-12): an answer that carries `refresh` is never cached. While a requested sample
+   is on its way the page polls every 30 s (obs-feeds.js loadingPollMs), and a browser holding the
+   route's 45 or 60 second copy would hand the page the old answer in place of every other poll. */
+export function loadingCache(route, refresh) {
+  return refresh ? 'no-store' : cacheControl(route);
+}
+
 export function jsonResponse(body, opts) {
   const o = opts || {};
   const headers = corsHeaders(Object.assign({ 'Cache-Control': o.cacheControl || 'no-store' }, o.headers || {}));
@@ -1039,6 +1058,16 @@ export function routeFor(pathname) {
  * honest 503 with offline: true rather than a fake empty payload. A value older than the
  * route's staleAfterMs is still served, labelled stale with its age.
  */
+/* fourth pass (2026-10-12): the time a stored value is current as of: its `checked` (the TFR list's
+   last check) when that is a number no older than its t, else its t; null when neither is a number. */
+export function currentAt(v) {
+  if (!v || typeof v !== 'object') return null;
+  const vt = num(v.t);
+  const vc = num(v.checked);
+  if (vc !== null && (vt === null || vc >= vt)) return vc;
+  return vt;
+}
+
 async function serveKvRoute(route, deps, transform) {
   const t = nowOf(deps);
   const stored = await kvGetJson(deps.kv, route.kv);
@@ -1049,7 +1078,9 @@ async function serveKvRoute(route, deps, transform) {
     }, { status: 503 });
   }
   const body = transform ? transform(stored, t) : stored;
-  const age = Math.max(0, t - (num(body.t) !== null ? num(body.t) : t));
+  /* fourth pass: a value that carries `checked` (the TFR list) is as current as its last check */
+  const at = currentAt(body);
+  const age = Math.max(0, t - (at !== null ? at : t));
   const out = Object.assign({ ok: true }, body, { ageMs: age });
   if (age > route.staleAfterMs) out.stale = true;
   return jsonResponse(out, { cacheControl: cacheControl(route) });
@@ -1060,8 +1091,10 @@ export async function handlePlanes(deps, url) {
   const t = nowOf(deps);
   const snap = await kvGetJson(deps.kv, 'snap:planes');
   /* 2026-10-12 (antenna-ondemand): this poll is a visit, and may start the collector (in the
-     background, never delaying this answer); `refresh` says a requested sample is on its way */
-  const od = await planesOnDemand(deps, snap, t);
+     background, never delaying this answer); `refresh` says a requested sample is on its way.
+     Fifth pass: a poll carrying ?loading=1 (the page's 30 s poll while it knows a sample is loading)
+     only reads (planesOnDemand's loadingPoll). */
+  const od = await planesOnDemand(deps, snap, t, { loadingPoll: isLoadingPoll(url) });
   if (!snap) {
     const off = { ok: false, offline: true, route: '/planes', reason: 'no snapshot has been written yet' };
     if (od.refresh) off.refresh = od.refresh;
@@ -1076,7 +1109,7 @@ export async function handlePlanes(deps, url) {
   if (since !== null && since === num(snap.t)) {
     const same = { ok: true, t: snap.t, unchanged: true, ageMs: Math.max(0, t - snap.t) };
     if (od.refresh) same.refresh = od.refresh;
-    return jsonResponse(same, { cacheControl: cacheControl(route) });
+    return jsonResponse(same, { cacheControl: loadingCache(route, od.refresh) });
   }
   let body = snap;
   const minAlt = url ? num(url.searchParams.get('min_alt')) : null;
@@ -1093,7 +1126,14 @@ export async function handlePlanes(deps, url) {
   const out = Object.assign({ ok: true }, body, { ageMs: age });
   if (age > route.staleAfterMs) out.stale = true;
   if (od.refresh) out.refresh = od.refresh;
-  return jsonResponse(out, { cacheControl: cacheControl(route) });
+  return jsonResponse(out, { cacheControl: loadingCache(route, od.refresh) });
+}
+
+/* fifth pass (2026-10-12, Fable's ruling on the review): ?loading=1 marks a poll the page makes because
+   an answer told it a requested sample is loading (obs-feeds.js soonerQuery, every 30 s). On /planes it
+   never dispatches and records no visit; on /jam it changes nothing (/jam never does either). */
+export function isLoadingPoll(url) {
+  return !!(url && url.searchParams && url.searchParams.get('loading') === '1');
 }
 
 /* 2026-10-12 (antenna-ondemand): serveKvRoute's answer for agg:jam, plus `refresh` while a requested
@@ -1114,7 +1154,7 @@ export async function handleJam(deps) {
   const out = Object.assign({ ok: true }, body, { ageMs: age });
   if (age > route.staleAfterMs) out.stale = true;
   if (refresh) out.refresh = refresh;
-  return jsonResponse(out, { cacheControl: cacheControl(route) });
+  return jsonResponse(out, { cacheControl: loadingCache(route, refresh) });
 }
 
 export async function handleTfrs(deps) {
@@ -1154,14 +1194,19 @@ export async function handleHealth(deps) {
     if (!r.kv) continue;
     const v = await kvGetJson(deps.kv, r.kv);
     const vt = v ? num(v.t) : null;
-    out.routes.push({
+    /* fourth pass: the age and the stale flag from the value's last check when it carries one
+       (the TFR list), and the check time itself beside t */
+    const va = v ? currentAt(v) : null;
+    const entry = {
       path: r.path,
       key: r.kv,
       present: !!v,
       t: vt,
-      ageMs: vt === null ? null : Math.max(0, t - vt),
-      stale: vt === null ? null : (t - vt) > r.staleAfterMs,
-    });
+      ageMs: va === null ? null : Math.max(0, t - va),
+      stale: va === null ? null : (t - va) > r.staleAfterMs,
+    };
+    if (v && num(v.checked) !== null) entry.checked = num(v.checked);
+    out.routes.push(entry);
   }
   const snap = await kvGetJson(deps.kv, 'snap:planes');
   if (snap && Array.isArray(snap.tiles)) {
@@ -1179,7 +1224,8 @@ export async function handleHealth(deps) {
   const dl = await kvGetJson(deps.kv, 'dispatch:last');
   if (dl && typeof dl === 'object') {
     out.dispatch = { t: num(dl.t), status: num(dl.status) };
-    /* 2026-10-12 (antenna-ondemand): which path sent it, 'visit' (a /planes request) or 'cron' */
+    /* 2026-10-12 (antenna-ondemand): which path sent it, 'visit' (a /planes request) or 'cron' (the cron's
+       stage, removed in the fourth pass; an old record can still say it) */
     if (typeof dl.why === 'string' && dl.why) out.dispatch.why = dl.why;
   }
   /* 2026-10-12 (antenna-ondemand): when the page last polled /planes (written at most once per
@@ -1257,14 +1303,24 @@ export async function refreshTfrs(deps, budget) {
   }
   /*
    * Write skip: the TFR list barely moves between crons, and the free plan allows a thousand
-   * KV writes a day. If the enriched items are byte identical, leave the stored value alone.
+   * KV writes a day. If the enriched items are byte identical, the list's t stays as it was.
+   * Fourth pass: the value is rewritten with a new `checked` (this cron's time) unless the stored
+   * one is under TFR_CHECK_GAP_MS old, so the page can tell a list confirmed a minute ago from one
+   * nobody has fetched for hours. One write per cron at most, as before.
    */
   const prevBody = prev && prev.items ? JSON.stringify(prev.items) : null;
   const nextBody = JSON.stringify(items);
   if (prevBody === nextBody) {
-    return { written: false, count: items.length, detailFetched: fetched };
+    const pt = num(prev.t);
+    const pc = num(prev.checked);
+    const lastCheck = (pc !== null && (pt === null || pc >= pt)) ? pc : pt;
+    if (lastCheck !== null && t - lastCheck >= -COLLECTOR_SKEW_MS && t - lastCheck < TFR_CHECK_GAP_MS) {
+      return { written: false, count: items.length, detailFetched: fetched };
+    }
+    await kvPutJson(deps.kv, 'tfrs', { t: pt !== null ? pt : t, checked: t, count: items.length, items: items });
+    return { written: false, checked: true, count: items.length, detailFetched: fetched };
   }
-  await kvPutJson(deps.kv, 'tfrs', { t: t, count: items.length, items: items });
+  await kvPutJson(deps.kv, 'tfrs', { t: t, checked: t, count: items.length, items: items });
   return { written: true, count: items.length, detailFetched: fetched };
 }
 
@@ -1439,8 +1495,14 @@ export async function runAircraftPhase(deps, budget, t, opts) {
  * first 120 characters>" (no body clause when the answer had none), "tried, no answer: <error>", or
  * "skipped, <why>".
  * Without the token nothing here runs: no call, no read, no write, and the cron's result has no
- * dispatch field, so it is byte-equal to the Worker before this trigger; dispatchLogLine then says
- * "dispatch: skipped, no token".
+ * dispatch field, so it is byte-equal to the Worker before this trigger.
+ * Fourth pass (2026-10-12, Fable's ruling on the live test): THE CRON NO LONGER DISPATCHES. Everything
+ * above about the cron sending is history; the POST, the gap, dispatch:last and the redaction are
+ * unchanged and are now sent only from the request path below (planesOnDemand). With a tab open the
+ * tab refreshes itself (the live test: the cron never sent while a tab was open), so the cron's only
+ * remaining sends were the runs after a visitor had left, which fetched for nobody (a third of the
+ * day's runs in the simulation). dispatchCollector, dispatchLogLine and the cron's second log line
+ * are gone with it.
  *
  * On-demand pass (2026-10-12, Keane: "change the update frequency to every 30 mins then, but yes also
  * make it on demand ... My website gets only about 20 visitors a day"). Three changes, the token, the
@@ -1453,8 +1515,9 @@ export async function runAircraftPhase(deps, budget, t, opts) {
  *      absent or DISPATCH_GAP_MS old. The answer is not delayed: the call and its dispatch:last write
  *      {t, status, why: 'visit'} run in the background (ctx.waitUntil, or a promise with a catch where
  *      there is none, the node dev server). The answer carries refresh {requestedAt, snapshotT}.
- *   3. THE CRON waits for a visit: its dispatch (why: 'cron') goes only while visit:last is younger
- *      than VISIT_WATCH_MS, so an open tab is refreshed every half hour and a quiet night costs nothing.
+ *   3. THE CRON waited for a visit (VISIT_WATCH_MS, then also VISIT_SELF_MS); since the fourth pass it
+ *      sends nothing at all, and visit:last is kept for the fallback hold (VISIT_RECENT_MS) and /health.
+ *      An open tab is refreshed every half hour by its own polls; a quiet night costs nothing.
  * Both are 25 minutes now: an open tab's poll finds the snapshot 25 minutes old and asks, the sample
  * lands a few minutes later, so a watched page is never shown one much older than half an hour.
  * `refresh` is on /planes and /jam while a dispatch is in flight: dispatch:last younger than
@@ -1469,22 +1532,11 @@ export const DISPATCH_BODY_HEAD = 120;
    up to about 1,080 writes a day at 5 minutes); a tab polling every three minutes now writes about every
    twelve. */
 export const VISIT_WRITE_GAP_MS = 10 * 60 * 1000;
-/* the cron's dispatch (and, with the token, its own aircraft round) waits for a visit this recent.
-   Second pass (Fable's ruling): 20 minutes, it was 35. A page that is open polls /planes every three
-   minutes and starts the collector itself, so the cron's window only has to cover a tab between polls;
-   at 35 it added a run after most visits had ended (6 to 8 runs for two one-hour visits a day in the
-   simulation); at 20 the day has 6 in every combination, one of them by the cron just after a visit
-   ends in some, in place of a third run inside it. */
-export const VISIT_WATCH_MS = 20 * 60 * 1000;
-/* third pass (Fable's ruling on the review): the cron leaves the dispatch to the page while visit:last
-   is younger than this. An open tab polls every three minutes and asks for itself from the request
-   path when the snapshot is late, so a cron dispatch then only doubles it (the review's P9: one tab and
-   the cron in two locations, phase-locked, could both ask inside KV's propagation, 95 runs a day where
-   48 were due). The ruling said about 6 minutes, written for a visit:last rewritten every 5; at the
-   10 minute write an open tab's visit:last is up to about 12 minutes old, so the window is the write gap
-   plus one of the page's 3 minute polls (13 minutes) and an open tab is always inside it (measured: P9
-   48 runs a day at every KV lag, P8 one tab 48; at 6 minutes 57.5 on average and up to 95). */
-export const VISIT_SELF_MS = VISIT_WRITE_GAP_MS + 3 * 60 * 1000;
+/* fourth pass (Fable's ruling on the live test): with the token, the Worker's own aircraft round (the
+   fallback) runs only while someone visited this recently. VISIT_WATCH_MS (20 minutes, the cron's
+   dispatch gate) and VISIT_SELF_MS (13, the third pass's self window) went with the cron's dispatch;
+   visit:last is still written by the request path and read here and by /health. */
+export const VISIT_RECENT_MS = 25 * 60 * 1000;
 /* a dispatch younger than this, answered 204, with no snapshot newer than it, is "in flight" */
 export const REFRESH_INFLIGHT_MS = 4 * 60 * 1000;
 
@@ -1536,8 +1588,9 @@ export async function relayRefresh(deps, snapT, t) {
   try { return refreshInFlight(await kvGetJson(deps.kv, 'dispatch:last'), snapT, t); } catch (e) { return null; }
 }
 
-/* The one POST, shared by the cron and the request path, and its dispatch:last record
-   {t, status, why}. Returns the log line text after "dispatch: ". The caller has decided to send. */
+/* The one POST and its dispatch:last record {t, status, why}. Returns the log line text after
+   "dispatch: ". The caller has decided to send. Shared by the cron and the request path until the
+   fourth pass; the request path (why 'visit') is its only caller now. */
 async function sendDispatch(deps, t, why) {
   const token = String((deps && deps.secrets && deps.secrets.ghDispatchToken) || '');
   const init = {
@@ -1586,7 +1639,8 @@ async function sendDispatch(deps, t, why) {
  * 2026-10-12 (antenna-ondemand): the on-demand stage of one /planes request. snap is the stored
  * snapshot (or null), t the request's clock. With the token (and only with it: without it this reads
  * and writes nothing, so the answer is byte-equal to the Worker before) it
- *   - writes visit:last {t} when the stored one is absent, skewed or VISIT_WRITE_GAP_MS old,
+ *   - writes visit:last {t} when the stored one is absent, skewed or VISIT_WRITE_GAP_MS old, and (fourth
+ *     pass) no requested sample is in flight,
  *   - sends ONE dispatch (why 'visit') when the snapshot is absent or DISPATCH_STALE_MS old by the
  *     cron's own collectorAgeMs, and dispatch:last is absent, skewed, or DISPATCH_GAP_MS old,
  * both in the BACKGROUND: deps.waitUntil (the Workers ctx) when there is one, else a promise left to
@@ -1594,25 +1648,41 @@ async function sendDispatch(deps, t, why) {
  * Returns { refresh, visit, dispatch, job }: refresh {requestedAt, snapshotT} when this request sent a
  * dispatch or one is in flight (refreshInFlight), else null; job the background promise (null when
  * there is none; it never rejects). Never throws.
+ * Fifth pass (2026-10-12, Fable's ruling on the review): opts.loadingPoll (the request carried
+ * ?loading=1, the page's 30 s poll while it knows a sample is loading) sends NO dispatch and writes no
+ * visit, whatever KV shows; it still answers refresh when one is in flight. The review's probe-lag30: at
+ * 30 s that poll can read a KV that has not yet seen the first request's dispatch:last (another
+ * location; KV propagates in about 60 s) and, with the snapshot still old, sent a second dispatch.
  */
-export async function planesOnDemand(deps, snap, t) {
+export async function planesOnDemand(deps, snap, t, opts) {
   const out = { refresh: null, visit: null, dispatch: null, job: null };
+  const loadingPoll = !!(opts && opts.loadingPoll);
   if (!dispatchConfigured(deps)) return out;
   const jobs = [];
   try {
     const vt = keptTime(await kvGetJson(deps.kv, 'visit:last'), t);
-    if (vt === null || t - vt >= VISIT_WRITE_GAP_MS) {
+    const snapT = snap ? num(snap.t) : null;
+    const age = collectorAgeMs(snap, t);
+    const last = await kvGetJson(deps.kv, 'dispatch:last');
+    const lt = keptTime(last, t);
+    /* fourth pass: a poll while a requested sample is in flight writes no visit, so the 30 s polls the
+       page makes then (obs-feeds.js loadingPollMs) only read; the request that sent the dispatch was the
+       visit, and the fallback round is held while it is in flight anyway. (The day sim reads the same
+       counts with and without this: the 10 minute gap already keeps most of them from writing.) */
+    if (refreshInFlight(last, snapT, t)) {
+      out.visit = 'held, a requested sample is in flight';
+    } else if (loadingPoll) {
+      out.visit = 'held, a loading poll';
+    } else if (vt === null || t - vt >= VISIT_WRITE_GAP_MS) {
       out.visit = 'written';
       jobs.push(function () { return kvPutJson(deps.kv, 'visit:last', { t: t }); });
     } else {
       out.visit = 'held, the last was written ' + Math.round(Math.max(0, t - vt) / 1000) + ' s ago';
     }
-    const snapT = snap ? num(snap.t) : null;
-    const age = collectorAgeMs(snap, t);
-    const last = await kvGetJson(deps.kv, 'dispatch:last');
-    const lt = keptTime(last, t);
     if (age !== null && age < DISPATCH_STALE_MS) {
       out.dispatch = 'skipped, the collector snapshot is ' + Math.round(age / 1000) + ' s old';
+    } else if (loadingPoll) {
+      out.dispatch = 'skipped, a loading poll';
     } else if (lt !== null && t - lt < DISPATCH_GAP_MS) {
       out.dispatch = 'skipped, the last dispatch was ' + Math.round(Math.max(0, t - lt) / 1000) + ' s ago';
     } else {
@@ -1651,16 +1721,16 @@ export async function planesOnDemand(deps, snap, t) {
  * COLLECTOR_FRESH_MS is the normal state of a quiet night now, and without this the Worker's fallback
  * round would call the two volunteer feeds every ten minutes all night (from Cloudflare's egress they
  * refuse it, which still costs them a call per source per tile until the breaker trips). So it runs
- * only while someone visited in the last VISIT_WATCH_MS, and not while a dispatch is in flight (the
- * collector is on its way). Without the token the fallback is the only aircraft source and runs as
- * before. Never throws.
+ * only while someone visited in the last VISIT_RECENT_MS (25 minutes since the fourth pass; it was the
+ * cron's 20 minute VISIT_WATCH_MS), and not while a dispatch is in flight (the collector is on its
+ * way). Without the token the fallback is the only aircraft source and runs as before. Never throws.
  */
 export async function fallbackHold(deps, snapT, t) {
   if (!dispatchConfigured(deps)) return null;
   try {
     const vt = keptTime(await kvGetJson(deps.kv, 'visit:last'), t);
-    if (vt === null || t - vt >= VISIT_WATCH_MS) {
-      return 'held: no visit in the last ' + Math.round(VISIT_WATCH_MS / 60000) + ' minutes, so no aircraft round';
+    if (vt === null || t - vt >= VISIT_RECENT_MS) {
+      return 'held: no visit in the last ' + Math.round(VISIT_RECENT_MS / 60000) + ' minutes, so no aircraft round';
     }
     const inflight = refreshInFlight(await kvGetJson(deps.kv, 'dispatch:last'), snapT, t);
     if (inflight) {
@@ -1668,49 +1738,6 @@ export async function fallbackHold(deps, snapT, t) {
     }
   } catch (e) { return null; }
   return null;
-}
-
-/* One dispatch decision. collectorAge is the cron's collectorAgeMs for the stored snapshot (null when
-   it is absent, the Worker's own, skewed, or 45 minutes old or more). Returns the text of the log line
-   after "dispatch: ", and never throws. */
-export async function dispatchCollector(deps, budget, collectorAge, t) {
-  const token = String((deps && deps.secrets && deps.secrets.ghDispatchToken) || '');
-  try {
-    if (collectorAge !== null && collectorAge < DISPATCH_STALE_MS) {
-      return 'skipped, the collector snapshot is ' + Math.round(collectorAge / 1000) + ' s old';
-    }
-    /* 2026-10-12 (antenna-ondemand): the cron asks only while someone is watching */
-    const vt = keptTime(await kvGetJson(deps.kv, 'visit:last'), t);
-    if (vt === null || t - vt >= VISIT_WATCH_MS) {
-      return 'skipped, no visit in the last ' + Math.round(VISIT_WATCH_MS / 60000) + ' minutes';
-    }
-    /* third pass: a page that polled in the last VISIT_SELF_MS asks for itself from the request path */
-    if (t - vt < VISIT_SELF_MS) {
-      return 'skipped, a page polled ' + Math.round(Math.max(0, t - vt) / 1000) + ' s ago and asks for itself';
-    }
-    const last = await kvGetJson(deps.kv, 'dispatch:last');
-    const lt = last ? num(last.t) : null;
-    if (lt !== null) {
-      const ago = t - lt;
-      if (ago >= -COLLECTOR_SKEW_MS && ago < DISPATCH_GAP_MS) {
-        return 'skipped, the last dispatch was ' + Math.round(Math.max(0, ago) / 1000) + ' s ago';
-      }
-    }
-    if (budget) {
-      if (budget.left <= 0) return 'skipped, no subrequest left';
-      budget.left = budget.left - 1;
-      budget.used = (budget.used || 0) + 1;
-    }
-    return await sendDispatch(deps, t, 'cron');
-  } catch (e) {
-    return 'failed, ' + dispatchHead((e && e.message) || e, token);
-  }
-}
-
-/* The second line scheduled() logs: "dispatch: " and what the cron did about the collector. */
-export function dispatchLogLine(result) {
-  const r = result || {};
-  return 'dispatch: ' + (typeof r.dispatch === 'string' ? r.dispatch : 'skipped, no token');
 }
 
 /*
@@ -1763,10 +1790,8 @@ export async function runCron(deps) {
     result.errors.push('notams: ' + String((e && e.message) || e));
   }
 
-  /* 2026-10-11 (the dispatch): with GH_DISPATCH_TOKEN, start the collector when its snapshot is late
-     (dispatchCollector above), judged by the deferral's own age; last, on the call the stages above leave.
-     2026-10-12 (antenna-ondemand): only while someone visited in the last 20 minutes (VISIT_WATCH_MS) */
-  if (dispatchConfigured(deps)) result.dispatch = await dispatchCollector(deps, budget, deferAge, t);
+  /* 2026-10-11 to 12: the cron's dispatch stage stood here (dispatchCollector). Fourth pass: removed;
+     only a /planes request starts the collector now (planesOnDemand). */
 
   result.subrequests = budget.used;
   return result;
@@ -1801,9 +1826,8 @@ export default {
       /* 2026-10-11: one line per cron in Workers Logs ([observability] is on in
          wrangler.toml). The result carries no secret. */
       console.log(cronLogLine(result));
-      /* 2026-10-11 (the dispatch): "dispatch: sent, status 204" or "dispatch: skipped, <why>";
-         never the token or a header */
-      console.log(dispatchLogLine(result));
+      /* fourth pass: the second line ("dispatch: ...") went with the cron's dispatch stage; a /planes
+         request logs its own "dispatch: sent, status N (on a visit)" */
       return result;
     });
     if (ctx && ctx.waitUntil) ctx.waitUntil(p);
