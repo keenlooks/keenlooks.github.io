@@ -887,10 +887,20 @@
              agoS: Math.floor(ago / step) * step / 1000,
              leftMs: K.RELAY_LOADING_MAX_MS - ago };
   }
-  function relayLoading(planes, jam, nowMs) {
-    var feeds = [planes, jam], landed = NaN, best = null, i, f, r, v;
+  /* sixth pass (2026-10-13, F2 of the public re-check): `own` ('planes' or
+     'jam', optional) names the one feed a reader's compute reads, and then only
+     THAT feed's snapshot ends the verdict. The live landing answered /jam 15 ms
+     before /planes: the one verdict ended on the jam aggregate, the winds line
+     was recomputed at once over the 26 hour old planes snapshot still held,
+     and read "Winds from 426 aircraft are in." until the planes poll's own
+     recompute replaced it with "Winds measured from 579 aircraft". A reader of
+     the planes feed now leaves "loading" in the compute that reads the new
+     snapshot, never one before it. Without `own`, the one verdict as before. */
+  function relayLoading(planes, jam, nowMs, own) {
+    var feeds = [planes, jam], names = ['planes', 'jam'], landed = NaN, best = null, i, f, r, v;
     for (i = 0; i < feeds.length; i++) {
       f = feeds[i];
+      if (own && names[i] !== own) continue;
       if (f && typeof f === 'object' && fin(f.t) && (!fin(landed) || f.t > landed)) landed = f.t;
     }
     for (i = 0; i < feeds.length; i++) {
@@ -8903,8 +8913,10 @@
           (fs.health === 'live' || fs.health === 'stale')) {
         inputs[inputs.length - 1].reach = relayVerdict(c.data('planes'), planesHealthOf(c), t);
         /* 2026-10-12 (antenna-ondemand): one loading verdict for both relay
-           feeds, and the age of THIS input's own last sample */
-        var ldv = relayLoading(c.data('planes'), c.data('jam'), t);
+           feeds, and the age of THIS input's own last sample. Sixth pass (F2):
+           the planes input's verdict ends only on a planes snapshot, so the
+           Small ticks row leaves "loading" with the winds line and the chip */
+        var ldv = relayLoading(c.data('planes'), c.data('jam'), t, id === 'planes' ? 'planes' : '');
         var own = c.data(id);
         if (ldv) {
           ldv.lastAgeMs = (own && fin(own.t) && fin(t)) ? Math.max(0, t - own.t) : NaN;
@@ -9229,6 +9241,9 @@
   function windsWithLoading(data, state, nowMs) {
     var out = computeWinds(data, state, nowMs);
     var pl = data ? data.planes : null;
+    /* sixth pass (F1): the time of the snapshot THIS compute counted, so a
+       sentence quoting its count dates it from the same snapshot */
+    if (out && out.readout && typeof out.readout === 'object' && pl && fin(pl.t)) out.readout.planesT = pl.t;
     return withRelayLoading(out, state, nowMs,
       (drewAircraft(out) && pl && fin(pl.t)) ? pl.t : NaN);
   }
@@ -9397,17 +9412,33 @@
      timer is unref'd, so a node suite is never held open by it. */
   /* third pass: and the planet's own row (ambientWithLoading) */
   var LOADING_STATES = ['winds_residual', 'jam_residual', 'ambient'];
+  /* sixth pass (F2): the feed each state's compute reads its aircraft from; a
+     state not named keeps the one verdict (the jamming layer: its plain forms
+     date the aggregate they draw) */
+  var LOADING_OWN = { winds_residual: 'planes', ambient: 'planes' };
   var LOAD = { timer: null };
   function syncRelayLoading(core) {
     var c = core || AMB.core || CORE();
     if (!c || typeof c.state !== 'function' || typeof c.data !== 'function') return false;
     var now = (typeof c.now === 'function') ? c.now() : NaN;
-    var ld = relayLoading(c.data('planes'), c.data('jam'), now);
-    var keep = ld ? { requestedAt: ld.requestedAt, serverNow: ld.serverNow, checkedAt: ld.checkedAt } : null;
-    var key = ld ? [ld.requestedAt, ld.serverNow, ld.checkedAt, ld.agoS].join('|') : '';
-    var changed = false, i, js;
+    var pd = c.data('planes'), jd = c.data('jam');
+    var ld = null, lds = [], keep, key;
+    var changed = false, i, js, v;
     var later = (typeof global.setTimeout === 'function') ? global.setTimeout : null;
+    /* the time to this verdict's next 10 s step or its expiry; the timer below
+       re-reads at the soonest of the states' (one request, so one clock) */
+    function waitOf(x) {
+      return Math.min(K.RELAY_LOADING_STEP_MS - (x.agoMs % K.RELAY_LOADING_STEP_MS), x.leftMs);
+    }
     for (i = 0; i < LOADING_STATES.length; i++) {
+      v = relayLoading(pd, jd, now, LOADING_OWN[LOADING_STATES[i]] || '');
+      lds.push(v);
+      if (v && (!ld || waitOf(v) < waitOf(ld))) ld = v;
+    }
+    for (i = 0; i < LOADING_STATES.length; i++) {
+      v = lds[i];
+      keep = v ? { requestedAt: v.requestedAt, serverNow: v.serverNow, checkedAt: v.checkedAt } : null;
+      key = v ? [v.requestedAt, v.serverNow, v.checkedAt, v.agoS].join('|') : '';
       js = c.state(LOADING_STATES[i]);
       if (!js || (js.relayLoadingKey || '') === key) continue;
       js.relayLoading = keep;

@@ -7507,6 +7507,16 @@
     return out;
   }
 
+  /* sixth pass (F1): the loading form of an aircraft sentence, from the
+     phrase the instrument put on its readout (obs-instruments.js section 1c,
+     the words its own status line and its chip use), or '' when that readout
+     says nothing is loading */
+  function loadingNote(r) {
+    var ph = (r && r.relayLoading && typeof r.relayLoading.phrase === 'string')
+      ? r.relayLoading.phrase : '';
+    return ph ? (ph.charAt(0).toUpperCase() + ph.slice(1) + '.') : '';
+  }
+
   /* ---- r19n (10): NO VITAL ABOUT A LAYER THAT IS OFF --------------------
      The panel read "Hearing 9,133 shortwave paths between amateur beacons in
      the last 15 minutes." with the Flare shadow chip unlit and not one arc on
@@ -7583,12 +7593,34 @@
     /* the aircraft count comes from the ambient layer, which is on whenever the
        relay answers, so this sentence does not depend on the winds instrument
        being armed. It is a snapshot, and it says so. */
+    /* sixth pass (2026-10-13, F1 of the public re-check): the live page read
+       "426 aircraft in the sampled regions are reporting airspeed and
+       heading." under the chips for a whole loading window, the count of a
+       26 hour old sample in the present tense while every other surface said
+       loading. While a fresh sample is loading the note is the instruments'
+       own loading form (the phrase the readout carries for the chip, its
+       "; the last one, M old, is drawn" only where that layer drew it). The
+       winds count is dated from the snapshot it was counted from, or the
+       kernel's clock where that is older (the sun's worst-of rule), in the
+       words the GPS sentence uses: past tense and "in the latest reading, N
+       ago" past two minutes. The ambient branch reads ONLY the planet's own
+       readout (review S1): a disarmed winds instrument keeps its last readout
+       and is never recomputed, so its loading phrase would stand frozen after
+       the sample landed; the planet's verdict is judged on the same feed. */
     if (am && numOr(am.nAircraft, 0) > 0) {
-      out.push({ id: 'aircraft', text: fmtInt(Math.round(am.nAircraft)) +
-        ' aircraft were in the air over the sampled regions when the relay last looked.' });
+      out.push({ id: 'aircraft', text: loadingNote(am) ||
+        (fmtInt(Math.round(am.nAircraft)) +
+         ' aircraft were in the air over the sampled regions when the relay last looked.') });
     } else if (wr && numOr(wr.nSamples, 0) > 0 && !layerOff('winds_residual')) {
-      out.push({ id: 'aircraft', text: fmtInt(Math.round(wr.nSamples)) +
-        ' aircraft in the sampled regions are reporting airspeed and heading.' });
+      var acAge = vitalAge('aircraft', nowT);
+      var acOwn = (fin(wr.planesT) && fin(nowT)) ? nowT - wr.planesT : NaN;
+      if (fin(acOwn) && (!fin(acAge) || acOwn > acAge)) acAge = acOwn;
+      var acOld = latestClause(acAge);
+      out.push({ id: 'aircraft', text: (loadingNote(wr) || loadingNote(am)) || (acOld
+        ? (fmtInt(Math.round(wr.nSamples)) +
+           ' aircraft in the sampled regions were reporting airspeed and heading, ' + acOld + '.')
+        : (fmtInt(Math.round(wr.nSamples)) +
+           ' aircraft in the sampled regions are reporting airspeed and heading.')) });
     }
     if (am && numOr(am.auroraMax, 0) > 0) {
       /* r21 (13), and this is the sentence Z3 measured standing over a reading
