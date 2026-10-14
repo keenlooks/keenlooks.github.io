@@ -356,7 +356,9 @@
           }).then(function (r) {
             var c = r.canvas;
             // black out redaction boxes BEFORE recognition, so the invisible text layer
-            // can never contain what the user is redacting
+            // can never contain what the user is redacting. White-outs are painted first
+            // (the order every painter uses), so a word they cover is not read either.
+            if (PT.paintWhiteouts) PT.paintWhiteouts(c.getContext('2d'), pg, c.width, c.height);
             PT.paintRedacts(c.getContext('2d'), pg, c.width, c.height);
             return worker.recognize(c).then(function (res) {
               var out = [];
@@ -624,15 +626,21 @@
       if (pg.blank) return Promise.resolve({ tokens: [], scan: false, redacted: false, blank: true });
       var back = -(pg.rot || 0);
       var redacts = PURE.rotateRects(pg.redacts, back);
+      var whiteouts = PURE.rotateRects(pg.whiteouts, back);
       var words = PURE.rotateWords(pg.ocrWords, back);
       // "scan" and "all of it was redacted" are judgements about the PAGE's own text, so
       // they ignore anything the user typed on top of it
       function finish(pageToks, annoToks) {
         var toks = PURE.filterRedactedTokens(pageToks.concat(annoToks), redacts);
+        var redacted = pageToks.length > 0 && toks.length === 0;
+        // a white-out hides the CHARACTERS of the page's own text under it (the run is cut,
+        // the words before and after it stay), so what is copied matches what is seen;
+        // text the user typed over a white-out sits on top of it and stays
+        if (whiteouts.length) toks = PURE.filterRedactedTokens(PURE.cutCovered(pageToks, whiteouts, PT.metrics ? PT.metrics() : null).concat(annoToks), redacts);
         return {
           tokens: toks, blank: false,
           scan: pageToks.length === 0,
-          redacted: pageToks.length > 0 && toks.length === 0
+          redacted: redacted
         };
       }
       if (pg.raster) {
@@ -649,7 +657,7 @@
           var base = { w: vp.width, h: vp.height };
           var toks = [];
           (tc.items || []).forEach(function (it) {
-            var tok = PURE.itemToToken(vp.transform, it, base.w, base.h);
+            var tok = PURE.itemToToken(vp.transform, it, base.w, base.h, tc.styles);
             if (tok) toks.push(tok);
           });
           if (!toks.length) toks = ocrWordsToTokens(words, base);

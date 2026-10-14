@@ -14,7 +14,7 @@ description: "Free private PDF tools that run entirely in your browser: merge an
 
   <p class="pt-intro">
     A PDF utility that runs entirely in your browser. Merge files, reorder, rotate, and delete pages,
-    pull out a range, add text and format it, add a signature, fill in forms, redact a page so the hidden text is
+    pull out a range, add text and format it, add a signature, fill in forms, white out part of a page, redact a page so the hidden text is
     actually gone, make a scanned PDF searchable with OCR, copy the text out cleaned up for pasting
     into an AI chat, add watermarks or page numbers, export pages as images, strip metadata, shrink
     the file, or lock it with a password. Everything runs locally on your device, your PDFs are
@@ -28,7 +28,7 @@ description: "Free private PDF tools that run entirely in your browser: merge an
       <button id="pt-add" class="pt-btn" type="button">+ Add files</button>
       <span class="pt-count" id="pt-count"></span>
       <span class="pt-sep"></span>
-      <button id="pt-editpage" class="pt-btn" type="button" disabled title="Open a page to add text, add a signature, black out content, or fill in form fields">✎ Edit page</button>
+      <button id="pt-editpage" class="pt-btn" type="button" disabled title="Open a page to add text, add a signature, black out or white out content, or fill in form fields">✎ Edit page</button>
       <span class="pt-sep"></span>
       <button id="pt-selall" class="pt-btn" type="button" title="Select all / none">Select all</button>
       <button id="pt-rotate" class="pt-btn" type="button" disabled title="Rotate selected pages 90° clockwise">⟳ Rotate</button>
@@ -61,7 +61,7 @@ description: "Free private PDF tools that run entirely in your browser: merge an
 
   <div class="pt-progress" id="pt-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden><div class="pt-progress__fill" id="pt-progress-fill"></div></div>
 
-  <p class="pt-tip" id="pt-tip" hidden>Double-click any page to add text, sign, black out, or fill forms.</p>
+  <p class="pt-tip" id="pt-tip" hidden>Double-click any page to add text, sign, black out, white out, or fill forms.</p>
 
   <div id="pt-drop" class="pt-drop" tabindex="0" role="button" aria-label="Add PDF or image files">
     <input id="pt-file" type="file" accept="application/pdf,.pdf,image/*" multiple hidden style="display:none!important">
@@ -178,6 +178,23 @@ description: "Free private PDF tools that run entirely in your browser: merge an
       <button id="pt-dialog-cancel" class="pt-btn" type="button">Cancel</button>
       <span class="pt-spacer"></span>
       <button id="pt-dialog-go" class="pt-btn pt-btn--accent" type="button">Got it, redact</button>
+    </div>
+  </div>
+</div>
+
+<!-- One-time white-out explainer, shown before the first white-out is applied -->
+<div class="pt-modal" id="pt-wo-dialog" hidden>
+  <div class="pt-modal__box pt-modal__box--narrow" role="dialog" aria-modal="true" aria-labelledby="pt-wo-dialog-head">
+    <div class="pt-modal__head" id="pt-wo-dialog-head"><strong>White-out covers, it does not remove</strong></div>
+    <div class="pt-dialog__body">
+      <p>A white-out paints a white box over the page. Whatever is under it stays in the file and can
+        still be found by search or by copying the text. To take content out of the file, use Redact
+        instead.</p>
+    </div>
+    <div class="pt-modal__foot">
+      <button id="pt-wo-dialog-cancel" class="pt-btn" type="button">Cancel</button>
+      <span class="pt-spacer"></span>
+      <button id="pt-wo-dialog-go" class="pt-btn pt-btn--accent" type="button">Got it, white out</button>
     </div>
   </div>
 </div>
@@ -406,10 +423,11 @@ description: "Free private PDF tools that run entirely in your browser: merge an
     <button id="pt-ed-undo" class="pt-btn" type="button" disabled title="Undo (Ctrl+Z)">↶ Undo</button>
     <span class="pt-ed__page" id="pt-ed-page"></span>
     <span class="pt-ed__tools">
-      <button id="pt-tool-move" class="pt-btn pt-tool pt-tool--on" type="button" title="Move / select">↖ Move</button>
-      <button id="pt-tool-text" class="pt-btn pt-tool" type="button" title="Add text">T Text</button>
-      <button id="pt-tool-sign" class="pt-btn pt-tool" type="button" title="Add a signature">✎ Sign</button>
-      <button id="pt-tool-redact" class="pt-btn pt-tool" type="button" title="Black out content so it is really removed from the file">▮ Redact</button>
+      <button id="pt-tool-move" class="pt-btn pt-tool pt-tool--on" type="button" title="Move / select" aria-pressed="true">↖ Move</button>
+      <button id="pt-tool-text" class="pt-btn pt-tool" type="button" title="Add text" aria-pressed="false">T Text</button>
+      <button id="pt-tool-sign" class="pt-btn pt-tool" type="button" title="Add a signature" aria-pressed="false">✎ Sign</button>
+      <button id="pt-tool-redact" class="pt-btn pt-tool" type="button" title="Black out content so it is really removed from the file" aria-pressed="false">▮ Redact</button>
+      <button id="pt-tool-whiteout" class="pt-btn pt-tool" type="button" title="White-out: cover part of the page with white (covers, does not remove)" aria-pressed="false">▯ White-out</button>
     </span>
     <span class="pt-ed__opts" id="pt-redact-opts" hidden>
       <label class="pt-ed__optlabel" for="pt-redact-dpi">Download quality</label>
@@ -488,7 +506,7 @@ description: "Free private PDF tools that run entirely in your browser: merge an
 
   <div class="pt-ed__scroll" id="pt-ed-scroll">
     <div class="pt-ed__stage" id="pt-ed-stage" tabindex="0" role="application"
-         aria-label="Page preview. With the Text or Redact tool active, press Enter to add one at the page center. Click a text box to edit its words; a selected text box has a grip above it for moving, side handles that set its width, and a corner handle that changes its size. Arrow keys nudge the selected item, Delete removes it.">
+         aria-label="Page preview. With the Text, Redact or White-out tool active, press Enter to add one at the page center. Click a text box to edit its words; a selected text box has a grip above it for moving, side handles that set its width, and a corner handle that changes its size. Arrow keys nudge the selected item, Delete removes it.">
       <canvas id="pt-ed-canvas" class="pt-ed__canvas"></canvas>
       <div class="pt-ed__layer" id="pt-ed-layer"></div>
     </div>
@@ -608,6 +626,7 @@ html[data-theme="light"] .pt-thumb.pt-sel { border-color: #34568a; box-shadow: 0
 .pt-thumb__bar { display: flex; align-items: center; justify-content: space-between; gap: 0.3rem; padding: 0.25rem 0.4rem; font-size: 0.74rem; opacity: 0.85; }
 .pt-thumb__num { font-variant-numeric: tabular-nums; }
 .pt-thumb__redacted { color: #c4574a; font-weight: 700; }
+.pt-thumb__whiteout { font-weight: 700; }
 .pt-thumb__ocr { color: #82a6cc; font-weight: 700; font-size: 0.85em; letter-spacing: 0.02em; }
 .pt-thumb__acts { display: flex; gap: 0.2rem; }
 .pt-thumb__act { font: inherit; font-size: 0.85em; line-height: 1; cursor: pointer; color: inherit; border: 1px solid rgba(127,127,127,0.4); background: rgba(127,127,127,0.14); border-radius: 4px; padding: 0.15em 0.35em; }
@@ -715,7 +734,11 @@ html[data-theme="light"] .pt-ed { background: #eef0f3; }
 @media (prefers-color-scheme: light) { html:not([data-theme="dark"]) .pt-ed { background: #eef0f3; } }
 .pt-ed__bar { display: flex; align-items: center; gap: 0.5rem; padding: 0.55rem 0.8rem; flex-wrap: wrap; border-bottom: 1px solid rgba(127,127,127,0.25); background: rgba(127,127,127,0.06); }
 .pt-ed__page { font-size: 0.85rem; opacity: 0.75; font-variant-numeric: tabular-nums; }
-.pt-ed__tools { display: inline-flex; gap: 0.3rem; }
+/* five tools no longer fit one row of a 390px phone: the group wraps onto a second row
+   and every label stays on one line (squeezed buttons used to break each label in two,
+   "White-" over "out") */
+.pt-ed__tools { display: inline-flex; gap: 0.3rem; flex-wrap: wrap; }
+.pt-tool { white-space: nowrap; }
 /* ‹ › stay a single unit: on a narrow phone the wrapping bar used to leave one of them
    stranded on the row above */
 .pt-ed__nav { display: inline-flex; gap: 0.3rem; flex: 0 0 auto; }
@@ -732,7 +755,23 @@ html[data-theme="light"] .pt-ed__opts select { color: #1f2430; background: #fff;
    more controls packed into the primary bar would wrap it to three rows on a phone and
    push the Done / Undo / page / nav row (the row a visitor uses to escape) off screen. */
 .pt-ed__textbar { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; padding: 0.45rem 0.8rem; border-bottom: 1px solid rgba(127,127,127,0.25); background: rgba(127,127,127,0.04); }
+/* the text bar FLOATS over the top of the page area (the editor places it with top), out
+   of the flow, so the page never moves or shrinks when it appears: a box drawn a moment ago
+   stays under the pointer when the user switches to Text (White-out ruling 5). Opaque, so
+   the page reads cleanly under it; the editor gives the page the bar's height of room
+   above so its first lines can still be scrolled into view. */
+.pt-ed__textbar { position: absolute; left: 0; right: 0; z-index: 4; background: #14161a; box-shadow: 0 4px 10px rgba(0,0,0,0.35); }
+html[data-theme="light"] .pt-ed__textbar { background: #eef0f3; box-shadow: 0 4px 10px rgba(0,0,0,0.12); }
+@media (prefers-color-scheme: light) { html:not([data-theme="dark"]) .pt-ed__textbar { background: #eef0f3; box-shadow: 0 4px 10px rgba(0,0,0,0.12); } }
 .pt-ed__textbar[hidden] { display: none !important; }   /* the hidden attr loses to display:flex otherwise */
+/* on a phone (a coarse pointer, or the narrow layout) the bar DOCKS in the flow BELOW the
+   page area instead (White-out fourth pass): it never covers the page, and the page keeps
+   its size and its place when the bar appears (only the area under the page gets shorter),
+   so a tap on the page always reaches the page. The hint stays last. */
+@media (pointer: coarse), (max-width: 639px) {
+  #pt-ed .pt-ed__textbar { position: static; order: 1; box-shadow: none; border-bottom: 0; border-top: 1px solid rgba(127,127,127,0.25); }
+  #pt-ed .pt-ed__hintbar { order: 2; }
+}
 .pt-ed__group { display: inline-flex; align-items: center; gap: 0.2rem; }
 /* the theme's _forms.scss gives every select width:100%, a 9px bottom margin and the
    compiled DARK text color on white, and all three have to be undone in the bar */
@@ -770,6 +809,15 @@ html[data-theme="light"] .pt-ico[aria-pressed="true"], html[data-theme="light"] 
 .pt-ed__stage { position: relative; box-shadow: 0 6px 30px rgba(0,0,0,0.4); background: #fff; touch-action: pinch-zoom; }
 .pt-ed__canvas { display: block; touch-action: pinch-zoom; }
 .pt-ed__layer { position: absolute; inset: 0; touch-action: pinch-zoom; }
+/* Move and Text (White-out fourth pass): one finger also scrolls the page up and down, so a
+   phone can bring any part of it into view; a tap still adds or picks a box (the editor adds
+   a text box only for a touch that moved 8 px or less). The boxes keep their own one-finger
+   drags (pinch-zoom only; the handles none), and the box-drawing tools and an armed
+   signature keep the rule above. A swipe at either end of the page area stops there instead
+   of scrolling the page behind the editor. */
+.pt-stage--pan, .pt-stage--pan .pt-ed__canvas, .pt-stage--pan .pt-ed__layer { touch-action: pan-y pinch-zoom; }
+.pt-stage--pan .pt-anno { touch-action: pinch-zoom; }
+.pt-ed__scroll { overscroll-behavior: contain; }
 .pt-ed__hintbar { padding: 0.4rem 0.8rem; font-size: 0.82rem; opacity: 0.7; min-height: 1.2em; border-top: 1px solid rgba(127,127,127,0.2); }
 .pt-ed__arrow { position: absolute; top: 50%; transform: translateY(-50%); z-index: 5; width: 46px; height: 70px; border: none; border-radius: 10px; background: rgba(127,127,127,0.28); color: #fff; font-size: 2.2rem; line-height: 1; cursor: pointer; opacity: 0.55; transition: opacity 0.15s ease, background 0.15s ease; }
 .pt-ed__arrow:hover:not(:disabled) { opacity: 1; background: rgba(130,166,204,0.6); }
@@ -803,7 +851,7 @@ html[data-theme="light"] .pt-ed__arrow { color: #1f2430; }
 .pt-anno__cv { position: absolute; left: 0; top: 0; display: block; pointer-events: none; user-select: none; -webkit-user-select: none; }
 .pt-anno__cv[hidden] { display: none !important; }
 .pt-anno__txt--static { position: absolute; left: 0; top: 0; pointer-events: none; }
-.pt-anno--text.pt-sel, .pt-anno--sig.pt-sel, .pt-anno--redact.pt-sel { outline: 1px dashed #82a6cc; outline-offset: 1px; }
+.pt-anno--text.pt-sel, .pt-anno--sig.pt-sel, .pt-anno--redact.pt-sel, .pt-anno--whiteout.pt-sel { outline: 1px dashed #82a6cc; outline-offset: 1px; }
 /* a 6px ring OUTSIDE a selected text box drags it, while the interior places the caret.
    The hit area is a pseudo-element, whose events target the box itself, so no second
    element joins the drag / nudge / resize / cancel paths. */
@@ -847,7 +895,19 @@ html[data-theme="light"] .pt-ed__arrow { color: #1f2430; }
    a box still being drawn is translucent with a red edge */
 .pt-anno--redact { background: #0d0d0d; cursor: move; z-index: 1; }
 .pt-anno--redact-tmp { background: rgba(20,20,20,0.55); border: 1px dashed #c4574a; z-index: 4; }
+/* a committed white-out is white (it IS what the download will look like) with a 1px
+   neutral hairline drawn INSIDE its edge, in the editor only, so a white box on a white
+   page can be found; z-index 0 keeps it under redactions, text and signatures, the order
+   every painter and the export use. A box still being drawn is a translucent white with a
+   dashed edge in the theme's accent. */
+.pt-anno--whiteout { background: #fff; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.28); cursor: move; z-index: 0; }
+.pt-anno--whiteout-tmp { background: rgba(255,255,255,0.7); box-shadow: none; border: 1px dashed #82a6cc; z-index: 4; }
+html[data-theme="light"] .pt-anno--whiteout-tmp { border-color: #34568a; }
+@media (prefers-color-scheme: light) { html:not([data-theme="dark"]) .pt-anno--whiteout-tmp { border-color: #34568a; } }
 .pt-ed__optlabel { font-size: 0.8rem; opacity: 0.75; }
+/* watermarks and page numbers in the editor: their own canvas above the white-out and
+   redaction boxes and under text and signatures, as in the thumbnails and the download */
+.pt-ed__marks { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; pointer-events: none; z-index: 1; }
 /* Form widgets sit ON the rendered page, which is white paper in both themes, so they
    keep paper colors. They must be OPAQUE: pdf.js paints each field's own appearance
    stream into the canvas underneath, and through a translucent overlay that painted
@@ -859,10 +919,15 @@ html[data-theme="light"] .pt-ed__arrow { color: #1f2430; }
 .pt-stage--text { cursor: text; }
 .pt-stage--text .pt-anno--redact { cursor: text; }   /* the text tool can place a label on a black box */
 .pt-stage--text .pt-anno--sig { cursor: text; }      /* ...or a date/name on a signature */
-.pt-stage--redact { cursor: crosshair; }
+.pt-stage--text .pt-anno--whiteout { cursor: text; } /* ...or a correction on a white-out */
+.pt-stage--redact, .pt-stage--whiteout { cursor: crosshair; }
 /* redacting: form widgets stay visible to aim at, but must not swallow the drag —
    a box drawn over a filled field is exactly the workflow this tool exists for */
-.pt-stage--redact .pt-formwidget { pointer-events: none; }
+.pt-stage--redact .pt-formwidget, .pt-stage--whiteout .pt-formwidget { pointer-events: none; }
+/* each box tool draws straight over the other kind of box (a redaction inside a white-out,
+   a white-out across a redaction) instead of the press landing on that box and doing
+   nothing; the other kind is still selectable in Move */
+.pt-stage--redact .pt-anno--whiteout, .pt-stage--whiteout .pt-anno--redact { pointer-events: none; }
 /* same rule for text boxes, now that clicking one edits it in every other tool: a
    redaction drawn across added text must draw a box, not put a caret in the words */
 .pt-stage--redact .pt-anno--text { pointer-events: none; }

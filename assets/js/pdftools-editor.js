@@ -3,7 +3,9 @@
    bold/italic/underline/strikethrough/color/highlight on a selection), Sign (draw/upload/
    saved + click where it goes), Redact (draw boxes — they commit IMMEDIATELY as page
    annotations; a one-time dialog explains that pages with boxes are flattened to images
-   on download, which is when the covered content is actually removed). Inline form-field
+   on download, which is when the covered content is actually removed), White-out (the
+   same boxes painted WHITE: they cover, the page stays vector and the content under them
+   stays in the file; a one-time dialog of its own says so). Inline form-field
    inputs (text, checkbox, dropdown, radio groups) are shown when the page has AcroForm
    widgets. All edits live on the page model (pg.texts / pg.sigs / pg.redacts / pg.raster)
    and on docs[i].formValues, so thumbnails and export pick them up, and every edit takes
@@ -42,7 +44,8 @@
   var selected = null;                 // selected annotation element
   var focusedEl = null;                // the text box currently promoted to the editable flow
   var redactWarned = false;            // the one-time "how redaction works" dialog was acknowledged
-  var pendingBox = null;               // { rec, el } — first-ever box, held until the dialog is confirmed
+  var whiteWarned = false;             // the one-time "white-out covers, it does not remove" dialog was acknowledged
+  var pendingBox = null;               // { rec, el, kind } — first-ever box of a kind, held until its dialog is confirmed
 
   // metric-compatible browser stacks (spec 12.1 / s4): Arial, Times New Roman and Courier
   // New share advance widths with the standard 14, so the flow the user types into breaks
@@ -84,10 +87,15 @@
     disarmSig();
     if (pg) PT.markDirty(pg);          // navigating away — that page's thumbnail may be stale
     idx = i; pg = pages[i]; selected = null; lastOpenIdx = i;
+    if (ed.hidden) {                     // a fresh open measures the hint bar and the room afresh
+      hintMin = 0; hint.style.minHeight = '';
+      barPad = 0; padB = 0; stage.style.marginTop = ''; stage.style.marginBottom = ''; scrollEl.scrollTop = 0;
+    }
     // page navigation keeps the active tool (redacting a multi-page doc shouldn't snap
     // back to Move on every arrow); a fresh open from the grid starts on Move
     setTool(keepTool ? tool : 'move');
     ed.hidden = false;
+    holdHint();
     renderPage();
   }
   function close() {
@@ -102,6 +110,10 @@
       PT.markDirty(pg);
     }
     ed.hidden = true; pg = null; idx = -1;
+    // the page's text and a picked size end with the session; the select drops the pick it
+    // shows (a size it shows from the last box edited stays: a new box takes it, review7 m3)
+    if (pickedSize != null && sizeSel.value === String(pickedSize)) sizeSel.value = '14';
+    textSlot = null; pickedSize = null;
     PT.renderGrid(); PT.updateToolbar();
     // hand focus back to the grid: the fresh thumb of the page we were editing
     // (renderGrid rebuilt the nodes), else the first thumb, else the Download button
@@ -119,12 +131,22 @@
       if (r === 0) return false;
       if (PT.snapshot) PT.snapshot('flatten page ' + (idx + 1) + ' upright');
       var mySnap = PT.snapSeq ? PT.snapSeq() : -1;
+      var carry = (textSlot && textSlot.pg === pg && textSlot.key === textKey(pg)) ? textSlot : null, myPg = pg;
+      // the frame (rotation of the source page) the flatten rasterizes into: a live page's
+      // effective rotation, or a raster page's own frame turned by its grid rotation
+      var frame = pg.raster ? (pg.raster.frame != null ? (pg.raster.frame + r) % 360 : null) : r;
       return PT.bakePageToRaster(pg, 150).then(null, function (e) {
         // the flatten failed, so its snapshot covers nothing — drop it, but only while
         // it is still top-of-stack (the usual ledger guard)
         if (mySnap >= 0 && PT.snapSeq && PT.snapSeq() === mySnap && PT.dropSnapshot) PT.dropSnapshot();
         throw e;
-      }).then(function () { return renderPage(); }).then(function () { return true; });
+      }).then(function () {
+        // the page's text, read in the frame the flatten has just rasterized, stays its text;
+        // the frame goes on the raster itself, so an undo clone or a later visit re-reads it
+        if (myPg === pg && pg.raster && frame != null) pg.raster.frame = frame;
+        if (carry && textSlot === carry && myPg === pg) carry.key = textKey(pg);
+        return renderPage();
+      }).then(function () { return true; });
     });
   }
 
@@ -139,7 +161,7 @@
     var edW = scrollEl.clientWidth || 800;
     // reserve the side page-nav arrow gutters (46px arrows at 12px from each edge) so an
     // enabled arrow never overlaps a wide page; below ~640px the arrows are hidden in CSS
-    var avW = edW - 32 - (edW >= 620 ? 120 : 0), avH = (scrollEl.clientHeight || 600) - 32;
+    var avW = edW - 32 - (edW >= 620 ? 120 : 0), avH = (scrollEl.clientHeight || 600) + dockH() - 32;
     // the text painters need the AFM width table; it is built once at page init
     return Promise.resolve(PT.metricsReady).catch(function () { return null; }).then(function () {
       return PT.effPointSize(pg);
@@ -164,14 +186,16 @@
       cx.drawImage(res.canvas, 0, 0);
       res.canvas.width = 0;              // free the intermediate canvas (up to 1500px wide)
       dispW = canvas.width; dispH = canvas.height; scale = dispW / Wpt;
-      // watermarks + page numbers preview (texts/sigs are live DOM elements instead)
-      if (PT.drawMarks) PT.drawMarks(cx, pg, dispW, dispH, Wpt, Hpt, idx);
+      // watermarks + page numbers are NOT painted into the page canvas any more: they go
+      // on their own canvas above the white-out and redaction boxes (addMarksLayer)
       stage.style.width = dispW + 'px'; stage.style.height = dispH + 'px';
       layer.style.width = dispW + 'px'; layer.style.height = dispH + 'px';
       pageLabel.textContent = 'Page ' + (idx + 1) + ' of ' + PT.pages().length;
       buildAnnoEls();
+      addMarksLayer();
       addFormWidgets();
       updateNav();
+      warmText(pg);                      // a white-out tap then finds the page's text here
     }).catch(function (err) {
       /* a superseded render was cancelled (RenderingCancelledException) — expected,
          its continuation is already a no-op via the mySeq guard */
@@ -196,32 +220,101 @@
 
   // ---------- tools ----------
   // the text bar is shown whenever the Text tool is on OR a text box is selected (a box
-  // can be edited in Move and Sign too, ruling 12.6). Returns true when a bar's visibility
-  // changed, so the caller can re-measure the stage — renderPage sizes the canvas from
-  // scrollEl.clientHeight, and a bar that appears afterwards leaves it taller than the stage.
+  // can be edited in Move and Sign too, ruling 12.6). It FLOATS over the top of the page
+  // area (absolute, out of the flow: the md), so showing it never re-measures or moves the
+  // page: a box drawn a moment ago stays exactly where the pointer left it when the user
+  // switches to Text (White-out ruling 5), and the page keeps its full size in every other
+  // tool. So that the bar never hides the page's first lines for good, the page gets the
+  // bar's height of room above it (a top margin) while the scroll moves by the same amount
+  // (keepStage). Returns true when the in-flow Sign bar changed height, so the caller can
+  // re-measure the stage (renderPage sizes the canvas from scrollEl.clientHeight).
+  var barPad = 0, padB = 0;
   function syncBars() {
     var showText = (tool === 'text') || (selected && isText(selected)) || !!focusedEl;
-    var was = !textbar.hidden;
+    var vis = !ed.hidden;
+    var top0 = vis ? stage.getBoundingClientRect().top : 0;
+    var signbar = $('pt-ed-signbar'), sign0 = signbar.offsetHeight;
     textbar.hidden = !showText;
     $('pt-redact-opts').hidden = tool !== 'redact';
-    $('pt-ed-signbar').hidden = tool !== 'sign';
-    return was !== !!showText;
+    signbar.hidden = tool !== 'sign';
+    var changed = signbar.offsetHeight !== sign0;
+    if (showText) placeTextbar();
+    var want = (showText && vis && !docked()) ? textbar.offsetHeight : 0;
+    if (want !== barPad) { barPad = want; stage.style.marginTop = barPad ? barPad + 'px' : ''; }
+    if (vis && !changed) keepStage(top0);
+    // the Sign bar re-lays the page out (the caller re-renders): start that from the top
+    if (changed) { padB = 0; stage.style.marginBottom = ''; scrollEl.scrollTop = 0; }
+    if (!barPad && padB && scrollEl.scrollTop === 0) { padB = 0; stage.style.marginBottom = ''; }
+    return changed;
+  }
+  // the floating bar sits on the top edge of the page area, wherever the bars above it end
+  function placeTextbar() { textbar.style.top = scrollEl.offsetTop + 'px'; }
+  // on a phone (a coarse pointer, or the narrow layout: the md) the bar is DOCKED in the
+  // flow below the page area instead: no room above the page, nothing over it. The page
+  // keeps its size (renderPage counts the docked bar's height back in) and its place (the
+  // area only gets shorter at the bottom; keepStage covers the bar closing again).
+  function docked() { return getComputedStyle(textbar).position === 'static'; }
+  function dockH() { return (!textbar.hidden && docked()) ? textbar.offsetHeight : 0; }
+  // a resize or a turn can cross the phone layout or re-wrap the bar: measure it again
+  window.addEventListener('resize', function () { if (!ed.hidden && !textbar.hidden) { placeTextbar(); syncBars(); } });
+  // scroll by however far the stage moved, so it keeps its screen position; if the page is
+  // too short to scroll that far, add room below it first (measured from the content's own
+  // bottom edge: while the page is shorter than the area, scrollHeight is just the area)
+  function keepStage(top0) {
+    var d = stage.getBoundingClientRect().top - top0;
+    if (!d) return;
+    var sr = scrollEl.getBoundingClientRect(), r = stage.getBoundingClientRect();
+    var content = r.bottom - sr.top + scrollEl.scrollTop + padB + (parseFloat(getComputedStyle(scrollEl).paddingBottom) || 0);
+    var need = scrollEl.scrollTop + d + scrollEl.clientHeight - content;
+    if (need > 0) { padB += Math.ceil(need); stage.style.marginBottom = padB + 'px'; }
+    scrollEl.scrollTop += d;
   }
   function setTool(t) {
     tool = t; selected = null; deselectAll(); disarmSig();
-    ['move', 'text', 'sign', 'redact'].forEach(function (k) { $('pt-tool-' + k).classList.toggle('pt-tool--on', k === t); });
+    ['move', 'text', 'sign', 'redact', 'whiteout'].forEach(function (k) {
+      var b = $('pt-tool-' + k);
+      b.classList.toggle('pt-tool--on', k === t);
+      b.setAttribute('aria-pressed', k === t ? 'true' : 'false');
+    });
     var changed = syncBars();
     if (t === 'sign') renderSavedSigs();
     stage.classList.toggle('pt-stage--text', t === 'text');
     stage.classList.toggle('pt-stage--redact', t === 'redact');
-    hint.textContent = t === 'text' ? 'Click anywhere on the page to add text. Click a text box to edit it; drag its grip to move it. Press Escape to stop typing, then the arrow keys nudge the box.'
-      : t === 'sign' ? 'Draw or upload a signature, click Place, then click where it goes on the page. Drag it later to adjust. Saved signatures stay in this browser only.'
-      : t === 'redact' ? 'Drag boxes over anything to remove. Each box is kept and shown as soon as you draw it, so you can move it, click it for its ×, or press Ctrl+Z. On download the page is flattened to an image, which is what actually removes the covered text.'
-      : 'Click a text box to edit its words; drag its grip to move it. Click a signature or redaction to move or delete it. Use ‹ › or the arrow keys to change pages.';
+    stage.classList.toggle('pt-stage--whiteout', t === 'whiteout');
+    stage.classList.toggle('pt-stage--pan', t === 'move' || t === 'text');   // one finger may scroll (the md)
+    if (t === 'text' && pg) warmText(pg);
+    // a finger has no Escape, arrow keys or Ctrl+Z: on a coarse pointer the hints say tap
+    // and name the Undo and Done buttons (the desktop strings are unchanged)
+    if (changed) { hintMin = 0; hint.style.minHeight = ''; }   // the page is re-measured anyway (Sign)
+    else noteHint();
+    var touch = coarse();
+    hint.textContent = t === 'text' ? (touch ? 'Tap anywhere on the page to add text. Tap a text box to edit it; drag its grip to move it. Tap Done when you are finished.'
+        : 'Click anywhere on the page to add text. Click a text box to edit it; drag its grip to move it. Press Escape to stop typing, then the arrow keys nudge the box.')
+      : t === 'sign' ? (touch ? 'Draw or upload a signature, tap Place, then tap where it goes on the page. Drag it later to adjust. Saved signatures stay in this browser only.'
+        : 'Draw or upload a signature, click Place, then click where it goes on the page. Drag it later to adjust. Saved signatures stay in this browser only.')
+      : t === 'redact' ? (touch ? 'Drag boxes over anything to remove. Each box is kept and shown as soon as you draw it, so you can move it, tap it for its ×, or tap Undo. On download the page is flattened to an image, which is what actually removes the covered text.'
+        : 'Drag boxes over anything to remove. Each box is kept and shown as soon as you draw it, so you can move it, click it for its ×, or press Ctrl+Z. On download the page is flattened to an image, which is what actually removes the covered text.')
+      : t === 'whiteout' ? (touch ? 'Drag a box over anything to cover it with white. A white-out only covers: what is under it stays in the file (Redact removes it). Tap a box for its ×, or tap Undo. To type a correction on top, switch to Text and tap the box.'
+        : 'Drag a box over anything to cover it with white. A white-out only covers: what is under it stays in the file (Redact removes it). Click a box for its ×, or press Ctrl+Z. To type a correction on top, switch to Text and click the box.')
+      : (touch ? 'Tap a text box to edit its words; drag its grip to move it. Tap a signature, redaction or white-out to move or delete it. Use ‹ › to change pages, and tap Done when you are finished.'
+        : 'Click a text box to edit its words; drag its grip to move it. Click a signature, redaction or white-out to move or delete it. Use ‹ › or the arrow keys to change pages.');
+    holdHint();
     syncTextBar();
     return changed;
   }
-  ['move', 'text', 'sign', 'redact'].forEach(function (k) {
+  // the hint bar sits under the page: if a shorter hint let it shrink, the scroll area
+  // would grow and a page scrolled even 1 px would be clamped down, moving the box the
+  // user just drew (White-out ruling 5). So it only ever grows while the editor is open;
+  // open() starts it afresh.
+  var hintMin = 0;
+  function noteHint() { if (!ed.hidden) hintMin = Math.max(hintMin, hint.getBoundingClientRect().height); }   // before the text changes
+  function holdHint() {                                                                   // after it changed
+    if (ed.hidden) return;
+    hint.style.minHeight = hintMin ? hintMin + 'px' : '';
+    var hh = hint.getBoundingClientRect().height;
+    if (hh > hintMin) { hintMin = hh; hint.style.minHeight = hintMin + 'px'; }
+  }
+  ['move', 'text', 'sign', 'redact', 'whiteout'].forEach(function (k) {
     $('pt-tool-' + k).addEventListener('click', function () { if (setTool(k) && pg && !ed.hidden) renderPage(); });
   });
 
@@ -320,14 +413,16 @@
   }
   function annoKind(el) {
     return el.classList.contains('pt-anno--sig') ? 'signature'
-      : el.classList.contains('pt-anno--redact') ? 'redaction' : 'text';
+      : el.classList.contains('pt-anno--redact') ? 'redaction'
+      : el.classList.contains('pt-anno--whiteout') ? 'white-out' : 'text';
   }
   function removeAnno(el, skipSnap) {
     var m = el.__model, kind = annoKind(el);
     if (focusedEl === el) focusedEl = null;
     if (!pg) { el.remove(); if (selected === el) selected = null; return; }   // a late blur can land after close()
     if (m) {
-      var arr = kind === 'signature' ? pg.sigs : kind === 'redaction' ? pg.redacts : pg.texts;
+      var arr = kind === 'signature' ? pg.sigs : kind === 'redaction' ? pg.redacts
+        : kind === 'white-out' ? pg.whiteouts : pg.texts;
       var k = (arr || []).indexOf(m);
       if (k >= 0) {
         if (!skipSnap && PT.snapshot) PT.snapshot('remove ' + kind + ' on page ' + (idx + 1));
@@ -341,7 +436,25 @@
       PT.setStatus('All redactions removed from this page. It keeps its original quality on download.');
   }
 
+  // watermarks and page numbers on their own canvas, z-index 1 and AFTER the box
+  // elements in the layer: above the white-outs (0) and the redactions (1, earlier in the
+  // layer), under text (2) and signatures (3). That is the order the thumbnails and the
+  // download use (white-outs, redactions, marks, texts, signatures). A page without marks
+  // gets no canvas. New boxes are inserted BEFORE it (addBoxEl).
+  function addMarksLayer() {
+    if (!PT.drawMarks || !((pg.wms && pg.wms.length) || (PT.getPageNums && PT.getPageNums()))) return;
+    var mc = document.createElement('canvas'); mc.className = 'pt-ed__marks';
+    mc.width = dispW; mc.height = dispH;
+    PT.drawMarks(mc.getContext('2d'), pg, dispW, dispH, Wpt, Hpt, idx);
+    layer.appendChild(mc);
+  }
+  function addBoxEl(el) {
+    var mk = layer.querySelector('.pt-ed__marks');
+    if (mk) layer.insertBefore(el, mk); else layer.appendChild(el);
+  }
+
   function buildAnnoEls() {
+    (pg.whiteouts || []).forEach(function (r) { layer.appendChild(makeRedactEl(r, 'whiteout')); });
     (pg.redacts || []).forEach(function (r) { layer.appendChild(makeRedactEl(r)); });
     (pg.texts || []).forEach(function (t) { layer.appendChild(makeTextEl(t)); });
     (pg.sigs || []).forEach(function (s) { layer.appendChild(makeSigEl(s)); });
@@ -683,11 +796,14 @@
     syncTextBar();
   }
 
-  function promote(el, caretOff) {
+  // now: focus at once as well, inside the gesture that made the box (the caller has made
+  // that safe: a white-out tap's pointerdown is preventDefaulted, so no compat mousedown
+  // moves the focus afterwards); the timer below still runs as before
+  function promote(el, caretOff, now) {
     if (!el || !isText(el)) return;
     if (focusedEl && focusedEl !== el) demote(focusedEl);
     var t = el.__model;
-    if (el.__txt) { focusFlow(el, caretOff); return; }
+    if (el.__txt) { focusFlow(el, caretOff, now); return; }
     if (el.__cv) el.__cv.hidden = true;
     var txt = document.createElement('div');
     txt.className = 'pt-anno__txt';
@@ -727,21 +843,42 @@
       if (activeDragCancel) { flushFlow(el); return; }   // a handle gesture owns the box
       demote(el);
     });
-    focusFlow(el, caretOff);
     syncBars(); syncTextBar();
+    focusFlow(el, caretOff, now);
   }
-  function focusFlow(el, caretOff) {
+  function focusFlow(el, caretOff, now) {
     var txt = el.__txt; if (!txt) return;
     // a real click's default action moves focus to <body> after the handler, so focus in
     // a setTimeout(0) — the documented canvas-overlay focus gotcha
-    setTimeout(function () {
+    function go() {
       if (!txt.isConnected) return;
       try { txt.focus(); } catch (er) {}
       var n = (el.__model.text || '').length;
       var off = (caretOff == null) ? n : Math.max(0, Math.min(n, caretOff));
       setSelRange(txt, off, off, off > 0 ? 'after' : 'before');
       syncTextBar();
-    }, 0);
+      reveal(el);
+    }
+    if (now) go();
+    setTimeout(go, 0);
+  }
+  // a box opened for typing (created, or promoted) is scrolled fully into view, with its x
+  // badge and its grip: on a desktop that is below the floating text bar (a box under it
+  // would be typed into blind), on a phone the docked bar is outside the page area, so the
+  // area itself is the limit. Only the page area scrolls (never the window), and only when
+  // something is out of view (the bar's room above the page, barPad, means there is always
+  // room to scroll a box out from under the bar).
+  function reveal(el) {
+    if (!el || !el.isConnected || ed.hidden) return;
+    var sr = scrollEl.getBoundingClientRect(), r = el.getBoundingClientRect(), y0 = r.top, y1 = r.bottom;
+    var top = sr.top + 4, bot = sr.top + scrollEl.clientHeight - 4;
+    if (!textbar.hidden && !docked()) top = Math.max(top, textbar.getBoundingClientRect().bottom + 4);
+    // the box's x badge and move grip come into view with it (they sit outside it)
+    Array.prototype.forEach.call(el.querySelectorAll('.pt-anno__del, .pt-anno__grip'), function (hd) {
+      var q = hd.getBoundingClientRect(); y0 = Math.min(y0, q.top); y1 = Math.max(y1, q.bottom);
+    });
+    if (y0 < top) scrollEl.scrollTop -= Math.ceil(top - y0);
+    else if (y1 > bot) scrollEl.scrollTop += Math.ceil(Math.min(y1 - bot, y0 - top));
   }
   // Chrome dispatches blur SYNCHRONOUSLY while the focused node is being removed, so the
   // flow's own blur handler re-enters this function mid-removal: __txt is nulled and the
@@ -970,8 +1107,11 @@
     });
     return el;
   }
-  function makeRedactEl(r) {
-    var el = document.createElement('div'); el.className = 'pt-anno pt-anno--redact'; el.__model = r;
+  // a redaction box, or (kind 'whiteout') a white-out box: the same rect, the same
+  // gestures, a different paint and a different model array
+  function makeRedactEl(r, kind) {
+    kind = kind || 'redact';
+    var el = document.createElement('div'); el.className = 'pt-anno pt-anno--' + kind; el.__model = r;
     el.style.left = (r.x * dispW) + 'px'; el.style.top = (r.y * dispH) + 'px';
     el.style.width = (r.w * dispW) + 'px'; el.style.height = (r.h * dispH) + 'px';
     annoKeyboardable(el);
@@ -980,7 +1120,7 @@
       if (sigArmed) return;
       if (e.target.classList.contains('pt-anno__del')) return;
       if (tool === 'move') { e.preventDefault(); select(el); startDrag(e, el, r); }
-      else if (tool === 'redact') { e.preventDefault(); select(el); }   // select → × to remove
+      else if (tool === kind) { e.preventDefault(); select(el); }   // select → × to remove
     });
     return el;
   }
@@ -1142,34 +1282,143 @@
   function stagePos(e) { var r = layer.getBoundingClientRect(); return { x: (e.clientX - r.left), y: (e.clientY - r.top) }; }
   // create an empty, focused text box at normalized (nx, ny) — shared by the stage
   // click and the keyboard path
-  function createTextAt(nx, ny) {
+  // `quick`: the caller's pointerdown was preventDefaulted (a tap on a white-out), so the
+  // box may be focused inside the tap (promote's `now`)
+  function createTextAt(nx, ny, wo, quick) {
     var o = {
       size: parseInt(sizeSel.value, 10) || 14, font: fontSel.value, color: colorInp.value,
       lh: parseFloat(lhSel && lhSel.value) || 1.2, align: currentAlign()
     };
     var myPg = pg;
-    ensureUpright().then(function (flattened) {
-      if (myPg !== pg) return;   // the user navigated away while a rotated page was flattening
-      // the flatten snapshot (if any) already covers this action — one Ctrl+Z undoes both
-      if (!flattened && PT.snapshot) PT.snapshot('add text on page ' + (idx + 1));
-      var t = PURE.newTextBox
-        ? PURE.newTextBox({ x: nx, y: ny, size: o.size, font: o.font, color: o.color, lh: o.lh, align: o.align })
-        : { x: nx, y: ny, text: '', size: o.size, font: o.font, color: o.color, w: null, lh: o.lh, align: o.align, runs: null };
-      pg.texts.push(t); var el = makeTextEl(t, true, !flattened); layer.appendChild(el);
-      select(el); promote(el, 0);
+    // the covered run is read BEFORE ensureUpright, in the frame the white-out was drawn in
+    // (a rotated page is flattened by it and its text is gone after); with the page's text
+    // already read (warmText) every step here settles in microtasks of the tap
+    (wo ? coveredRun(wo) : Promise.resolve(null)).then(function (run) {
+      if (myPg !== pg) return;
+      return ensureUpright().then(function (flattened) {
+        if (myPg !== pg) return;   // the user navigated away while a rotated page was flattening
+        if (wo) { var at = snapTo(wo, o, run); nx = at.x; ny = at.y; }
+        // the flatten snapshot (if any) already covers this action: one Ctrl+Z undoes both
+        if (!flattened && PT.snapshot) PT.snapshot('add text on page ' + (idx + 1));
+        var t = PURE.newTextBox
+          ? PURE.newTextBox({ x: nx, y: ny, size: o.size, font: o.font, color: o.color, lh: o.lh, align: o.align })
+          : { x: nx, y: ny, text: '', size: o.size, font: o.font, color: o.color, w: null, lh: o.lh, align: o.align, runs: null };
+        pg.texts.push(t); var el = makeTextEl(t, true, !flattened); layer.appendChild(el);
+        select(el); promote(el, 0, !!quick && !flattened);
+      });
     }).catch(function () {
       // the upright flatten failed (render/encode error on an unusual page) — say so
       // instead of a click that silently does nothing
       if (myPg === pg) edNotice('Could not prepare this page for text.');
     });
   }
+  // a correction typed on a white-out (`wo`, its model rect) starts 2 pt in from the box's
+  // left edge. Its size (o.size, in place): the covered run's own size when one was found
+  // (`run.pt`, read from the page's text), else about 0.8 of the box height but never under
+  // 8 pt; whole points. The size select is NOT a cap: it mirrors the last box edited. Only a
+  // size the visitor picked for new boxes (`pickedSize`, chosen while no box was the select's
+  // target) caps it; without one the caps are 72 (a run) and 14 (no run).
+  // Where it sits: a TALL box (more than 2.5 lines of that size) is a block to retype, so the
+  // ink starts 2 pt under its top edge; otherwise on the covered line's own baseline
+  // (`run.base`) when its ink then fits inside the box, else with its ink band (ascender to
+  // descender of the face) centred on the box's middle. Returns the box's model position.
+  function snapTo(wo, o, run) {
+    var boxH = wo.h * Hpt, top = wo.y * Hpt, bot = (wo.y + wo.h) * Hpt;
+    o.size = run ? Math.max(4, Math.min(pickedSize || 72, Math.round(run.pt)))
+      : Math.max(8, Math.min(pickedSize || 14, Math.round(boxH * 0.8)));
+    var tab = metricsTable(), fk = PURE.faceKey ? PURE.faceKey(o.font, false, false) : o.font;
+    var asc = PURE.faceAscent ? PURE.faceAscent(tab, fk) : 0.718, desc = PURE.faceDescent ? PURE.faceDescent(tab, fk) : 0.207;
+    var base;
+    if (boxH > 2.5 * o.size * o.lh) base = top + 2 + asc * o.size;
+    else {
+      base = (wo.y + wo.h / 2) * Hpt + (asc - desc) / 2 * o.size;
+      if (run && run.base != null && run.base - asc * o.size >= top - 1e-6 && run.base + desc * o.size <= bot + 1e-6) base = run.base;
+    }
+    return { x: wo.x + 2 / Wpt, y: (base - (PURE.LINE_BASE || 0.82) * o.size) / Hpt };
+  }
+  // the text of the page the editor SHOWS, read once and kept in ONE slot: fetched when the
+  // editor shows a live page and when Text is picked, so a tap on a white-out finds it here
+  // and the correction box is made and focused inside the tap, with no round trip to the
+  // pdf.js worker (iOS raises its keyboard only for a focus inside the gesture). Showing
+  // another page replaces it; close() and a new document clear it; it is keyed by the
+  // page's state, so a turned page reads afresh; the editor's own flatten (ensureUpright)
+  // CARRIES it: the text was read in the frame the page is shown in (`rot`), which is the
+  // frame the flatten rasterizes into, so later corrections on that page still find their
+  // line. A page that was a raster or a scan from the start has none. (One slot, not one
+  // entry per page: a long word-positioned scan walked in the editor would otherwise hold
+  // every page's text content for the whole visit.)
+  var textSlot = null;
+  function textKey(p) { return p.docIndex + ':' + p.pageIndex + ':' + (p.rot || 0) + ':' + (p.raster ? 1 : 0); }
+  // A raster page the editor flattened carries its frame (`raster.frame`, ensureUpright): its
+  // SOURCE page's text is read again in that frame (turned by any later grid rotation), so
+  // an undo clone, a visit to another page and back, or files added keep the snap.
+  function warmText(p) {
+    if (!p || p.blank || !PT.pdfjsPage) return null;
+    if (textSlot && textSlot.pg === p && textSlot.key === textKey(p)) return textSlot;
+    var fr = p.raster ? p.raster.frame : null;
+    if (p.raster && fr == null) return null;   // a raster or a scan from the start: no text
+    var e = { pg: p, key: textKey(p), page: null, tc: null, p: null, rot: 0 }, r0 = p.rot || 0;
+    try {
+      e.p = PT.pdfjsPage(p).then(function (page) {
+        e.rot = fr != null ? (fr + r0) % 360 : ((page.rotate || 0) + r0) % 360;   // = the frame the page is shown in
+        return page.getTextContent().then(function (tc) { e.page = page; e.tc = tc; return e; });
+      });
+    } catch (er) { return null; }
+    textSlot = e;
+    e.p.catch(function () { if (textSlot === e) textSlot = null; });
+    return e;
+  }
+  // the page's own text under a white-out: {pt, base} of the pdf.js run with the most of its
+  // area under the box, counting only runs whose vertical middle the box covers (as
+  // PURE.cutCovered does): its size and, for an upright run, its baseline, both in points
+  // from the top of the frame the editor shows NOW (the viewport at the page's own rotation,
+  // the white-out's frame; read before any flatten). null when there is no live text there
+  // (a scan, a flattened or blank page, vertical text, nothing under the box, a failed read).
+  function coveredRun(wo) {
+    var e = warmText(pg); if (!e || !PURE.itemToToken) return Promise.resolve(null);
+    var myPg = pg;
+    return (e.tc ? Promise.resolve(e) : e.p).then(function (r) {
+      if (myPg !== pg || !r || !r.tc || !r.page) return null;
+      var rot = r.rot;   // the frame shown when the text was read (a flatten keeps it)
+      var vp = r.page.getViewport({ scale: 1, rotation: rot }), best = null, most = 0;
+      (r.tc.items || []).forEach(function (it) {
+        var k = PURE.itemToToken(vp.transform, it, vp.width, vp.height);
+        if (!k || (k.y1 - k.y0) > k.fontSize * 2.5) return;
+        var cy = (k.y0 + k.y1) / 2, ov = Math.min(k.x1, wo.x + wo.w) - Math.max(k.x0, wo.x);
+        if (cy < wo.y || cy > wo.y + wo.h || !(ov > 0)) return;
+        var area = ov * Math.min(k.y1 - k.y0, wo.h);
+        if (area <= most) return;
+        var tx = PURE.combine2d(vp.transform, it.transform);
+        most = area;
+        best = { pt: k.fontSize * vp.height, base: (tx[0] > 0 && Math.abs(tx[1]) <= 1e-3 * tx[0]) ? tx[5] : null };
+      });
+      return best;
+    }).catch(function () { return null; });
+  }
+  // a finger adds a box (Text) or deselects (Move, Sign) on a TAP only: a touch that moves
+  // more than 8 px is a swipe (the stage lets it scroll the page, the md) and does nothing;
+  // so does one the browser takes over as a scroll (pointercancel)
+  function onTap(e, fn) {
+    var pid = e.pointerId, sx = e.clientX, sy = e.clientY, far = false, pg0 = pg, t0 = tool;
+    function mv(ev) { if (ev.pointerId === pid && Math.hypot(ev.clientX - sx, ev.clientY - sy) > 8) far = true; }
+    function end(ev) {
+      if (ev.pointerId !== pid) return;
+      window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', end); window.removeEventListener('pointercancel', end);
+      if (ev.type !== 'pointerup') return;
+      mv(ev);
+      if (!far && pg === pg0 && !ed.hidden && tool === t0) fn();
+    }
+    window.addEventListener('pointermove', mv); window.addEventListener('pointerup', end); window.addEventListener('pointercancel', end);
+  }
   stage.addEventListener('pointerdown', function (e) {
     if (e.button != null && e.button !== 0) return;                               // left button / touch only
     if (sigArmed) return;                                                         // the capture handler owns it
-    // clicks on annotations are theirs — EXCEPT the text tool over a redaction box or a
-    // signature: typing a replacement label over blacked-out content (or a date/name on
-    // a signature) is the natural workflow (the export renders those stacks correctly)
-    var onRedactEl = e.target.classList && e.target.classList.contains('pt-anno--redact');
+    // clicks on annotations are theirs — EXCEPT the text tool over a redaction box, a
+    // white-out or a signature: typing a replacement label over blacked-out content, a
+    // correction over a white-out (or a date/name on a signature) is the natural workflow
+    // (the export renders those stacks correctly)
+    var onRedactEl = e.target.classList && (e.target.classList.contains('pt-anno--redact') ||
+      e.target.classList.contains('pt-anno--whiteout'));
     var onSigEl = !!(e.target.closest && e.target.closest('.pt-anno--sig'));
     var overAnno = (tool === 'text' && (onRedactEl || onSigEl));
     if (e.target !== canvas && e.target !== stage && e.target !== layer && !overAnno) return;
@@ -1181,16 +1430,25 @@
     if (overAnno) e.preventDefault();
     var p = stagePos(e);
     if (tool === 'text') {
-      createTextAt(p.x / dispW, p.y / dispH);
-    } else if (tool === 'redact') {
-      startRedactBox(e, p);
+      // on a white-out the new box snaps to it (createTextAt); anywhere else it starts at the click
+      var onWo = (overAnno && e.target.classList.contains('pt-anno--whiteout')) ? e.target.__model : null;
+      if (e.pointerType === 'touch') onTap(e, function () { createTextAt(p.x / dispW, p.y / dispH, onWo, overAnno); });
+      else createTextAt(p.x / dispW, p.y / dispH, onWo, overAnno);
+    } else if (tool === 'redact' || tool === 'whiteout') {
+      startRedactBox(e, p, tool);
+    } else if (e.pointerType === 'touch') {
+      // a finger on bare page deselects on a TAP: a swipe scrolls (the md) and keeps the
+      // selection, so a docked text bar does not drop away in the middle of the swipe
+      onTap(e, function () { deselectAll(); selected = null; syncBars(); syncTextBar(); });
     } else { deselectAll(); selected = null; syncBars(); syncTextBar(); }
   });
 
   var activeRedactCancel = null;   // set while a redact drag is in flight, so Escape can
                                    // cancel the BOX instead of closing the whole editor
-  function startRedactBox(e, p0) {
-    var box = document.createElement('div'); box.className = 'pt-anno pt-anno--redact pt-anno--redact-tmp'; layer.appendChild(box);
+  // kind 'redact' (default) or 'whiteout': one drawing gesture for both boxes
+  function startRedactBox(e, p0, kind) {
+    kind = kind || 'redact';
+    var box = document.createElement('div'); box.className = 'pt-anno pt-anno--' + kind + ' pt-anno--' + kind + '-tmp'; layer.appendChild(box);
     var rec = { x: p0.x / dispW, y: p0.y / dispH, w: 0, h: 0 };
     var pg0 = pg;   // arrow-key nav or Escape mid-drag must not commit to the wrong page
     var pid = e.pointerId;   // ignore any other simultaneous pointer (a resting palm) so
@@ -1206,13 +1464,12 @@
       activeRedactCancel = null;
       window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', cancel);
       if (!commit || pg !== pg0 || ed.hidden || !(rec.w > 0.008 && rec.h > 0.008)) { box.remove(); return; }
-      if (!redactWarned) {
-        // hold the first-ever box until the one-time dialog is acknowledged
-        pendingBox = { rec: rec, el: box };
-        openRedactDialog();
+      if (!boxWarned(kind)) {
+        // hold the first-ever box of this kind until its one-time dialog is acknowledged
+        askFirst(kind, rec, box);
         return;
       }
-      commitRedact(rec, box);
+      commitBox(kind, rec, box);
     }
     function up(ev) { if (ev.pointerId === pid) fin(true); }
     function cancel(ev) { if (ev.pointerId === pid) fin(false); }
@@ -1228,10 +1485,30 @@
     (pg.redacts || (pg.redacts = [])).push(rec);
     PT.markDirty(pg);
     box.remove();
-    var el = makeRedactEl(rec); layer.appendChild(el);
-    PT.setStatus('Redaction added. The page is flattened to an image on download, which is what actually removes the covered text. Ctrl+Z undoes it.');
+    var el = makeRedactEl(rec); addBoxEl(el);
+    PT.setStatus(coarse() ? 'Redaction added. The page is flattened to an image on download, which is what actually removes the covered text. Tap Undo to take it back.'
+      : 'Redaction added. The page is flattened to an image on download, which is what actually removes the covered text. Ctrl+Z undoes it.');
     return el;
   }
+  // a white-out commits the same way: a page annotation at once, no Apply step. It is
+  // painted white on every picture and drawn as one white rectangle on download; the page
+  // stays vector and the content under it stays in the file (the dialog says so).
+  function commitWhiteout(rec, box) {
+    if (PT.snapshot) PT.snapshot('white-out on page ' + (idx + 1));
+    (pg.whiteouts || (pg.whiteouts = [])).push(rec);
+    PT.markDirty(pg);
+    box.remove();
+    var el = makeRedactEl(rec, 'whiteout'); addBoxEl(el);
+    PT.setStatus(coarse() ? 'White-out added. It covers what is under it but does not remove it from the file. Tap Undo to take it back.'
+      : 'White-out added. It covers what is under it but does not remove it from the file. Ctrl+Z undoes it.');
+    return el;
+  }
+  function boxWarned(kind) { return kind === 'whiteout' ? whiteWarned : redactWarned; }
+  function askFirst(kind, rec, box) {
+    pendingBox = { rec: rec, el: box, kind: kind };
+    if (kind === 'whiteout') openWhiteDialog(); else openRedactDialog();
+  }
+  function commitBox(kind, rec, box) { return kind === 'whiteout' ? commitWhiteout(rec, box) : commitRedact(rec, box); }
 
   /* ==================================================================================
      The text bar
@@ -1298,8 +1575,12 @@
   fontSel.addEventListener('change', function () {
     if (boxTarget()) { applyBoxProp(function (t) { t.font = fontSel.value; }, 'font'); rearmStyle(); }
   });
+  // the size select mirrors the box being edited; a choice made while no box is its target
+  // is the visitor's size for NEW boxes, the one cap a white-out correction obeys (snapTo)
+  var pickedSize = null;
   sizeSel.addEventListener('change', function () {
     if (boxTarget()) { applyBoxProp(function (t) { t.size = parseInt(sizeSel.value, 10) || 14; }, 'text size'); rearmStyle(); }
+    else pickedSize = parseInt(sizeSel.value, 10) || null;
   });
   lhSel.addEventListener('change', function () {
     var v = lhSel.value;
@@ -1367,7 +1648,7 @@
   }
   // closing the explainer hands focus back to the stage (the dialog stole it from
   // there); setTimeout(0) so a real click's default focus move can't undo it
-  function refocusStage() { setTimeout(function () { if (!ed.hidden) { try { stage.focus(); } catch (er) {} } }, 0); }
+  function refocusStage() { setTimeout(function () { if (!ed.hidden) { try { stage.focus({ preventScroll: true }); } catch (er) {} } }, 0); }
   function dialogCancel() {
     redactDialog.hidden = true;
     if (pendingBox) { pendingBox.el.remove(); pendingBox = null; }
@@ -1380,6 +1661,24 @@
     // select the committed box so the keyboard path (dialog on the FIRST box) ends in
     // the same state as every later keyboardRedact()
     if (pendingBox) { select(commitRedact(pendingBox.rec, pendingBox.el)); pendingBox = null; }
+    refocusStage();
+  });
+  // the white-out explainer: the same one-time pattern, its own copy and buttons
+  var whiteDialog = $('pt-wo-dialog');
+  function openWhiteDialog() {
+    whiteDialog.hidden = false;
+    setTimeout(function () { var b = $('pt-wo-dialog-go'); if (b) b.focus(); }, 0);
+  }
+  function whiteDialogCancel() {
+    whiteDialog.hidden = true;
+    if (pendingBox) { pendingBox.el.remove(); pendingBox = null; }
+    refocusStage();
+  }
+  $('pt-wo-dialog-cancel').addEventListener('click', whiteDialogCancel);
+  whiteDialog.addEventListener('click', function (e) { if (e.target === whiteDialog) whiteDialogCancel(); });
+  $('pt-wo-dialog-go').addEventListener('click', function () {
+    whiteDialog.hidden = true; whiteWarned = true;
+    if (pendingBox) { select(commitWhiteout(pendingBox.rec, pendingBox.el)); pendingBox = null; }
     refocusStage();
   });
   var redactDpiSel = $('pt-redact-dpi');
@@ -1485,7 +1784,7 @@
       URL.revokeObjectURL(url);
       var c = document.createElement('canvas'); c.width = im.naturalWidth; c.height = im.naturalHeight;
       c.getContext('2d').drawImage(im, 0, 0); sigCanvas = c; sigReady();
-      edNotice('Signature image loaded. Click Place, then click where it goes.');
+      edNotice(coarse() ? 'Signature image loaded. Tap Place, then tap where it goes.' : 'Signature image loaded. Click Place, then click where it goes.');
     };
     im.onerror = function () { URL.revokeObjectURL(url); edNotice('Could not read that image.'); };
     im.src = url;
@@ -1524,7 +1823,7 @@
           var c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight;
           c.getContext('2d').drawImage(img, 0, 0);
           sigCanvas = c; sigReady();
-          edNotice('Signature loaded. Click Place, then click where it goes.');
+          edNotice(coarse() ? 'Signature loaded. Tap Place, then tap where it goes.' : 'Signature loaded. Click Place, then click where it goes.');
         };
         img.src = durl;
       });
@@ -1558,7 +1857,7 @@
   function armSig() {
     if (!sigCanvas || sigPlacing) return;
     sigArmed = true;
-    placeBtn.textContent = 'Click where it goes';
+    placeBtn.textContent = coarse() ? 'Tap where it goes' : 'Click where it goes';
     placeBtn.setAttribute('aria-pressed', 'true');
     stage.classList.add('pt-stage--placing');
     if (!sigGhost) {
@@ -1569,7 +1868,7 @@
       sigGhost.hidden = true;
       layer.appendChild(sigGhost);
     }
-    edNotice('Click on the page where the signature goes.');
+    edNotice(coarse() ? 'Tap the page where the signature goes.' : 'Click on the page where the signature goes.');
   }
   function disarmSig() {
     if (!sigArmed && !sigGhost) return;
@@ -1678,6 +1977,11 @@
             return;
           }
           var di = pg.docIndex, vals = (PT.docs()[di].formValues) || {};
+          // the widgets go in BEFORE every annotation element, so a white-out or a
+          // redaction drawn over a field covers it here as it does in the file (a filled
+          // form is flattened into the page before the boxes are drawn); widget order
+          // among themselves, and so their Tab order, is kept
+          var under = layer.firstChild;
           annots.forEach(function (a) {
             if (a.subtype !== 'Widget' || !a.fieldName) return;
             var r = a.rect; if (!r) return;
@@ -1717,7 +2021,7 @@
             }
             el.addEventListener('change', commit);
             el.addEventListener('input', commit);
-            layer.appendChild(el);
+            layer.insertBefore(el, under);
           });
           if (hasFields) hint.textContent = 'This page has form fields (highlighted). Click into them to fill. ' + hint.textContent;
         });
@@ -1742,14 +2046,15 @@
   }
   // keyboard path for redaction: drop a default-size box at the page center, then
   // nudge/resize is arrow keys + Delete (the stage is focusable, see the md markup)
-  function keyboardRedact() {
+  function keyboardRedact(kind) {
+    kind = kind || 'redact';
     var rec = { x: 0.35, y: 0.44, w: 0.3, h: 0.08 };
-    var box = document.createElement('div'); box.className = 'pt-anno pt-anno--redact pt-anno--redact-tmp';
+    var box = document.createElement('div'); box.className = 'pt-anno pt-anno--' + kind + ' pt-anno--' + kind + '-tmp';
     box.style.left = (rec.x * dispW) + 'px'; box.style.top = (rec.y * dispH) + 'px';
     box.style.width = (rec.w * dispW) + 'px'; box.style.height = (rec.h * dispH) + 'px';
     layer.appendChild(box);
-    if (!redactWarned) { pendingBox = { rec: rec, el: box }; openRedactDialog(); return; }
-    select(commitRedact(rec, box));
+    if (!boxWarned(kind)) { askFirst(kind, rec, box); return; }
+    select(commitBox(kind, rec, box));
   }
   function edFocusables() {
     return Array.prototype.filter.call(ed.querySelectorAll('button, input, select, [tabindex], [contenteditable="true"]'), function (el) {
@@ -1766,6 +2071,7 @@
   document.addEventListener('keydown', function (e) {
     if (ed.hidden) return;
     if (!redactDialog.hidden) { if (e.key === 'Escape') dialogCancel(); return; }   // core traps Tab in modals
+    if (!whiteDialog.hidden) { if (e.key === 'Escape') whiteDialogCancel(); return; }
     if (PT.modalOpen && PT.modalOpen()) return;
     var a = document.activeElement;
     var typing = a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' || a.isContentEditable
@@ -1799,7 +2105,7 @@
     if ((e.key === 'Enter' || e.key === ' ') && a === stage) {
       // stage focused: create with the current tool at the page center
       if (tool === 'text') { e.preventDefault(); createTextAt(0.4, 0.44); }
-      else if (tool === 'redact') { e.preventDefault(); keyboardRedact(); }
+      else if (tool === 'redact' || tool === 'whiteout') { e.preventDefault(); keyboardRedact(tool); }
       return;
     }
     if ((e.key === 'Delete' || e.key === 'Backspace') && selected && !typing) { e.preventDefault(); removeAnno(selected); }
@@ -1816,7 +2122,9 @@
   var edNoticeTimer = 0;
   function edNotice(msg) {
     var prev = hint.textContent;
+    noteHint();
     hint.textContent = msg;
+    holdHint();
     clearTimeout(edNoticeTimer);
     edNoticeTimer = setTimeout(function () { if (hint.textContent === msg) hint.textContent = prev; }, 4000);
   }
@@ -1833,6 +2141,10 @@
   // pages appended while the editor is open (a drop the Sign tool didn't claim):
   // refresh the label + nav arrows and say so INSIDE the editor
   PT.onPagesChanged = function () {
+    // a new document: no old pick, and the select drops it if it shows it (the slot stays:
+    // it is matched by page and state, never to another page)
+    if (pickedSize != null && sizeSel.value === String(pickedSize) && !boxTarget()) sizeSel.value = '14';
+    pickedSize = null;
     if (ed.hidden) return;
     pageLabel.textContent = 'Page ' + (idx + 1) + ' of ' + PT.pages().length;
     updateNav();

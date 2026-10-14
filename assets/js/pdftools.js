@@ -175,6 +175,8 @@
       blank: pg.blank ? { wPt: pg.blank.wPt, hPt: pg.blank.hPt } : null,
       ocr: !!pg.ocr,
       redacts: (pg.redacts || []).map(function (r) { return { x: r.x, y: r.y, w: r.w, h: r.h }; }),
+      // white-out boxes: the same {x,y,w,h} normalized rects, the same frame as redacts
+      whiteouts: (pg.whiteouts || []).map(function (r) { return { x: r.x, y: r.y, w: r.w, h: r.h }; }),
       sigs: (pg.sigs || []).map(function (s) { return { png: s.png, x: s.x, y: s.y, w: s.w, h: s.h }; }),
       texts: (pg.texts || []).map(PURE.copyTextEntry),
       wms: (pg.wms || []).map(function (w) { return { text: w.text, pos: w.pos, opacity: w.opacity, size: w.size }; }),
@@ -277,6 +279,327 @@
     });
   };
 
+  // white-out boxes on an exported page: one white rectangle per box, in page points.
+  // The rects are {x,y,w,h} fractions of the effective page, y down (the frame pg.redacts
+  // uses), and W x H at (ox, oy) is the box of the page those fractions are of: the visible
+  // page (its CropBox), which is the page pdf.js shows in every preview. ox and oy default
+  // to 0. The rects must be in the page's UNROTATED frame: drawOverlays maps them back
+  // through PURE.rotateRects when the output page carries a /Rotate, so a rotated page
+  // keeps its vector text (no flatten). Fill only: no border and no opacity, so no
+  // graphics state is written. The content under the box stays in the file, which is
+  // what makes it a white-out and not a redaction.
+  // Returns the number of rectangles drawn.
+  PURE.drawWhiteouts = function (P, page, rects, W, H, ox, oy) {
+    var drawn = 0;
+    ox = ox || 0; oy = oy || 0;
+    (rects || []).forEach(function (r) {
+      if (!r || !(r.w > 0) || !(r.h > 0) || !isFinite(r.x) || !isFinite(r.y)) return;
+      page.drawRectangle({ x: ox + r.x * W, y: oy + (H - (r.y + r.h) * H), width: r.w * W, height: r.h * H, color: P.rgb(1, 1, 1) });
+      drawn++;
+    });
+    return drawn;
+  };
+
+  // White-outs hide CHARACTERS, not whole runs. A text token or OCR word ({text, x0, y0,
+  // x1, y1}, fractions, y down) loses exactly the characters whose centre sits under a
+  // white-out (the rect must also cover the token's vertical middle), and the text before
+  // and after comes back as separate tokens with their own boxes. Each character's share
+  // of the token's width is its Helvetica advance from `table` (the AFM table every
+  // picture already measures with; 0.5 em for a character it has no advance for; equal
+  // shares without a table): a proportional split, not a measurement of the source font.
+  // A token taller than 2.5 times its font size (vertical text) keeps the whole-token
+  // rule. Redactions keep the whole-run rule (PURE.filterOcrWords): this is for
+  // white-outs only, where hiding more than is covered loses words the reader can see.
+  // Tokens no rect touches come back as the same objects, in order.
+  // Two things the token can say about its run (PURE.itemToToken carries them from pdf.js):
+  // dir, pdf.js's own direction for the run: an 'rtl' run comes in LOGICAL order with its
+  // first character drawn at the RIGHT end, so its characters are laid out from the right
+  // edge, except the stretches pdf.js's own bidi put left to right (numbers, Latin words:
+  // PURE.rtlSegments); a token with no dir (an OCR word) is left to right. And mono, a
+  // fixed-pitch font, whose characters all get the same share. A cut rtl run comes back as
+  // ONE token, its kept stretches in logical order joined by a space (PURE.groupLines orders
+  // a line's tokens left to right, which would swap the halves of an rtl run).
+  //
+  // pdf.js 3.11.174's bidi (its src/core/bidi.js, Apache-2.0, Mozilla Foundation), ported
+  // rule for rule: the character type table (one letter per type: L, R, A = AL, E = EN,
+  // S = ES, T = ET, N = AN, C = CS, M = NSM, b = BN, s = S, p = B, W = WS, O = ON, '.' none)
+  // and rules W1 to W7, N1 (with pdf.js's own neighbour read), N2, I1, I2.
+  var BIDI_LO = 'bbbbbbbbbspsWpbbbbbbbbbbbbbbpppsWOOTTTOOOOOSCSCCEEEEEEEEEECOOOOO' +
+    'OLLLLLLLLLLLLLLLLLLLLLLLLLLOOOOOOLLLLLLLLLLLLLLLLLLLLLLLLLLOOOOb' +
+    'bbbbbpbbbbbbbbbbbbbbbbbbbbbbbbbbCOTTTTOOOOLOObOOTTEEOLOOOELOOOOO' +
+    'LLLLLLLLLLLLLLLLLLLLLLLOLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLOLLLLLLLL';
+  var BIDI_AR = 'NNNNNNOOATTACAOOMMMMMMMMMMMAA.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' +
+    'AAAAAAAAAAAMMMMMMMMMMMMMMMMMMMMMNNNNNNNNNNTNNAAAMAAAAAAAAAAAAAAA' +
+    'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' +
+    'AAAAAAAAAAAAAAAAAAAAAAMMMMMMMNOMMMMMMAAMMOMMMMAAEEEEEEEEEEAAAAAA';
+  function bidiType(c) {
+    if (c <= 255) return BIDI_LO.charAt(c);
+    if (c >= 1424 && c <= 1524) return 'R';
+    if (c >= 1536 && c <= 1791) return BIDI_AR.charAt(c & 255);
+    if ((c >= 1792 && c <= 2220) || (c >= 64336 && c <= 65023) || (c >= 65136 && c <= 65279)) return 'A';
+    return 'L';
+  }
+  // the resolved embedding level of every character of s, start level t (0 ltr, 1 rtl)
+  function bidiLevels(s, t) {
+    var l = s.length, o = [], f = [], h, e, b, y, n, bt, at, g = (t & 1) ? 'R' : 'L';
+    for (h = 0; h < l; h++) { o[h] = bidiType(s.charCodeAt(h)); f[h] = t; }
+    y = g; for (h = 0; h < l; h++) { if (o[h] === 'M') o[h] = y; else y = o[h]; }
+    y = g; for (h = 0; h < l; h++) { b = o[h]; if (b === 'E') o[h] = y === 'A' ? 'N' : 'E'; else if (b === 'R' || b === 'L' || b === 'A') y = b; }
+    for (h = 0; h < l; h++) if (o[h] === 'A') o[h] = 'R';
+    for (h = 1; h < l - 1; h++) {
+      if (o[h] === 'S' && o[h - 1] === 'E' && o[h + 1] === 'E') o[h] = 'E';
+      if (o[h] === 'C' && (o[h - 1] === 'E' || o[h - 1] === 'N') && o[h + 1] === o[h - 1]) o[h] = o[h - 1];
+    }
+    for (h = 0; h < l; h++) if (o[h] === 'E') {
+      for (e = h - 1; e >= 0 && o[e] === 'T'; e--) o[e] = 'E';
+      for (e = h + 1; e < l && o[e] === 'T'; e++) o[e] = 'E';
+    }
+    for (h = 0; h < l; h++) { b = o[h]; if (b === 'W' || b === 'S' || b === 'T' || b === 'C') o[h] = 'O'; }
+    y = g; for (h = 0; h < l; h++) { b = o[h]; if (b === 'E') o[h] = y === 'L' ? 'L' : 'E'; else if (b === 'R' || b === 'L') y = b; }
+    for (h = 0; h < l; h++) if (o[h] === 'O') {
+      for (e = h + 1; e < l && o[e] === 'O'; e++) { /* the run of neutrals */ }
+      bt = h > 0 ? o[h - 1] : g;
+      at = e + 1 < l ? o[e + 1] : g;   // pdf.js reads one past the run's end (its own code)
+      if (bt !== 'L') bt = 'R';
+      if (at !== 'L') at = 'R';
+      if (bt === at) for (n = h; n < e; n++) o[n] = bt;
+      h = e - 1;
+    }
+    for (h = 0; h < l; h++) if (o[h] === 'O') o[h] = g;
+    for (h = 0; h < l; h++) {
+      b = o[h];
+      if (!(f[h] & 1)) { if (b === 'R') f[h] += 1; else if (b === 'N' || b === 'E') f[h] += 2; }
+      else if (b === 'L' || b === 'N' || b === 'E') f[h] += 1;
+    }
+    return f;
+  }
+  function revIn(a, i, j) { var x; for (j--; i < j; i++, j--) { x = a[i]; a[i] = a[j]; a[j] = x; } }
+  // pdf.js's own bidi(): what getTextContent hands over ({str, dir}) for a run DRAWN as s
+  PURE.pdfjsBidi = function (s) {
+    s = String(s);
+    var l = s.length, d = 0, h, t, ty, f, ch, hi = -1, lo = 99, w, st;
+    if (!l) return { str: s, dir: 'ltr' };
+    for (h = 0; h < l; h++) { ty = bidiType(s.charCodeAt(h)); if (ty === 'R' || ty === 'A' || ty === 'N') d++; }
+    if (!d) return { str: s, dir: 'ltr' };
+    t = (d / l < 0.3 && l > 4) ? 0 : 1;
+    f = bidiLevels(s, t); ch = s.split('');
+    for (h = 0; h < l; h++) { w = f[h]; if (hi < w) hi = w; if (lo > w && (w & 1)) lo = w; }
+    for (w = hi; w >= lo; w--) {
+      st = -1;
+      for (h = 0; h < l; h++) {
+        if (f[h] < w) { if (st >= 0) { revIn(ch, st, h); st = -1; } }
+        else if (st < 0) st = h;
+      }
+      if (st >= 0) revIn(ch, st, l);
+    }
+    for (h = 0; h < l; h++) if (ch[h] === '<' || ch[h] === '>') ch[h] = '';
+    return { str: ch.join(''), dir: t ? 'rtl' : 'ltr' };
+  };
+  function levelSegs(f) {
+    var out = [], i = 0, j;
+    while (i < f.length) {
+      if (f[i] < 2) { out.push([i, i + 1, false]); i++; continue; }
+      for (j = i + 1; j < f.length && f[j] >= 2; j++) { /* one left-to-right block */ }
+      out.push([i, j, true]); i = j;
+    }
+    return out;
+  }
+  function segsDrawn(s, segs) { var v = '', g, q; for (g = segs.length - 1; g >= 0; g--) for (q = segs[g][0]; q < segs[g][1]; q++) v += s.charAt(q); return v; }
+  // PURE.rtlSegments: an rtl str (pdf.js's logical order) as [from, to, ltr] segments in
+  // logical order: every run pdf.js's levels put at 2 or more is ONE left-to-right block,
+  // every other character a segment of its own. pdf.js resolved its levels on the DRAWN
+  // string, so the levels of str are a guess: the drawn order they give is checked by
+  // running pdf.js's own reorder on it, and the levels of the reversed str are the second
+  // guess (review5: the 3,940-line corpus 99.8 % exact, every hand case exact).
+  PURE.rtlSegments = function (s) {
+    s = String(s);
+    var a = levelSegs(bidiLevels(s, 1));
+    if (PURE.pdfjsBidi(segsDrawn(s, a)).str === s) return a;
+    var b = levelSegs(bidiLevels(s.split('').reverse().join(''), 1).reverse());
+    if (PURE.pdfjsBidi(segsDrawn(s, b)).str === s) return b;
+    return a;
+  };
+  // PURE.rtlUnionCover: which characters of an rtl run a white-out hides, never keeping one it
+  // covers. pdf.js's str does not say how the neutrals (spaces, currency signs, punctuation)
+  // between a right-to-left word and a left-to-right block were drawn: two drawings can give
+  // the same str (review6: a price drawn "1,250 SIGN" or "SIGN 1,250" reads back the same).
+  // The R / AL letters are level 1 and the L / EN / AN characters level 2 in any reading, so
+  // a GAP (a stretch without an R / AL letter) fills the same slice of the drawn line in
+  // every reading; only the order inside it changes. A gap is touched when the box meets
+  // that slice (review7 M1). In a touched gap of two or more characters every level of its
+  // neutrals (a non-spacing mark among them, review7 m1) is tried; a try is a possible truth
+  // when pdf.js's own levels read it back as the gap's text, and a character is dropped if
+  // ANY possible truth draws it under the box. pdf.js resolves a gap's levels from the gap,
+  // the letters either side of it and the first character drawn past the right-hand letter
+  // (its N1 reads one past a neutral run), so each try is checked on that short window, that
+  // character both ways when the gap beyond could put a left-to-right letter there. Over 12
+  // neutrals in a gap, or no try that reads back: that gap goes whole, which can be a whole
+  // Latin phrase (review7 m2). It may drop visible characters of a touched gap; it never
+  // keeps a covered one. Returns the covered flags by logical index.
+  var RTL_NEUT = { O: 1, W: 1, S: 1, T: 1, C: 1, M: 1 };
+  function visOfSegs(segs) { var v = [], g, q; for (g = segs.length - 1; g >= 0; g--) for (q = segs[g][0]; q < segs[g][1]; q++) v.push(q); return v; }
+  function coverIn(vis, wts, sum, x0, W, row) {
+    var c = [], pos = 0, k, q, cx;
+    for (k = 0; k < vis.length; k++) {
+      q = vis[k];
+      cx = ((x0 + W * pos / sum) + (x0 + W * (pos + wts[q]) / sum)) / 2;
+      pos += wts[q];
+      c[q] = row.some(function (r) { return cx >= r.x && cx <= r.x + r.w; });
+    }
+    return c;
+  }
+  PURE.rtlUnionCover = function (s, segs, wts, sum, x0, W, row) {
+    var n = s.length, ty = [], gv = visOfSegs(segs), out = coverIn(gv, wts, sum, x0, W, row), at = [], pos = 0, i, j, k;
+    for (i = 0; i < n; i++) ty[i] = bidiType(s.charCodeAt(i));
+    for (k = 0; k < gv.length; k++) { at[gv[k]] = pos; pos += wts[gv[k]]; }   // the guess's layout, once
+    function letter(q) { return ty[q] === 'R' || ty[q] === 'A'; }
+    function under(p) { return row.some(function (r) { return p >= r.x && p <= r.x + r.w; }); }
+    function unionGap(i, j) {
+      var len = j - i, p0 = Infinity, p1 = -Infinity, neu = [], ctx = [''], seen = Object.create(null), hit = [], valid = 0;
+      var q, k, m, c, L, d, vs, lv, lg, cx, pp, lt = false, left, right;
+      for (q = i; q < j; q++) { p0 = Math.min(p0, at[q]); p1 = Math.max(p1, at[q] + wts[q]); }
+      var g0 = x0 + W * p0 / sum, g1 = x0 + W * p1 / sum;
+      if (!row.some(function (r) { return r.x <= g1 && r.x + r.w >= g0; })) return;   // the box misses its slice
+      for (q = i; q < j; q++) { hit[q] = false; if (RTL_NEUT[ty[q]]) neu.push(q - i); }
+      if (neu.length > 12) { for (q = i; q < j; q++) out[q] = true; return; }
+      left = j < n ? s.charAt(j) : ''; right = i > 0 ? s.charAt(i - 1) : '';
+      if (i > 1) {
+        if (letter(i - 2)) ctx = [s.charAt(i - 2)];
+        else { for (q = i - 2; q >= 0 && !letter(q); q--) if (ty[q] === 'L') lt = true; ctx = lt ? ['\u05d0', 'a'] : ['\u05d0']; }
+      }
+      for (m = 0; m < (1 << neu.length); m++) {
+        L = [];
+        for (q = 0; q < len; q++) L[q] = (ty[i + q] === 'L' || ty[i + q] === 'E' || ty[i + q] === 'N') ? 2 : 1;
+        for (k = 0; k < neu.length; k++) L[neu[k]] = (m >> k) & 1 ? 2 : 1;
+        vs = visOfSegs(levelSegs(L)); d = '';
+        for (k = 0; k < len; k++) d += s.charAt(i + vs[k]);
+        if (seen[d]) continue;
+        seen[d] = 1;
+        for (c = 0; c < ctx.length; c++) {
+          lv = bidiLevels(left + d + right + ctx[c], 1).slice(left.length, left.length + len);
+          lg = visOfSegs(levelSegs(lv));            // pdf.js's reading: drawn position of each logical character
+          for (k = 0; k < len && d.charAt(lg[k]) === s.charAt(i + k); k++) { /* reads back */ }
+          if (k < len) continue;
+          valid++;
+          cx = []; pp = p0;
+          for (k = 0; k < len; k++) { cx[k] = ((x0 + W * pp / sum) + (x0 + W * (pp + wts[i + vs[k]]) / sum)) / 2; pp += wts[i + vs[k]]; }
+          for (k = 0; k < len; k++) if (under(cx[lg[k]])) hit[i + k] = true;
+        }
+      }
+      for (q = i; q < j; q++) out[q] = valid ? hit[q] : true;
+    }
+    for (i = 0; i < n;) {
+      if (letter(i)) { i++; continue; }
+      for (j = i; j < n && !letter(j); j++) { /* the gap [i, j) */ }
+      if (j - i > 1) unionGap(i, j);                 // one character alone in a gap cannot move
+      i = j;
+    }
+    return out;
+  };
+  // PURE.ltrStretchCover (review8 M1): pdf.js reorders a run it calls ltr too when the run
+  // holds an R / AL / AN character (fewer than 30 % of a run of five or more): its right-to-left
+  // stretches come back in logical order, so str's order is not the drawn order there. A strong
+  // L letter is level 0 and never moves, so a stretch without one fills the same slice of the
+  // line in str's order and in the drawing; a box that meets such a stretch (one holding an
+  // R / AL / AN character) drops all of it. Returns the covered flags, or null when no such
+  // stretch is touched (the plain left-to-right test then stands, byte for byte).
+  PURE.ltrStretchCover = function (s, xs0, xs1, row) {
+    var n = s.length, ty = [], i, j, q, has, c = null, cx;
+    for (i = 0; i < n; i++) ty[i] = bidiType(s.charCodeAt(i));
+    for (i = 0; i < n;) {
+      if (ty[i] === 'L') { i++; continue; }
+      for (j = i, has = false; j < n && ty[j] !== 'L'; j++) if (ty[j] === 'R' || ty[j] === 'A' || ty[j] === 'N') has = true;
+      if (has && row.some(function (r) { return r.x <= xs1[j - 1] && r.x + r.w >= xs0[i]; })) {
+        if (!c) { c = []; for (q = 0; q < n; q++) { cx = (xs0[q] + xs1[q]) / 2; c[q] = row.some(function (r) { return cx >= r.x && cx <= r.x + r.w; }); } }
+        for (q = i; q < j; q++) c[q] = true;
+      }
+      i = j;
+    }
+    return c;
+  };
+  // the second half of a surrogate pair (an emoji or another character past U+FFFF): the pair
+  // is ONE character, so it takes one share of the run and a cut never splits it (review8 n1)
+  function lowHalf(s, i) {
+    var c = s.charCodeAt(i), p = i > 0 ? s.charCodeAt(i - 1) : 0;
+    return c >= 0xDC00 && c <= 0xDFFF && p >= 0xD800 && p <= 0xDBFF;
+  }
+  // a non-spacing mark (Unicode Mn: Hebrew points, Arabic harakat, combining accents): pdf.js's
+  // text geometry gives every one ZERO advance, so it takes no share of the run either, and it
+  // goes with its base letter (verify8 M2). The class is built at run time so a browser without
+  // Unicode property escapes falls back to the Mn ranges of the scripts the cut reorders.
+  var MN_RE = (function () {
+    try { return new RegExp('^\\p{Mn}$', 'u'); }
+    catch (er) { return /^[\u0300-\u036f\u0483-\u0487\u0591-\u05bd\u05bf\u05c1\u05c2\u05c4\u05c5\u05c7\u0610-\u061a\u064b-\u065f\u0670\u06d6-\u06dc\u06df-\u06e4\u06e7\u06e8\u06ea-\u06ed]$/; }
+  })();
+  function isMark(s, i) { return s.charCodeAt(i) >= 0x0300 && MN_RE.test(s.charAt(i)); }
+  // Known limit (no fix from str): in a run that holds an R / AL / AN character pdf.js blanks
+  // every < and > from str while their glyphs keep their width in the run, so positions past
+  // a bracket drift and a one-glyph box there can keep its character (review8 m1).
+  PURE.cutCovered = function (tokens, rects, table) {
+    if (!tokens || !rects || !rects.length) return tokens;
+    var out = [];
+    tokens.forEach(function (t) {
+      var hits = rects.filter(function (r) { return t.x0 < r.x + r.w && t.x1 > r.x && t.y0 < r.y + r.h && t.y1 > r.y; });
+      if (!hits.length) { out.push(t); return; }
+      var s = String(t.text || '');
+      if (!s.length) return;
+      if (t.fontSize > 0 && (t.y1 - t.y0) > t.fontSize * 2.5) return;   // vertical text: whole-token rule
+      var cy = (t.y0 + t.y1) / 2;
+      var row = hits.filter(function (r) { return cy >= r.y && cy <= r.y + r.h; });
+      if (!row.length) { out.push(t); return; }                         // the box only grazes the line
+      // a box over the run's whole extent: every reading puts every character under it, so the
+      // run goes at once, with no enumeration (verify8 N1: a page-sized white-out)
+      if (row.some(function (r) { return r.x <= Math.min(t.x0, t.x1) && r.x + r.w >= Math.max(t.x0, t.x1); })) return;
+      var wts = [], sum = 0, i;
+      for (i = 0; i < s.length; i++) {
+        var a = t.mono ? 1 : table ? PURE.charAdvance(table, 'Helvetica', s.charCodeAt(i)) : 1;
+        if (a == null || !(a > 0)) a = table ? 0.5 : 1;
+        if (lowHalf(s, i) || isMark(s, i)) a = 0;                      // a pair: one share; a mark: none
+        wts.push(a); sum += a;
+      }
+      // the order the characters are DRAWN in, left to right: logical for an ltr token; for
+      // an rtl token its segments from last to first, a left-to-right block in its own order
+      var vis = null, segs, g, q;
+      if (t.dir === 'rtl') {
+        segs = PURE.rtlSegments(s); vis = [];
+        for (g = segs.length - 1; g >= 0; g--) for (q = segs[g][0]; q < segs[g][1]; q++) vis.push(q);
+      }
+      var W = t.x1 - t.x0, pos = 0, piece = null, xs0 = [], xs1 = [], pcs = [];
+      for (i = 0; i < s.length; i++) {
+        q = vis ? vis[i] : i;
+        xs0[q] = t.x0 + W * pos / sum; xs1[q] = t.x0 + W * (pos + wts[q]) / sum;
+        pos += wts[q];
+      }
+      // an rtl run: the union of every drawing pdf.js reads back as its str (never a leak)
+      var cov = vis ? PURE.rtlUnionCover(s, segs, wts, sum, t.x0, W, row) : null;
+      if (t.dir === 'ltr') cov = PURE.ltrStretchCover(s, xs0, xs1, row);   // pdf.js runs only (an OCR word has no dir)
+      var drop = [], cx;
+      for (i = 0; i < s.length; i++) {
+        cx = (xs0[i] + xs1[i]) / 2;
+        drop[i] = cov ? !!cov[i] : row.some(function (r) { return cx >= r.x && cx <= r.x + r.w; });
+      }
+      for (i = 1; i < s.length; i++) if (lowHalf(s, i) && (drop[i] || drop[i - 1])) drop[i] = drop[i - 1] = true;
+      for (i = 1, q = 0; i < s.length; i++) { if (!isMark(s, i)) q = i; else if (drop[q]) drop[i] = true; }   // a mark goes with its base
+      function flush() { if (piece && piece.text.trim()) pcs.push(piece); piece = null; }
+      for (i = 0; i < s.length; i++) {
+        var cx0 = xs0[i], cx1 = xs1[i];
+        if (drop[i]) { flush(); continue; }
+        if (!piece) piece = Object.assign({}, t, { text: '', x0: cx0, x1: cx1 });
+        piece.text += s[i]; piece.x0 = Math.min(piece.x0, cx0); piece.x1 = Math.max(piece.x1, cx1);
+      }
+      flush();
+      if (vis && pcs.length > 1) {
+        // one rtl run stays ONE token: its kept stretches in logical order, its box their union
+        out.push(Object.assign({}, t, {
+          text: pcs.map(function (p) { return p.text.trim(); }).join(' '),
+          x0: Math.min.apply(null, pcs.map(function (p) { return p.x0; })),
+          x1: Math.max.apply(null, pcs.map(function (p) { return p.x1; }))
+        }));
+      } else pcs.forEach(function (p) { out.push(p); });
+    });
+    return out;
+  };
+
   // bounded LIFO used for undo
   PURE.makeUndoStack = function (limit) {
     var stack = [];
@@ -308,16 +631,17 @@
   // so a raw draw is tried first (WinAnsi covers more than the sanitize whitelist), and
   // on failure the encodable remainder is drawn instead of silently dropping the whole
   // watermark. Returns true when characters had to be dropped.
-  PURE.drawWatermark = function (P, page, font, wm, W, H) {
+  PURE.drawWatermark = function (P, page, font, wm, W, H, ox, oy) {
     var text = String(wm.text || '');
     if (!text) return false;
+    ox = ox || 0; oy = oy || 0;   // the visible box's origin (CropBox pages); 0, 0 otherwise
     var size = wm.size || 48;
     var op = wm.opacity == null ? 0.15 : wm.opacity;
     var col = P.rgb(0.5, 0.5, 0.5);
     function draw(t) {
       var tw = font.widthOfTextAtSize(t, size);
       if (wm.pos === 'foot') {
-        page.drawText(t, { x: W / 2 - tw / 2, y: 34, size: size, font: font, color: col, opacity: op });
+        page.drawText(t, { x: ox + (W / 2 - tw / 2), y: oy + 34, size: size, font: font, color: col, opacity: op });
         return;
       }
       // diagonal: centered on the page, rotated along the page diagonal
@@ -325,7 +649,7 @@
       var deg = rad * 180 / Math.PI;
       var x = W / 2 - (tw / 2) * Math.cos(rad) + 0.35 * size * Math.sin(rad);
       var y = H / 2 - (tw / 2) * Math.sin(rad) - 0.35 * size * Math.cos(rad);
-      page.drawText(t, { x: x, y: y, size: size, font: font, color: col, opacity: op, rotate: P.degrees(deg) });
+      page.drawText(t, { x: ox + x, y: oy + y, size: size, font: font, color: col, opacity: op, rotate: P.degrees(deg) });
     }
     try { draw(text); return false; }
     catch (e) {
@@ -344,20 +668,21 @@
     return cfg.fmt === 'nofm' ? (n + ' of ' + m) : String(n);
   };
 
-  PURE.drawPageNum = function (P, page, font, cfg, i, total, W, H) {
+  PURE.drawPageNum = function (P, page, font, cfg, i, total, W, H, ox, oy) {
     var text = PURE.pageNumText(cfg, i, total);
     if (text == null) return;
     var size = cfg.size || 10;
     var tw = font.widthOfTextAtSize(text, size);
     var x = cfg.pos === 'br' ? (W - 36 - tw) : (W / 2 - tw / 2);
-    page.drawText(text, { x: x, y: 22, size: size, font: font, color: P.rgb(0.24, 0.24, 0.24) });
+    page.drawText(text, { x: (ox || 0) + x, y: (oy || 0) + 22, size: size, font: font, color: P.rgb(0.24, 0.24, 0.24) });
   };
 
   // invisible OCR text layer: words carry normalized bboxes {text, x0, y0, x1, y1}
   // (fractions of page width/height, y down from the top). Font size is chosen so the
   // drawn word width matches the recognized box, which makes selection/search line up.
-  PURE.drawOcrWords = function (P, page, font, words, W, H) {
+  PURE.drawOcrWords = function (P, page, font, words, W, H, ox, oy) {
     var drawn = 0;
+    ox = ox || 0; oy = oy || 0;   // the visible box's origin (CropBox pages); 0, 0 otherwise
     (words || []).forEach(function (w) {
       var text = PURE.sanitizeWinAnsi(w.text);
       if (!text) return;
@@ -368,7 +693,7 @@
       if (!(w1 > 0)) return;
       var size = Math.max(1, Math.min(bw / w1, bh * 1.6, 200));
       try {
-        page.drawText(text, { x: w.x0 * W, y: H - w.y1 * H + bh * 0.18, size: size, font: font, opacity: 0 });
+        page.drawText(text, { x: ox + w.x0 * W, y: oy + (H - w.y1 * H + bh * 0.18), size: size, font: font, opacity: 0 });
         drawn++;
       } catch (e2) { /* one unencodable word must not break the page */ }
     });
@@ -934,7 +1259,10 @@
   // {text, x0, y0, x1, y1, fontSize} box (fractions of a Wpx x Hpx viewport, y down from
   // the top — the same frame pg.redacts/pg.ocrWords already use), or null for a blank/
   // degenerate item so callers can just filter falsy results out.
-  PURE.itemToToken = function (viewportTransform, item, Wpx, Hpx) {
+  // `styles` (optional) is the text content's styles map: a run whose font pdf.js names
+  // 'monospace' (or a Courier / Mono name) is marked mono; every item's own dir (ltr, rtl
+  // or ttb) is kept; both for PURE.cutCovered.
+  PURE.itemToToken = function (viewportTransform, item, Wpx, Hpx, styles) {
     if (!item || !item.str || !String(item.str).trim() || !(Wpx > 0) || !(Hpx > 0)) return null;
     var tx = PURE.combine2d(viewportTransform, item.transform);
     if (!tx.every(function (n) { return isFinite(n); })) return null;
@@ -952,7 +1280,7 @@
     var xs = [c0x, c1x, c2x, c3x], ys = [c0y, c1y, c2y, c3y];
     var x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
     var y0 = Math.min.apply(null, ys), y1 = Math.max.apply(null, ys);
-    return {
+    var tok = {
       text: String(item.str),
       x0: x0 / Wpx, y0: y0 / Hpx, x1: x1 / Wpx, y1: y1 / Hpx,
       fontSize: fontHeight / Hpx,
@@ -961,6 +1289,10 @@
       // horizontally-normalized font size (see PURE.groupLines)
       fontSizeX: fontHeight / Wpx
     };
+    if (item.dir) tok.dir = String(item.dir);
+    var st = (styles && item.fontName) ? styles[item.fontName] : null;
+    if (/courier|mono/i.test(String((st && st.fontFamily) || '') + ' ' + String(item.fontName || ''))) tok.mono = true;
+    return tok;
   };
 
   // group normalized tokens ({text,x0,y0,x1,y1,fontSize}, y down) into reading-order
@@ -1324,10 +1656,11 @@
     return {
       docIndex: docIndex, pageIndex: pageIndex, rot: 0, sel: false,
       raster: null, blank: null, ocr: false,
-      redacts: [], sigs: [], texts: [], wms: [], ocrWords: null
+      redacts: [], whiteouts: [], sigs: [], texts: [], wms: [], ocrWords: null
     };
   }
   function hasRedacts(pg) { return !!(pg.redacts && pg.redacts.length); }
+  function hasWhiteouts(pg) { return !!(pg.whiteouts && pg.whiteouts.length); }
 
   // ---- text metrics + layout (the law lives in the PURE rich-text section) ----
   // ONE metrics service for every picture: the per-character AFM advance table for the
@@ -1800,6 +2133,18 @@
     }).catch(bail);
   }
 
+  // paint the page's white-out boxes white on a canvas (the same normalized rects and the
+  // same frame as the redaction boxes). Called just BEFORE paintRedacts in every painting
+  // path, so a redaction box stays on top of a white-out, and before the texts and the
+  // signatures, so a correction typed over a white-out shows on top of it.
+  function paintWhiteouts(ctx, pg, w, h) {
+    if (!hasWhiteouts(pg)) return;
+    ctx.save();
+    ctx.fillStyle = '#fff';
+    pg.whiteouts.forEach(function (r) { ctx.fillRect(r.x * w, r.y * h, r.w * w, r.h * h); });
+    ctx.restore();
+  }
+
   // black out the page's redaction boxes on a canvas (normalized rects of the effective
   // page). Painted FIRST, before texts/sigs, so replacement text typed over a redacted
   // area stays visible — and painted in EVERY rasterizing path (thumbnails, shrink,
@@ -1815,6 +2160,7 @@
   // signature/text annotations + watermarks + page numbers on a thumbnail or preview canvas.
   // The placement math mirrors the export math in drawOverlays/PURE.draw*.
   function drawThumbOverlays(ctx, pg, tw, th, Wpt, Hpt, gridIdx) {
+    paintWhiteouts(ctx, pg, tw, th);
     paintRedacts(ctx, pg, tw, th);
     drawMarks(ctx, pg, tw, th, Wpt, Hpt, gridIdx);
     (pg.texts || []).forEach(function (t) {
@@ -1913,11 +2259,12 @@
       bar.className = 'pt-thumb__bar';
       bar.innerHTML = '<span class="pt-thumb__num">' + (idx + 1) +
         (hasRedacts(pg) ? ' <span class="pt-thumb__redacted" title="Redacted (flattened to an image on download)">▮</span>' : '') +
+        (hasWhiteouts(pg) ? ' <span class="pt-thumb__whiteout" title="White-out (covers, does not remove)">▯</span>' : '') +
         (pg.sigs && pg.sigs.length ? ' <span class="pt-thumb__signed" title="Signed">✎</span>' : '') +
         (pg.ocr ? ' <span class="pt-thumb__ocr" title="Searchable text layer added">abc</span>' : '') + '</span>';
       var acts = document.createElement('div');
       acts.className = 'pt-thumb__acts';
-      var eb = document.createElement('button'); eb.className = 'pt-thumb__act'; eb.type = 'button'; eb.title = 'Edit page (text, signature, redact, form)'; eb.textContent = '✎';
+      var eb = document.createElement('button'); eb.className = 'pt-thumb__act'; eb.type = 'button'; eb.title = 'Edit page (text, signature, redact, white-out, form)'; eb.textContent = '✎';
       eb.addEventListener('click', function (e) { e.stopPropagation(); if (!busy && window.__PT.openEditor) window.__PT.openEditor(idx); });
       var rb = document.createElement('button'); rb.className = 'pt-thumb__act'; rb.type = 'button'; rb.title = 'Rotate 90°'; rb.textContent = '⟳';
       rb.addEventListener('click', function (e) {
@@ -1929,6 +2276,7 @@
           snapshot('rotate page ' + (idx + 1));
           pg.rot = (pg.rot + 90) % 360;
           pg.redacts = PURE.rotateRects(pg.redacts, 90);   // boxes + OCR words + text/sig
+          pg.whiteouts = PURE.rotateRects(pg.whiteouts, 90);
           pg.ocrWords = PURE.rotateWords(pg.ocrWords, 90); // annotations all follow the content
           pg.texts = PURE.rotateTexts(pg.texts, 90, textBoxes(pg.texts, sz.w, sz.h), sz.w, sz.h);
           pg.sigs = PURE.rotateSigs(pg.sigs, 90);
@@ -2218,6 +2566,7 @@
         var pg = pages[i], sz = sizes[k];
         pg.rot = (pg.rot + delta) % 360;
         pg.redacts = PURE.rotateRects(pg.redacts, delta);   // boxes + OCR words +
+        pg.whiteouts = PURE.rotateRects(pg.whiteouts, delta);
         pg.ocrWords = PURE.rotateWords(pg.ocrWords, delta); // text/sig annotations
         pg.texts = PURE.rotateTexts(pg.texts, delta, textBoxes(pg.texts, sz.w, sz.h), sz.w, sz.h); // all
         pg.sigs = PURE.rotateSigs(pg.sigs, delta);          // follow the content
@@ -2396,20 +2745,54 @@
     return { r: parseInt(h.slice(0, 2), 16) / 255, g: parseInt(h.slice(2, 4), 16) / 255, b: parseInt(h.slice(4, 6), 16) / 255 };
   }
 
+  // the visible box of an output page in points: its CropBox clipped to its MediaBox (the
+  // box pdf.js renders, so the frame every preview and every normalized rect is in).
+  // Falls back to 0, 0, info.w, info.h.
+  function visibleBox(info) {
+    try {
+      var cb = info.page.getCropBox(), mb = info.page.getMediaBox();
+      var x0 = Math.max(cb.x, mb.x), y0 = Math.max(cb.y, mb.y);
+      var x1 = Math.min(cb.x + cb.width, mb.x + mb.width), y1 = Math.min(cb.y + cb.height, mb.y + mb.height);
+      if (x1 > x0 && y1 > y0 && isFinite(x0) && isFinite(y0)) return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+    } catch (e) {}
+    return { x: 0, y: 0, w: info.w, h: info.h };
+  }
+
   // draw a page's watermarks, signature images, text annotations, invisible OCR words,
   // and page number on the just-added output page. Rotation-0 math — pages that carry
-  // overlays are always made effective-rotation-0 first (ensureUpright / bake).
+  // overlays are always made effective-rotation-0 first (ensureUpright / bake); white-outs
+  // are the one exception, mapped through the page's /Rotate instead (below).
+  // Everything is placed on the VISIBLE box (the CropBox inside the MediaBox, the page
+  // pdf.js previews): for an ordinary page that box is exactly 0, 0, info.w, info.h and
+  // every number drawn is bitwise what it was.
   function drawOverlays(out, info, pg, fontCache, outIdx, outTotal) {
     var chain = Promise.resolve();
+    var vb = visibleBox(info);
     function helv() {
       return Promise.resolve(fontCache.Helvetica || (fontCache.Helvetica = out.embedFont(PDFLib.StandardFonts.Helvetica)));
+    }
+    // white-outs FIRST, under everything else the export adds (watermarks, page numbers,
+    // texts, signatures): the order every canvas painter uses. A page that was baked or
+    // rasterized here (info.painted) already carries them in its image, under the
+    // redaction boxes, and drawing them again on top would cover those boxes.
+    // A white-out alone never flattens a page: on an output page that carries a /Rotate
+    // (the user's turn or the file's own) the rects, kept in the EFFECTIVE frame, are
+    // turned back into the page's unrotated frame, so the box lands on the right content
+    // and the page keeps its vector text.
+    if (hasWhiteouts(pg) && !info.painted) {
+      chain = chain.then(function () {
+        var rot = 0;
+        try { rot = ((info.page.getRotation().angle % 360) + 360) % 360; } catch (er) {}
+        var rects = rot ? PURE.rotateRects(pg.whiteouts, 360 - rot) : pg.whiteouts;
+        PURE.drawWhiteouts(PDFLib, info.page, rects, vb.w, vb.h, vb.x, vb.y);
+      }).catch(function (e) { if (window.console) console.warn('pdftools: a white-out could not be drawn.', e); });
     }
     (pg.wms || []).forEach(function (wm) {
       chain = chain.then(function () {
         return helv().then(function (font) {
           // drawWatermark falls back to the WinAnsi-encodable remainder itself and
           // reports whether characters had to be dropped — surface that in the status
-          if (PURE.drawWatermark(PDFLib, info.page, font, wm, info.w, info.h)) lastDropped++;
+          if (PURE.drawWatermark(PDFLib, info.page, font, wm, vb.w, vb.h, vb.x, vb.y)) lastDropped++;
         }).catch(function (e) { lastDropped++; if (window.console) console.warn('pdftools: a watermark could not be drawn.', e); });
       });
     });
@@ -2418,13 +2801,13 @@
     // the export must stack the same way
     if (pageNums) {
       chain = chain.then(function () {
-        return helv().then(function (font) { PURE.drawPageNum(PDFLib, info.page, font, pageNums, outIdx, outTotal, info.w, info.h); })
+        return helv().then(function (font) { PURE.drawPageNum(PDFLib, info.page, font, pageNums, outIdx, outTotal, vb.w, vb.h, vb.x, vb.y); })
           .catch(function (e) { if (window.console) console.warn('pdftools: a page number could not be drawn.', e); });
       });
     }
     (pg.texts || []).forEach(function (t) {
       chain = chain.then(function () {
-        var lay = textLayout(t, info.w, info.h);
+        var lay = textLayout(t, vb.w, vb.h);
         // the box's own family is embedded for every box, exactly as before this build,
         // then any bold/italic face the runs actually use, in draw order
         var keys = [lay.family];
@@ -2439,7 +2822,7 @@
           var fonts = {};
           list.forEach(function (e) { fonts[e[0]] = e[1]; });
           var size = lay.size, lh = lay.lh, dropped = false;
-          var bx = t.x * info.w, byTop = info.h - t.y * info.h;
+          var bx = vb.x + t.x * vb.w, byTop = vb.y + (vb.h - t.y * vb.h);
           // highlight rectangles first, BEHIND the glyphs: multiply with NO opacity key,
           // so no alpha is written into the graphics state and black text stays black
           // even in a viewer that ignores /BM. Adjacent fragments sharing a highlight
@@ -2498,7 +2881,7 @@
     (pg.sigs || []).forEach(function (sig) {
       chain = chain.then(function () {
         return out.embedPng(sig.png).then(function (img) {
-          info.page.drawImage(img, { x: sig.x * info.w, y: info.h - (sig.y + sig.h) * info.h, width: sig.w * info.w, height: sig.h * info.h });
+          info.page.drawImage(img, { x: vb.x + sig.x * vb.w, y: vb.y + (vb.h - (sig.y + sig.h) * vb.h), width: sig.w * vb.w, height: sig.h * vb.h });
         }).catch(function (e) {
           lastSigFailed++;
           if (window.console) console.warn('pdftools: a signature could not be drawn.', e);
@@ -2507,9 +2890,11 @@
     });
     if (pg.ocrWords && pg.ocrWords.length) {
       chain = chain.then(function () {
-        // never let the invisible text layer resurrect redacted content
-        var words = PURE.filterOcrWords(pg.ocrWords, pg.redacts);
-        return helv().then(function (font) { PURE.drawOcrWords(PDFLib, info.page, font, words, info.w, info.h); })
+        // never let the invisible text layer resurrect redacted content (whole words), nor
+        // carry the characters a white-out covers (what is selectable should match what is
+        // seen; the file's own text under a white-out is untouched)
+        var words = PURE.cutCovered(PURE.filterOcrWords(pg.ocrWords, pg.redacts), pg.whiteouts, metricsTable);
+        return helv().then(function (font) { PURE.drawOcrWords(PDFLib, info.page, font, words, vb.w, vb.h, vb.x, vb.y); })
           .catch(function (e) { if (window.console) console.warn('pdftools: the OCR text layer could not be drawn.', e); });
       });
     }
@@ -2525,13 +2910,14 @@
         var cx = c.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, c.width, c.height); cx.drawImage(r.canvas, 0, 0);
         r.canvas.width = 0;   // free the intermediate canvas
         return paintFormValues(c, pg).then(function () {
+          paintWhiteouts(cx, pg, c.width, c.height);
           paintRedacts(cx, pg, c.width, c.height);   // after the values, so a box can black out a filled field
           return canvasToBytes(c, 'image/jpeg', 0.85);
         }).then(function (jpg) {
           c.width = 0;   // free the canvas
           return out.embedJpg(jpg).then(function (img) {
             var p = out.addPage([sz.w, sz.h]); p.drawImage(img, { x: 0, y: 0, width: sz.w, height: sz.h });
-            return { page: p, w: sz.w, h: sz.h };
+            return { page: p, w: sz.w, h: sz.h, painted: true };
           });
         });
       });
@@ -2564,6 +2950,7 @@
         var cx = c.getContext('2d'); cx.drawImage(r.canvas, 0, 0);
         r.canvas.width = 0;   // free the intermediate canvas
         return paintFormValues(c, pg).then(function () {
+          paintWhiteouts(cx, pg, c.width, c.height);
           paintRedacts(cx, pg, c.width, c.height);   // after the values, so a box can black out a filled field
           cx.globalCompositeOperation = 'destination-over';
           cx.fillStyle = '#fff'; cx.fillRect(0, 0, c.width, c.height);
@@ -2574,7 +2961,7 @@
           return out.embedJpg(jpg).then(function (img) {
             var p = out.addPage([sz.w, sz.h]);
             p.drawImage(img, { x: 0, y: 0, width: sz.w, height: sz.h });
-            return { page: p, w: sz.w, h: sz.h };
+            return { page: p, w: sz.w, h: sz.h, painted: true };
           });
         });
       });
@@ -3109,6 +3496,7 @@
   function drawDecor(canvas, pg, gridIdx) {
     return metricsReady.then(function () { return effPointSize(pg); }).then(function (sz) {
       var ctx = canvas.getContext('2d'), tw = canvas.width, th = canvas.height;
+      paintWhiteouts(ctx, pg, tw, th);
       paintRedacts(ctx, pg, tw, th);
       drawMarks(ctx, pg, tw, th, sz.w, sz.h, gridIdx);
       (pg.texts || []).forEach(function (t) {
@@ -3222,8 +3610,10 @@
     drawMarks: drawMarks,
     drawDecor: drawDecor,
     paintRedacts: paintRedacts,
+    paintWhiteouts: paintWhiteouts,
     paintFormValues: paintFormValues,
     hasRedacts: hasRedacts,
+    hasWhiteouts: hasWhiteouts,
     setRedactDpi: function (d) { redactDpi = Math.max(72, Math.min(300, d || 150)); },
     getRedactDpi: function () { return redactDpi; },
     onUndo: null,   // the editor sets this to rebind its page after an undo
