@@ -10,8 +10,8 @@ sitemap: false
   Excluded: 404, redirect stubs (no title), anything with `search: false`
   or `sitemap: false` front matter, and the empty theme archive pages.
 {%- endcomment -%}
-{%- assign skip = "/404.html,/terms/,/sitemap/,/page-archive/,/categories/,/tags/,/year-archive/,/collection-archive/,/teaching/,/portfolio/" | split: "," -%}
-{%- assign funtools = "/life/,/gravity/,/magnets/,/pendulum/,/epidemic/,/hash/,/adversarial/,/lander/,/transformer/,/fourier/,/bayes/,/timing/,/fourinarow/,/creatures/,/computer/,/voyage/,/bonds/,/loans/,/diversification/,/imagetools/,/pdftools/,/qr/,/diff/" | split: "," -%}
+{%- assign skip = "/404.html,/sitemap/,/page-archive/,/categories/,/tags/,/year-archive/,/collection-archive/,/teaching/,/portfolio/" | split: "," -%}
+{%- assign funtools = "/life/,/gravity/,/magnets/,/pendulum/,/epidemic/,/hash/,/adversarial/,/lander/,/transformer/,/fourier/,/bayes/,/timing/,/fourinarow/,/creatures/,/computer/,/voyage/,/bonds/,/loans/,/diversification/,/imagetools/,/pdftools/,/qr/,/diff/,/observatory/,/keepittogether/,/locator/" | split: "," -%}
 {%- assign out = "" -%}
 {%- assign first = true -%}
 {%- for p in site.html_pages -%}
@@ -27,7 +27,15 @@ sitemap: false
   {%- assign kind = "page" -%}
   {%- if funtools contains p.url -%}{%- assign kind = "fun" -%}{%- endif -%}
   {%- assign d = p.excerpt | default: p.description | default: "" | strip_html | strip_newlines | truncate: 140 -%}
-  {%- capture item -%}{"title":{{ p.title | jsonify }},"url":{{ p.url | jsonify }},"kind":{{ kind | jsonify }},"desc":{{ d | jsonify }},"keys":""}{%- endcapture -%}
+  {%- comment -%} Extra search words for queries a visitor types that are not in the
+      title or description (fresh-eyes audit 2026-10-14). {%- endcomment -%}
+  {%- assign keys = p.search_keys | default: "" -%}
+  {%- case p.url -%}
+    {%- when "/cv/" -%}{%- assign keys = "resume curriculum vitae experience education" -%}
+    {%- when "/terms/" -%}{%- assign keys = "privacy policy data analytics cookies" -%}
+    {%- when "/locator/" -%}{%- assign keys = "locator location latency light where am i ping geolocation" -%}
+  {%- endcase -%}
+  {%- capture item -%}{"title":{{ p.title | jsonify }},"url":{{ p.url | jsonify }},"kind":{{ kind | jsonify }},"desc":{{ d | jsonify }},"keys":{{ keys | jsonify }}}{%- endcapture -%}
   {%- unless first -%}{%- assign out = out | append: "," -%}{%- endunless -%}
   {%- assign first = false -%}
   {%- assign out = out | append: item -%}
@@ -53,4 +61,9 @@ sitemap: false
   {%- assign first = false -%}
   {%- assign out = out | append: item -%}
 {%- endfor -%}
+{%- if site.author.email -%}
+  {%- capture item -%}{"title":"Email Keane","url":{{ site.author.email | prepend: "mailto:" | jsonify }},"kind":"contact","desc":{{ site.author.email | jsonify }},"keys":"contact email reach mail message"}{%- endcapture -%}
+  {%- unless first -%}{%- assign out = out | append: "," -%}{%- endunless -%}
+  {%- assign out = out | append: item -%}
+{%- endif -%}
 [{{ out }}]

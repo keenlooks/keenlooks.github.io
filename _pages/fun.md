@@ -11,10 +11,12 @@ description: "Interactive visualizations and toys by Keane Lucas: machine learni
 Some fun, sometimes interactive, things. Most of this was built as an ongoing exercise in seeing what <a href="https://claude.com/claude-code">Claude</a> can do: I supply ideas, direction, and review, and Claude writes most of the code.
 </p>
 
+<nav class="xp-jump" aria-label="Sections on this page"><a href="#fun-ml">ML</a><a href="#fun-computing">Computing</a><a href="#fun-physics">Physics</a><a href="#fun-money">Money</a><a href="#fun-tools">Tools</a></nav>
+
 <div class="xp-sections">
 
 <section class="xp-sec">
-<h2 class="xp-section">Machine learning &amp; AI</h2>
+<h2 class="xp-section" id="fun-ml">Machine learning &amp; AI</h2>
 <div class="xp-grid">
 
   <a class="xp-card" href="{{ base_path }}/adversarial/">
@@ -81,7 +83,7 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
 </section>
 
 <section class="xp-sec">
-<h2 class="xp-section">Computing &amp; simulations</h2>
+<h2 class="xp-section" id="fun-computing">Computing &amp; simulations</h2>
 <div class="xp-grid">
 
   <a class="xp-card" href="{{ base_path }}/life/">
@@ -158,7 +160,7 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
 </section>
 
 <section class="xp-sec">
-<h2 class="xp-section">Physics</h2>
+<h2 class="xp-section" id="fun-physics">Physics</h2>
 <div class="xp-grid">
 
   <a class="xp-card" href="{{ base_path }}/gravity/">
@@ -211,11 +213,21 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
     </div>
   </a>
 
+  <a class="xp-card" href="{{ base_path }}/locator/">
+    <div class="xp-card__art" aria-hidden="true">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21.5 C 12 21.5 7 16.3 7 11 a 5 5 0 0 1 10 0 C 17 16.3 12 21.5 12 21.5 Z"></path><circle cx="12" cy="11" r="1.7" fill="currentColor" stroke="none"></circle><path d="M4.6 6.4 a 8.6 8.6 0 0 0 0 9.2" stroke-opacity="0.6"></path><path d="M19.4 6.4 a 8.6 8.6 0 0 1 0 9.2" stroke-opacity="0.6"></path><path d="M1.8 4.4 a 12 12 0 0 0 0 13.2" stroke-opacity="0.35"></path><path d="M22.2 4.4 a 12 12 0 0 1 0 13.2" stroke-opacity="0.35"></path></svg>
+    </div>
+    <div class="xp-card__body">
+      <h3 class="xp-card__title">Located by Light</h3>
+      <p class="xp-card__desc">Your browser works out roughly where you are from nothing but how long light takes to reach cloud servers and come back.</p>
+    </div>
+  </a>
+
 </div>
 </section>
 
 <section class="xp-sec">
-<h2 class="xp-section">Money</h2>
+<h2 class="xp-section" id="fun-money">Money</h2>
 <div class="xp-grid">
 
   <a class="xp-card" href="{{ base_path }}/bonds/">
@@ -252,7 +264,7 @@ Some fun, sometimes interactive, things. Most of this was built as an ongoing ex
 </section>
 
 <section class="xp-sec">
-<h2 class="xp-section">Handy tools</h2>
+<h2 class="xp-section" id="fun-tools">Handy tools</h2>
 <div class="xp-grid">
 
   <a class="xp-card" href="{{ base_path }}/imagetools/">

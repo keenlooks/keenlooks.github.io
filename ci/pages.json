@@ -19,6 +19,7 @@
   "/computer/",
   "/voyage/",
   "/observatory/",
+  "/locator/",
   "/bonds/",
   "/loans/",
   "/diversification/",
@@ -29,5 +30,8 @@
   "/publications/",
   "/cv/",
   "/talks/",
+  "/publications/2022-07-17-constrained-gradient-descent-a-powerful-and-principled-evasion-attack-against-neural-networks.html",
+  "/publications/2024-02-26-group-based-robustness.html",
+  "/talks/2025-08-09-claude-climbing-a-ctf-scoreboard-near-you.html",
   "/404.html"
 ]
