@@ -14,71 +14,202 @@ def generate_system_prompt(context_file='claude_context.json'):
 
     return system_prompt
 
+# The Worker source. A plain (raw) string with one placeholder, filled by
+# build_worker_code(); kept out of an f-string so the JavaScript braces stay as
+# written. The workflow deploys it on every push to master, so test it first:
+# build it with a dummy prompt, run `node --check` on the result, and drive its
+# fetch handler under Node with a mocked fetch and env.
+WORKER_TEMPLATE = r"""
+const SYSTEM_PROMPT = __SYSTEM_PROMPT_JSON__;
+
+const MODEL = 'claude-sonnet-4-6';
+const MAX_TOKENS = 1024;          // fixed here; the client cannot raise it
+const PROD_ORIGIN = 'https://keanelucas.com';
+const DEV_ORIGINS = ['http://127.0.0.1:4010'];   // only when env.ENVIRONMENT === 'development'
+const MAX_TURNS = 12;
+const MAX_CHARS_PER_MESSAGE = 2000;
+const MAX_CHARS_TOTAL = 12000;
+const MAX_BODY_BYTES = 64 * 1024;
+
+// Rate limits. These live in the isolate's memory, so they are best effort:
+// Cloudflare runs many isolates and recycles them, each with its own counters.
+// They stop a single client hammering one isolate; they are not a hard spend
+// cap (that needs KV or Durable Objects, or the account's own limits).
+const BUCKET_SIZE = 20;                  // about 20 requests ...
+const BUCKET_WINDOW_MS = 10 * 60 * 1000; // ... per 10 minutes per IP
+const BUCKET_MAX_IPS = 5000;
+const DAILY_SOFT_CAP = 500;              // upstream calls per isolate per UTC day
+
+const buckets = new Map();               // ip -> { tokens, t }
+let dayKey = '';
+let dayCount = 0;
+
+// Tag characters (U+E0000..U+E007F) and every other Unicode format (Cf)
+// character: invisible, and a known way to smuggle instructions.
+const FORMAT_CHARS = /[\u{E0000}-\u{E007F}]|\p{Cf}/gu;
+
+function allowedOrigin(origin, env) {
+  if (origin === PROD_ORIGIN) return origin;
+  if (env && env.ENVIRONMENT === 'development' && DEV_ORIGINS.includes(origin)) return origin;
+  return null;
+}
+
+function corsHeaders(origin) {
+  return {
+    'Access-Control-Allow-Origin': origin,
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Max-Age': '86400',
+    'Vary': 'Origin'
+  };
+}
+
+function reply(status, obj, origin, extra) {
+  const headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...(extra || {}) };
+  if (origin) Object.assign(headers, corsHeaders(origin));
+  else headers['Vary'] = 'Origin';
+  return new Response(JSON.stringify(obj), { status, headers });
+}
+
+function takeToken(ip, now) {
+  let b = buckets.get(ip);
+  if (!b) {
+    if (buckets.size >= BUCKET_MAX_IPS) {
+      // Forget clients whose bucket has refilled; if that frees nothing, start over.
+      for (const [k, v] of buckets) {
+        if (v.tokens + ((now - v.t) * BUCKET_SIZE) / BUCKET_WINDOW_MS >= BUCKET_SIZE) buckets.delete(k);
+      }
+      if (buckets.size >= BUCKET_MAX_IPS) buckets.clear();
+    }
+    b = { tokens: BUCKET_SIZE, t: now };
+    buckets.set(ip, b);
+  }
+  b.tokens = Math.min(BUCKET_SIZE, b.tokens + ((now - b.t) * BUCKET_SIZE) / BUCKET_WINDOW_MS);
+  b.t = now;
+  if (b.tokens < 1) {
+    return Math.ceil(((1 - b.tokens) * BUCKET_WINDOW_MS) / BUCKET_SIZE / 1000);
+  }
+  b.tokens -= 1;
+  return 0;
+}
+
+function validate(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return { error: 'Expected a JSON object with a messages list.' };
+  const list = body.messages;
+  if (!Array.isArray(list) || list.length === 0) return { error: 'Expected a non-empty messages list.' };
+  if (list.length > MAX_TURNS) return { error: 'Too many messages in one request (at most ' + MAX_TURNS + ').' };
+  const messages = [];
+  let total = 0;
+  for (let i = 0; i < list.length; i++) {
+    const m = list[i];
+    if (!m || typeof m !== 'object' || Array.isArray(m)) return { error: 'Each message must be an object.' };
+    const expected = i % 2 === 0 ? 'user' : 'assistant';
+    if (m.role !== expected) return { error: 'Messages must alternate user and assistant, starting with user.' };
+    if (typeof m.content !== 'string') return { error: 'Message content must be a string.' };
+    const content = m.content.replace(FORMAT_CHARS, '');
+    if (!content.trim()) return { error: 'Messages cannot be empty.' };
+    if (content.length > MAX_CHARS_PER_MESSAGE) return { error: 'A message is too long (at most ' + MAX_CHARS_PER_MESSAGE + ' characters).', status: 413 };
+    total += content.length;
+    if (total > MAX_CHARS_TOTAL) return { error: 'The conversation is too long (at most ' + MAX_CHARS_TOTAL + ' characters).', status: 413 };
+    messages.push({ role: m.role, content });
+  }
+  if (messages[messages.length - 1].role !== 'user') return { error: 'The last message must come from the user.' };
+  return { messages };
+}
+
+function upstreamError(status) {
+  if (status === 429 || status === 529) return 'The assistant is busy right now. Please try again in a minute.';
+  if (status >= 500) return 'The assistant is unavailable right now. Please try again later.';
+  return 'The assistant could not answer this request.';
+}
+
+export default {
+  async fetch(request, env) {
+    const origin = allowedOrigin(request.headers.get('Origin'), env);
+
+    if (request.method === 'OPTIONS') {
+      if (!origin) return reply(403, { error: 'Origin not allowed.' }, null);
+      return new Response(null, { status: 204, headers: corsHeaders(origin) });
+    }
+    if (request.method !== 'POST') {
+      return reply(405, { error: 'Method not allowed.' }, origin, { 'Allow': 'POST, OPTIONS' });
+    }
+    if (!origin) return reply(403, { error: 'Origin not allowed.' }, null);
+
+    try {
+      const now = Date.now();
+      const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+      const wait = takeToken(ip, now);
+      if (wait) {
+        return reply(429, { error: 'Too many questions in a short time. Please wait a few minutes and try again.' },
+          origin, { 'Retry-After': String(wait) });
+      }
+
+      const declared = Number(request.headers.get('Content-Length') || 0);
+      if (declared > MAX_BODY_BYTES) return reply(413, { error: 'Request too large.' }, origin);
+      const raw = await request.text();
+      if (raw.length > MAX_BODY_BYTES) return reply(413, { error: 'Request too large.' }, origin);
+      let body;
+      try { body = JSON.parse(raw); } catch (e) { return reply(400, { error: 'Request body must be JSON.' }, origin); }
+      const checked = validate(body);
+      if (checked.error) return reply(checked.status || 400, { error: checked.error }, origin);
+
+      const today = new Date(now).toISOString().slice(0, 10);
+      if (today !== dayKey) { dayKey = today; dayCount = 0; }
+      if (dayCount >= DAILY_SOFT_CAP) {
+        return reply(503, { error: 'The assistant has answered a lot of questions today. Please try again tomorrow.' }, origin);
+      }
+      dayCount++;
+
+      const systemPrompt = [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
+      const upstream = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': env.ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+          'anthropic-beta': 'prompt-caching-2024-07-31'
+        },
+        body: JSON.stringify({
+          model: MODEL,
+          max_tokens: MAX_TOKENS,
+          system: systemPrompt,
+          messages: checked.messages
+        })
+      });
+
+      if (!upstream.ok) {
+        console.error('upstream status', upstream.status);
+        const extra = {};
+        const ra = upstream.headers.get('retry-after');
+        if (ra) extra['Retry-After'] = ra;
+        return reply(upstream.status, { error: upstreamError(upstream.status) }, origin, extra);
+      }
+
+      const data = await upstream.json();
+      return reply(200, { content: Array.isArray(data.content) ? data.content : [], stop_reason: data.stop_reason || null }, origin);
+    } catch (error) {
+      console.error('worker error', error && error.message);
+      return reply(500, { error: 'Something went wrong on the server. Please try again later.' }, origin);
+    }
+  }
+};
+"""
+
+
+def build_worker_code(prompt):
+    """Return the Worker JavaScript with the system prompt embedded as a JSON string."""
+    # json.dumps gives a valid JavaScript string literal; escape U+2028/2029 too.
+    encoded = json.dumps(prompt).replace('\u2028', '\\u2028').replace('\u2029', '\\u2029')
+    return WORKER_TEMPLATE.replace('__SYSTEM_PROMPT_JSON__', encoded, 1)
+
+
 def update_worker(prompt):
     """Update the Cloudflare Worker with the new system prompt"""
     print("Starting worker update...")
-    
-    # JSON encode the prompt here in Python, not in JavaScript
-    encoded_prompt = json.dumps(prompt)
-    
-    worker_code = f'''
-    export default {{
-      async fetch(request, env) {{
-        const corsHeaders = {{
-          'Access-Control-Allow-Origin': 'https://keanelucas.com',
-          'Access-Control-Allow-Methods': 'POST, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type'
-        }};
 
-        if (request.method === 'OPTIONS') {{
-          return new Response(null, {{ headers: corsHeaders }});
-        }}
+    worker_code = build_worker_code(prompt)
 
-        try {{
-          const body = await request.json();
-          
-          const systemPrompt = [{{"type":"text", "text":{encoded_prompt}, "cache_control": {{"type": "ephemeral"}}}}];
-
-          const response = await fetch('https://api.anthropic.com/v1/messages', {{
-            method: 'POST',
-            headers: {{
-              'Content-Type': 'application/json',
-              'x-api-key': env.ANTHROPIC_API_KEY,
-              'anthropic-version': '2023-06-01',
-              'anthropic-beta': 'prompt-caching-2024-07-31'
-            }},
-            body: JSON.stringify({{
-              model: 'claude-sonnet-4-6',
-              max_tokens: 1024,
-              system: systemPrompt,
-              messages: body.messages
-            }})
-          }});
-
-          const data = await response.json();
-          
-          return new Response(JSON.stringify(data), {{
-            headers: {{
-              'Content-Type': 'application/json',
-              ...corsHeaders
-            }}
-          }});
-        }} catch (error) {{
-          return new Response(JSON.stringify({{ 
-            error: 'Internal Server Error',
-            details: error.message 
-          }}), {{
-            status: 500,
-            headers: {{
-              'Content-Type': 'application/json',
-              ...corsHeaders
-            }}
-          }});
-        }}
-      }}
-    }};
-    '''
-    
     try:
         print("Writing worker.js...")
         with open('worker.js', 'w') as f:

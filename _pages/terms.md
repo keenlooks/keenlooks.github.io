@@ -1,39 +1,40 @@
 ---
 permalink: /terms/
 title: "Terms and Privacy Policy"
-modified: 2016-06-06
+description: "What this site collects and where your data goes: analytics, the research chat, the Observatory's data relay, and tools that never upload your files."
+modified: 2026-10-20
 ---
 
 {% include base_path %}
-{% include toc %}
 
-## Privacy Policy
+This page says what happens to your data when you visit this site. It is a personal website: there are no accounts, no comments, no ads and nothing for sale. I will never share your email address or other personal information with anyone without your consent.
 
-The privacy of my visitors is extremely important. This Privacy Policy outlines the types of personal information that is received and collected and how it is used.
+## Hosting
 
-First and foremost, I will never share your email address or any other personal information to anyone without your direct consent.
+The site is hosted on GitHub Pages. Like any web host, GitHub receives your IP address and browser details when you load a page; see the [GitHub General Privacy Statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement). The site's font (Source Sans 3) loads from Google Fonts, so Google also sees that request.
 
-### Log Files
+## Google Analytics
 
-Like many other websites, this site uses log files to help learn about when, from where, and how often traffic flows to this site. The information in these log files include:
+I use Google Analytics (GA4) to see which pages people visit and roughly where visitors come from. It sets first-party cookies and sends page views and basic device information to Google; I see only aggregate reports, not individual visitors. Google's handling of this data is described in the [Google Privacy Policy](https://policies.google.com/privacy). You can block it with your browser's tracking protection, a content blocker, or Google's [opt-out add-on](https://tools.google.com/dlpage/gaoptout).
 
-* Internet Protocol addresses (IP)
-* Types of browser
-* Internet Service Provider (ISP)
-* Date and time stamp
-* Referring and exit pages
-* Number of clicks
+## The research chat
 
-All of this information is not linked to anything that is personally identifiable.
+The "Ask About My Research" box at the bottom of most pages is an AI assistant. When you send a message:
 
-### Cookies and Web Beacons
+* The text of that message goes to a small Cloudflare Worker that I run, which passes it to Anthropic's API (Claude) together with a fixed description of my work, and returns the reply. The Worker does not store your messages. Cloudflare and Anthropic process the request as described in the [Cloudflare Privacy Policy](https://www.cloudflare.com/privacypolicy/) and the [Anthropic Privacy Policy](https://www.anthropic.com/legal/privacy).
+* The conversation is saved in your own browser's local storage, so it follows you from page to page on this site. It stays there until you press the reset button in the chat header (or clear this site's data in your browser). It is not sent anywhere else.
+* Please do not type anything private into the chat.
 
-When you visit this site "convenience" cookies are stored on your computer when you submit a comment to help you log in faster to [Disqus](http://disqus.com) the next time you leave a comment.
+Replies are formatted with [marked](https://github.com/markedjs/marked) (MIT licence), served from this site.
 
-Third-party advertisers may also place and read cookies on your browser and/or use web beacons to collect information. This site has no access or control over these cookies. You should review the respective privacy policies on any and all third-party ad servers for more information regarding their practices and how to opt-out.
+## The tools run in your browser
 
-If you wish to disable cookies, you may do so through your web browser options. Instructions for doing so can be found on the specific web browsers' websites.
+PDF Toolbench, Image Studio, Diff Checker and QR Studio process your files entirely inside your browser. The files you open in them are not uploaded to this site or to anyone else. Some pages remember small things in your browser's local storage, such as your light or dark theme choice, a saved signature in PDF Toolbench, recent searches, or whether you have seen a page's tour; that data stays on your device.
 
-#### Google Analytics
+## Pages that load live public data
 
-Google Analytics is a web analytics tool I use to help understand how visitors engage with this website. It reports website trends using cookies and web beacons without identifying individual visitors. You can read [Google Analytics Privacy Policy](http://www.google.com/analytics/learn/privacy.html).
+Some interactive pages contact third-party services directly from your browser to load public data. The Observatory, for example, loads live feeds from public scientific and government sources (earthquake, space weather and weather services, among others); those services see your IP address like any website you visit. For the aircraft, flight restriction and GPS notice layers it asks a small Cloudflare Worker that I run, which keeps only the time of the most recent visit (to decide when to refresh its data), not who visited. A few talk pages embed YouTube videos, and YouTube may set cookies when a video loads.
+
+## Contact
+
+Questions about this page: [{{ site.author.email }}](mailto:{{ site.author.email }}).

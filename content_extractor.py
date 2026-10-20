@@ -10,6 +10,10 @@ import frontmatter
 from pathlib import Path
 import re
 
+# Placeholder files shipped with the academicpages template, never Keane's work
+TEMPLATE_SAMPLE_PDFS = {'paper1.pdf', 'paper2.pdf', 'paper3.pdf'}
+
+
 class ContentExtractor:
     def __init__(self):
         # In GitHub Actions, the repository is checked out to the workspace directory
@@ -21,6 +25,7 @@ class ContentExtractor:
             "publications": [],
             "projects": [],
             "talks": [],
+            "site_pages": [],
             "pdf_content": {}
         }
         print(f"Initializing ContentExtractor with repo path: {self.repo_path}")
@@ -98,6 +103,39 @@ class ContentExtractor:
                 except Exception as e:
                     print(f"Error processing talk {md_file}: {e}")
 
+    def extract_site_pages(self):
+        """Read the interactive pages and tools (title, permalink, description) from _pages/.
+
+        The bot used to know nothing of them and denied that PDF Toolbench exists.
+        Skipped: pages kept out of the sitemap, archive-layout listing pages
+        (publications, talks, CV, template archives) and the homepage."""
+        pages_path = self.repo_path / '_pages'
+        if not pages_path.exists():
+            return
+        for page_file in sorted(list(pages_path.glob('*.md')) + list(pages_path.glob('*.html'))):
+            try:
+                meta = frontmatter.load(page_file).metadata
+            except Exception as e:
+                print(f"Error processing page {page_file}: {e}")
+                continue
+            permalink = str(meta.get('permalink') or '').strip()
+            title = str(meta.get('title') or '').strip()
+            if not permalink or not title or permalink == '/':
+                continue
+            if meta.get('sitemap') is False or meta.get('layout') == 'archive':
+                continue
+            if not permalink.startswith('/') or '{' in permalink:
+                continue
+            description = str(meta.get('description') or meta.get('excerpt') or '').strip()
+            # Front matter values are plain text here; drop any stray Liquid
+            description = re.sub(r'\{[{%].*?[%}]\}', '', description)
+            self.content["site_pages"].append({
+                "title": title,
+                "permalink": permalink,
+                "description": re.sub(r'\s+', ' ', description)
+            })
+            print(f"Processed page: {title} ({permalink})")
+
     def extract_pdf_content(self):
         """Extract content from PDFs in the repository"""
         pdf_paths = [
@@ -109,6 +147,10 @@ class ContentExtractor:
         for pdf_path in pdf_paths:
             if pdf_path.exists():
                 for pdf_file in pdf_path.glob('**/*.pdf'):
+                    # The academicpages template's placeholder PDFs ("This is a
+                    # sample PDF") are not Keane's documents
+                    if pdf_file.name in TEMPLATE_SAMPLE_PDFS:
+                        continue
                     try:
                         with open(pdf_file, 'rb') as file:
                             pdf_reader = PyPDF2.PdfReader(file)
@@ -182,6 +224,13 @@ class ContentExtractor:
             for talk in self.content["talks"] if talk.get('metadata', {}).get('permalink')
         )
 
+        # The site's own interactive pages and tools, each with its exact URL
+        site_pages = "\n".join(
+            f"        - {page['title']}: {self.website_url}{page['permalink']}" +
+            (f" - {page['description']}" if page.get('description') else "")
+            for page in self.content["site_pages"]
+        )
+
         # Define research areas directly
         research_areas = """
         - Frontier AI cyber capabilities (current focus, at Anthropic's Frontier Red Team)
@@ -207,17 +256,17 @@ class ContentExtractor:
         # Recent industry writing (not in the repo's _publications collection, so listed
         # directly; keep in sync with the homepage / publications page).
         frontier_red_team_posts = """
-        - "Measuring LLMs' Impact on N-day Exploits" (2026): https://red.anthropic.com/2026/n-days/ - measuring how well frontier models can develop exploits for publicly disclosed but unpatched (N-day) vulnerabilities; Mythos Preview reproduced a SpiderMonkey/Firefox proof-of-concept crash in about 12 minutes
-        - "Measuring LLMs' Ability to Develop Exploits" (2026): https://red.anthropic.com/2026/exploit-evals/ - benchmarks (ExploitBench, ExploitGym, SCONE-bench) for measuring how well frontier models build end-to-end software and smart-contract exploits
-        - "Assessing Claude Mythos Preview's Cybersecurity Capabilities" (2026): https://red.anthropic.com/2026/mythos-preview/ - evaluating a frontier model's ability to autonomously discover and exploit zero-day and N-day vulnerabilities
-        - "Partnering with Mozilla to Improve Firefox's Security" (2026): https://red.anthropic.com/2026/firefox/ - collaboration in which Claude Opus 4.6 found 22 vulnerabilities in Firefox
-        - "Reverse Engineering Claude's CVE-2026-2796 Exploit" (2026): https://red.anthropic.com/2026/exploit/ - deep dive into an exploit Claude developed for a Firefox vulnerability
-        - "LLM-discovered 0-days" (2026): https://red.anthropic.com/2026/zero-days/ - Claude found 500+ high-severity vulnerabilities in open-source projects
-        - "AI Models on Realistic Cyber Ranges" (2026): https://red.anthropic.com/2026/cyber-toolkits-update/ - Claude succeeds at multistage network attacks using only standard tools
-        - "AI to Defend Critical Infrastructure" (2026): https://red.anthropic.com/2026/critical-infrastructure-defense/ - partnership with PNNL exploring AI-accelerated defense
-        - "AI for Cyber Defenders" (2025): https://red.anthropic.com/2025/ai-for-cyber-defenders/ - building defensive cybersecurity capabilities
-        - "Claude in Cyber Competitions" (2025): https://red.anthropic.com/2025/cyber-competitions/ - evaluating Claude in CTFs; the subject of Keane's DEF CON 33 talk (featured in the DEF CON 33 Hackers' Almanack)
-        - "Cyber Toolkits" (2025): https://red.anthropic.com/2025/cyber-toolkits/ - measuring LLMs' network attack capabilities, with Brian Singer
+        - "Measuring LLMs' Impact on N-day Exploits" (2026): https://www.anthropic.com/research/n-days - measuring how well frontier models can develop exploits for publicly disclosed but unpatched (N-day) vulnerabilities; Mythos Preview reproduced a SpiderMonkey/Firefox proof-of-concept crash in about 12 minutes
+        - "Measuring LLMs' Ability to Develop Exploits" (2026): https://www.anthropic.com/research/exploit-evals - benchmarks (ExploitBench, ExploitGym, SCONE-bench) for measuring how well frontier models build end-to-end software and smart-contract exploits
+        - "Assessing Claude Mythos Preview's Cybersecurity Capabilities" (2026): https://www.anthropic.com/research/mythos-preview - evaluating a frontier model's ability to autonomously discover and exploit zero-day and N-day vulnerabilities
+        - "Partnering with Mozilla to Improve Firefox's Security" (2026): https://www.anthropic.com/news/mozilla-firefox-security - collaboration in which Claude Opus 4.6 found 22 vulnerabilities in Firefox
+        - "Reverse Engineering Claude's CVE-2026-2796 Exploit" (2026): https://www.anthropic.com/research/exploit - deep dive into an exploit Claude developed for a Firefox vulnerability
+        - "LLM-discovered 0-days" (2026): https://www.anthropic.com/research/zero-days - Claude found 500+ high-severity vulnerabilities in open-source projects
+        - "AI Models on Realistic Cyber Ranges" (2026): https://www.anthropic.com/research/cyber-toolkits-update - Claude succeeds at multistage network attacks using only standard tools
+        - "AI to Defend Critical Infrastructure" (2026): https://www.anthropic.com/research/critical-infrastructure-defense - partnership with PNNL exploring AI-accelerated defense
+        - "AI for Cyber Defenders" (2025): https://www.anthropic.com/research/building-ai-cyber-defenders - building defensive cybersecurity capabilities
+        - "Claude in Cyber Competitions" (2025): https://www.anthropic.com/research/cyber-competitions - evaluating Claude in CTFs; the subject of Keane's DEF CON 33 talk (featured in the DEF CON 33 Hackers' Almanack)
+        - "Cyber Toolkits" (2025): https://www.anthropic.com/research/cyber-toolkits - measuring LLMs' network attack capabilities, with Brian Singer
         """
 
         # Build the system prompt
@@ -237,6 +286,12 @@ class ContentExtractor:
         - Publications: /publications/
         - Talks: /talks/
         - CV: /cv/
+        - Fun (interactive demos and free in-browser tools): /fun/
+
+        Interactive pages and tools on keanelucas.com (the PDF, image, diff and QR tools
+        run entirely in the visitor's browser; files are not uploaded). These are the
+        ONLY such pages; link to them with exactly these URLs:
+{site_pages}
 
         These are the ONLY individual publication and talk pages that exist on keanelucas.com.
 
@@ -250,10 +305,12 @@ class ContentExtractor:
         verbatim. NEVER construct, guess, abbreviate, or otherwise modify a keanelucas.com
         URL: any URL not listed above does not exist and will return a 404 error. If the
         page you want is not in the list, link to /publications/ or /talks/ instead, or
-        leave the link out. The same rule applies to paper PDFs and external links
-        (red.anthropic.com posts): only use URLs that appear verbatim in this context.
+        leave the link out. The same rule applies to the interactive pages and tools above,
+        to paper PDFs and to external links (the Frontier Red Team posts on anthropic.com):
+        only use URLs that appear verbatim in this context.
 
-        Also, you're encouraged to use emojis to make your responses more engaging! 🚀
+        Writing style: plain sentences. Do not use emoji. Do not use em dashes; use a
+        comma, a colon or a new sentence instead.
 
         Research Areas:
         {research_areas}
@@ -289,11 +346,11 @@ class ContentExtractor:
         Instructions:
         1. Answer questions specifically about Keane's research, publications, projects, and background
         2. Use the provided full publication details to give accurate, but concise, answers (you are responding in a small chatbox)
-        3. If asked about something not covered in the context, politely explain that you can only discuss Keane's academic work and research
+        3. If a visitor asks for something one of the site's own pages or tools does (for example merging, signing or redacting a PDF, resizing an image, comparing two files, making a QR code), point them to that page with its exact URL from the list above, and do not recommend outside services instead. If a question is not covered by this context at all, say so briefly and offer what you can help with: Keane's research, publications, talks, background and this site's pages
         4. When discussing papers, use their actual titles and provide detailed information (but be concise)
         5. Always maintain a professional, academic tone appropriate for a research website
 
-        Remember: You are representing an academic website. Keep responses focused on research, publications, and professional topics and ensure responses are concise."""
+        Remember: You are representing an academic website. Keep responses focused on research, publications, professional topics and this site's own pages and tools, and keep them concise."""
 
         return system_prompt
 
@@ -301,6 +358,7 @@ class ContentExtractor:
         """Save the extracted context to a JSON file"""
         print("Starting content extraction...")
         self.extract_markdown_content()
+        self.extract_site_pages()
         self.extract_pdf_content()
         self.extract_config_data()
         
