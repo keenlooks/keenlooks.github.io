@@ -377,36 +377,55 @@
       onCommit: function (v) { if (v != null) { s.startYearCal = (v >= 1900) ? (Math.round(v) - yr) : null; } draw(); }
     });
   }
+  // On a touch screen the browser decides only AFTER pointerdown whether a finger
+  // is a tap or a page scroll (touch-action pan-y). Acting on pointerdown would
+  // add a payout (and open its editor) under every scroll that starts on the
+  // chart, so a touch tap is held until pointerup and dropped if the browser
+  // cancels the pointer for a scroll or the finger travels more than a few px.
+  // A mouse click still acts at once.
+  var tap = null;
+  function onTap(e, run) {
+    e.preventDefault();                             // no compat mousedown to blur the editor
+    if (e.pointerType && e.pointerType !== 'mouse') { tap = { id: e.pointerId, cx: e.clientX, cy: e.clientY, run: run }; return; }
+    run();
+  }
   canvas.addEventListener('pointerdown', function (e) {
+    tap = null;
     if (!W || !H) return;
     if (overlay && overlay.isOpen()) return;
     var rect = canvas.getBoundingClientRect();
     var x = e.clientX - rect.left, y = e.clientY - rect.top;
     if (x < M.l - 16 || x > W - M.r + 16) return;
     // click the x-axis tick row -> anchor the timeline to a calendar year (works in both views)
-    if (y >= H - M.b + 2 && y <= H - M.b + 26) { e.preventDefault(); openDateEditor(nearestTick(x)); return; }
+    if (y >= H - M.b + 2 && y <= H - M.b + 26) { onTap(e, function () { openDateEditor(nearestTick(x)); }); return; }
     if (s.view !== 'coupon') return;
     if (y < M.t || y > H - M.b + 6) return;
     var hit = nearestPayout(x);
     if (hit >= 0) { drag = { idx: hit, startX: x, moved: false }; e.preventDefault(); return; }
-    e.preventDefault();
-    var t = Math.max(0.1, Math.min(s.years, Math.round(pxToYear(x) * 10) / 10));   // land where clicked
-    s.payouts.push({ t: t, amt: DEFAULT_PAY });
-    draw();
-    openPayoutEditor(s.payouts.length - 1, true);   // Esc removes it again
+    onTap(e, function () {
+      var t = Math.max(0.1, Math.min(s.years, Math.round(pxToYear(x) * 10) / 10));   // land where clicked
+      s.payouts.push({ t: t, amt: DEFAULT_PAY });
+      draw();
+      openPayoutEditor(s.payouts.length - 1, true);   // Esc removes it again
+    });
   });
   window.addEventListener('pointermove', function (e) {
+    if (tap && e.pointerId === tap.id && (Math.abs(e.clientX - tap.cx) > 8 || Math.abs(e.clientY - tap.cy) > 8)) tap = null;
     if (!drag) return;
     var rect = canvas.getBoundingClientRect(), x = e.clientX - rect.left;
     if (!drag.moved && Math.abs(x - drag.startX) < 4) return;
     drag.moved = true;
     if (s.payouts[drag.idx]) { s.payouts[drag.idx].t = Math.max(0.1, Math.min(s.years, Math.round(pxToYear(x) * 10) / 10)); draw(); }
   });
-  window.addEventListener('pointerup', function () {
+  window.addEventListener('pointerup', function (e) {
+    if (tap) { var tp = tap; tap = null; if (e.pointerId === tp.id) tp.run(); }
     if (!drag) return;
     if (!drag.moved) openPayoutEditor(drag.idx);
     drag = null; draw();
   });
+  // a vertical swipe that started on the chart becomes a page scroll (touch-action
+  // pan-y): the browser cancels the pointer, so drop the held tap and any half-started drag
+  window.addEventListener('pointercancel', function () { tap = null; if (drag) { drag = null; draw(); } });
 
   // ---- controls ----------------------------------------------------------
   if (rateInput) rateInput.addEventListener('input', function () { setRate(parseFloat(rateInput.value) / 100, false); });

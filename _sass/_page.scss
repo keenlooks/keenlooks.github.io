@@ -399,3 +399,124 @@
   font-size: $type-size-6;
   text-transform: uppercase;
 }
+/*
+   Links in running text (WCAG 1.4.1): the accent alone is under 3:1 against
+   body text, so prose links also carry a thin offset underline (.page__content
+   on single pages, .archive on Publications, Talks and CV). Navigation,
+   cards, list titles and buttons keep their own look.
+   ========================================================================== */
+
+.page__content p a:not(.btn):not(.xp-card),
+.page__content li a:not(.btn):not(.xp-card),
+.page__content dd a:not(.btn):not(.xp-card),
+.page__content blockquote a:not(.btn):not(.xp-card),
+.archive p a:not(.btn),
+.archive li a:not(.btn),
+.featured-talk p a {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+
+  &:hover {
+    text-decoration-thickness: 2px;
+  }
+}
+
+/*
+   Tool credit lines (PDF Toolbench, QR Studio, Diff Checker): their page CSS
+   dims them with opacity 0.6, which fell below AA in the light theme. A solid
+   muted colour at full opacity instead (#a3a3a3 on #141414 is about 7:1; the
+   light theme uses #6b6b6b, about 5.3:1 on white).
+   ========================================================================== */
+
+.page__content .pt-credit,
+.page__content .qs-credit,
+.page__content .df-credit {
+  opacity: 1;
+  color: #a3a3a3;
+}
+
+/*
+   Inline BibTeX (the enhancement script in _includes/scripts.html)
+   ========================================================================== */
+
+.bibtex-box {
+  position: relative;
+  margin: 0.5em 0 1em;
+
+  pre {
+    margin: 0;
+    padding: 0.7em 4.8em 0.7em 0.8em;
+    overflow-x: auto;
+    font-family: $monospace;
+    font-size: 0.72rem;
+    line-height: 1.5;
+    white-space: pre;
+    border: 1px solid $border-color;
+    border-radius: 6px;
+    background: $code-background-color;
+  }
+}
+
+.bibtex-box__copy {
+  position: absolute;
+  top: 0.45em;
+  right: 0.45em;
+  min-height: 2rem;
+  padding: 0.2em 0.8em;
+  font-family: $sans-serif;
+  font-size: 0.75rem;
+  color: inherit;
+  cursor: pointer;
+  border: 1px solid $border-color;
+  border-radius: 4px;
+  background: $background-color;
+
+  &:disabled { cursor: default; opacity: 0.6; }
+}
+
+.bibtex-box[hidden] { display: none; }
+
+/*
+   /fun/ jump row: one line of section links under the intro (the hub is
+   seven phone screens long). Neutral translucent pills read on both themes.
+   ========================================================================== */
+
+.xp-jump {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin: -0.4rem 0 1.4rem;
+
+  a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.25rem;
+    padding: 0.2rem 0.85rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: $primary-color; /* the light theme's link colour applies there */
+    text-decoration: none;
+    border: 1px solid rgba(127, 127, 127, 0.32);
+    border-radius: 999px;
+    background: rgba(127, 127, 127, 0.07);
+
+    &:hover,
+    &:focus-visible {
+      border-color: $primary-color;
+      text-decoration: none;
+    }
+  }
+}
+
+/* Phones: all five pills on one row at 360 px and up. */
+@media (max-width: 480px) {
+  .xp-jump {
+    gap: 0.3rem;
+
+    a { padding: 0.2rem 0.62rem; font-size: 0.8rem; }
+  }
+}
+
+/* Jump targets clear the top of the viewport a little. */
+.xp-section[id] { scroll-margin-top: 1rem; }

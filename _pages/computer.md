@@ -309,7 +309,7 @@ html[data-theme="light"] #comp-app input[type="range"] { accent-color: #34568a; 
 .comp-count, .comp-status { margin: 0; font-size: 0.85em; opacity: 0.8; font-variant-numeric: tabular-nums; min-height: 1.2em; }
 .comp-memhead { display: flex; gap: 8px; align-items: center; }
 .comp-memhead select { flex: 0 0 auto; }
-.comp-pagelab { flex: 1; display: flex; flex-direction: column; gap: 2px; font-size: 0.8em; font-variant-numeric: tabular-nums; }
+.comp-pagelab { flex: 1; display: flex; flex-direction: column; gap: 2px; font-size: max(12px, 0.8em); font-variant-numeric: tabular-nums; }   /* n7: 12 px floor */
 .comp-mem { position: relative; }
 #comp-memcanvas { display: block; width: 100%; }
 .comp-memedit {
@@ -356,13 +356,22 @@ html[data-theme="light"] .comp-ref { background: rgba(252,253,255,0.99); border-
 .comp-ref-body h3 { font-size: 1em; margin: 1.1em 0 0.4em; }
 .comp-ref-body p, .comp-ref-body li { font-size: 0.92em; line-height: 1.5; }
 .comp-ref-body ul { margin: 0.3em 0 0.8em 1.1em; padding: 0; }
-.comp-ref-table { width: 100%; border-collapse: collapse; font-size: 0.82em; margin: 0; display: table; }
+.comp-ref-table { width: 100%; border-collapse: collapse; font-size: max(12px, 0.82em); margin: 0; display: table; }   /* n7: 12 px floor */
 .comp-ref-table th, .comp-ref-table td {
   text-align: left; padding: 2px 6px; border-bottom: 1px solid rgba(127,127,127,0.2);
 }
+.comp-ref-body code { font-size: max(12px, 0.75em); }   /* n7: the theme's 0.75em code is 9.9 px here */
 .comp-ref-table code { font-size: 1em; white-space: nowrap; }
 .comp-ref-credit { margin-top: 1.4em; font-size: 0.85em; opacity: 0.75; }
 @media (max-width: 768px) { .comp-ref { padding-bottom: 7.5rem; } }
+/* m6: on a phone the slide-over covers the bottom-left corner where the
+   site's theme and back circles float; they stand down while it is open
+   (close, Esc or the Reference button bring them back), as Voyage and
+   Keep It Together already do for their sheets */
+@media (max-width: 768px) {
+  body.comp-ref-open #theme-toggle,
+  body.comp-ref-open #life-link { display: none !important; }
+}
 
 /* ---- small screens: keep clear of the floating corner buttons ----
    #theme-toggle and #life-link float over the bottom-left (bottom: 4rem here,

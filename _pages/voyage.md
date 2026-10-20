@@ -17,6 +17,7 @@ description: "An interactive full-screen trip planner by Keane Lucas: real JPL p
   <div class="voy-topfade" aria-hidden="true"></div>
   <canvas id="voy-canvas" class="voy-canvas"
           aria-label="A 3D view of the solar system and the real night sky. Planets sit on their true orbits for today, and every star is a real star at its true position and color. Tap a planet or a star, or use the search box, to plan a trip to it."></canvas>
+  <p id="voy-loading" class="voy-loading" role="status">Loading the sky (under 1 MB)...</p>
 
   <div class="voy-panel" id="voy-panel">
     <div class="voy-panel__head">
@@ -36,13 +37,13 @@ description: "An interactive full-screen trip planner by Keane Lucas: real JPL p
 
       <div class="voy-search-wrap">
         <label class="voy-search-label" for="voy-search">Where do you want to go?</label>
-        <input id="voy-search" class="voy-search" type="text"
+        <input id="voy-search" class="voy-search" type="text" disabled data-voy-boot
                role="combobox" aria-expanded="false" aria-controls="voy-search-list"
                aria-autocomplete="list" autocomplete="off" spellcheck="false"
                placeholder="Mars, Sirius, TRAPPIST-1 e &hellip;">
         <ul id="voy-search-list" class="voy-search-list" role="listbox"
             aria-label="Search results" hidden></ul>
-        <button id="voy-surprise" class="voy-btn voy-surprise" type="button"
+        <button id="voy-surprise" class="voy-btn voy-surprise" type="button" disabled data-voy-boot
                 aria-haspopup="menu" aria-expanded="false"
                 aria-controls="voy-surprise-list">Surprise me</button>
         <ul id="voy-surprise-list" class="voy-search-list voy-surprise-list"
@@ -59,8 +60,8 @@ description: "An interactive full-screen trip planner by Keane Lucas: real JPL p
       </div>
 
       <div class="voy-row">
-        <button id="voy-share" class="voy-btn" type="button">Share link</button>
-        <button id="voy-save" class="voy-btn" type="button">Save image</button>
+        <button id="voy-share" class="voy-btn" type="button" disabled data-voy-boot>Share link</button>
+        <button id="voy-save" class="voy-btn" type="button" disabled data-voy-boot>Save image</button>
       </div>
 
       <details class="voy-details" id="voy-window-details" hidden>
@@ -263,6 +264,27 @@ body.voy-darksky .greedy-nav .visible-links a:focus-visible { outline-color: #82
   z-index: 0; background: transparent;
   touch-action: none;
 }
+/* m35: a slow link spends seconds fetching the scripts before the sky's first
+   frame, and the black canvas beside live-looking controls read as broken.
+   This static line says what is happening; voyage.js removes it on the first
+   painted frame and enables the controls marked data-voy-boot at the same
+   moment. */
+.voy-loading {
+  position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  /* above the panel (30): on a phone the panel stands open over the middle of
+     the screen until voyage.js folds it, and the line has to be seen there */
+  z-index: 35; margin: 0; pointer-events: none; text-align: center;
+  max-width: calc(100vw - 2rem); box-shadow: 0 6px 24px rgba(0,0,0,0.35);
+  white-space: nowrap;   /* left 50% would otherwise shrink-wrap it to half the screen */
+  font-size: 1.05rem; line-height: 1.45;
+  padding: 0.5rem 0.9rem; border-radius: 8px; border: 1px solid rgba(127,127,127,0.25);
+  background: rgba(18,18,18,0.85); color: #d6d6d6;
+}
+html[data-theme="light"] .voy-loading { background: rgba(255,255,255,0.92); color: #3a3a3a; }
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .voy-loading { background: rgba(255,255,255,0.92); color: #3a3a3a; }
+}
+.voy-btn[disabled], .voy-search[disabled] { opacity: 0.55; cursor: default; }
 
 .voy-panel {
   position: fixed; top: 4.6rem; right: 1rem; z-index: 30;

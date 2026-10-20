@@ -119,7 +119,7 @@ can watch it happen in a few seconds.
 .timing-intro { margin: 0.25rem 0 1.1rem; }
 .timing-explainer { max-width: 900px; margin: 1.5rem 0; }
 
-.timing-canvas { width: 100%; height: 340px; display: block; touch-action: none; }
+.timing-canvas { width: 100%; height: 340px; display: block; } /* no pointer handlers: page scrolls normally */
 @media (max-width: 600px) { .timing-canvas { height: 300px; } }
 
 .timing-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.75rem; margin: 1rem 0 0.9rem; }

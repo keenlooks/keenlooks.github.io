@@ -171,6 +171,21 @@ KV, where the Worker serves them exactly as before.
      snapshot older than 45 minutes is the normal state of a quiet night now, and without this hold
      the fallback would call the two volunteer feeds every ten minutes all night: 124 refused rounds,
      744 calls, a day in the simulation).
+  5. *When KV writes fail (2026-10-20, site audit m31).* `dispatch:last` is a KV write, and the free
+     plan caps writes at 1,000 a day for the account. Once the cap is hit that write fails, nothing
+     recorded the dispatch, and every `/planes` poll sent another one. The Worker's fetch handler now
+     keeps an in-memory `ISOLATE_MEMO` `{lastDispatchMs, kvWriteFailedAt}`: the time this isolate last
+     decided to send, and the time a `visit:last` or `dispatch:last` write last failed. A request sends
+     nothing for 25 minutes after either (`MEMO_HOLD_MS`, `memoHold`), and announces no `refresh`
+     from memory (while the cap holds the collector cannot store a sample either). Best effort: each
+     Cloudflare isolate keeps its own memory and loses it when recycled, so a capped day costs at
+     most one dispatch per isolate per 25 minutes instead of one per poll; the hold lifts 25 minutes
+     after the last failed write once writes work again. The memory also stops a second dispatch from
+     the same isolate inside KV's one minute propagation lag. Only the fetch handler passes the memo
+     (`deps.memo`), so the node dev server, the collector and every test harness that builds its own
+     deps behave exactly as before. Test: `_tests/site-fixes-2026-10-20/B9-antenna/tests/t-m31.mjs`
+     (capped all hour: 1 dispatch in 21 polls, was 21; cap lifting at 30 minutes: dispatches at 0, 54,
+     81 and 108 minutes; healthy KV: 0, 27, 54, 81, 108, as before).
   The simulation (`_tests/observatory/antenna-ondemand-2026-10-12/`, fourth pass, 24 hours, two
   one-hour visits, 120 phase and delay combinations, the collector's delay 10 s as measured live to
   240 s): 4 runs a day in 60 combinations (delays 121 and 240 s) and 6 in 60 (10 and 45 s: a third
@@ -307,6 +322,7 @@ no wrangler. The suite lives outside the repo, in the run directory:
 ```
 node _tests/observatory/run1/tests/node/t-antenna.js
 ANT_BREAK=1 node _tests/observatory/run1/tests/node/t-antenna.js   (proves the assertions bite: this run must fail)
+node _tests/site-fixes-2026-10-20/B9-antenna/tests/t-m31.mjs   (the KV write cap: the fetch handler's dispatch memory)
 ```
 
 ## Upstream politeness, licensing and credit

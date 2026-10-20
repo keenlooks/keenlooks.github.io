@@ -528,10 +528,11 @@
      wins, and if even the shortest clips we break it over two lines. The
      adversarial bar is drawn red once the attack flips the label, so the
      wording says grey AND red rather than grey alone. */
+  var CLICK = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ? 'Tap' : 'Click';
   var LEGEND_FORMS = [
-    'confidence: original (blue) vs adversarial (grey, red once fooled). Click a bar to aim the attack at that digit.',
-    'original (blue) vs adversarial (grey, red once fooled). Click a bar to aim the attack.',
-    'original (blue) vs adversarial (grey, red once fooled). Click a bar to aim.',
+    'confidence: original (blue) vs adversarial (grey, red once fooled). ' + CLICK + ' a bar to aim the attack at that digit.',
+    'original (blue) vs adversarial (grey, red once fooled). ' + CLICK + ' a bar to aim the attack.',
+    'original (blue) vs adversarial (grey, red once fooled). ' + CLICK + ' a bar to aim.',
     'original (blue), adversarial (grey, red once fooled)'
   ];
   var LEGEND_WRAP = ['original (blue), adversarial', '(grey, red once fooled)'];

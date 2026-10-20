@@ -4,7 +4,7 @@
    and how fees skim off the top.
    --------------------------------------------------------------------------
    Data: real value-weighted annual returns for 30 industry portfolios,
-   1995–2024 (Ken French Data Library — free to use/redistribute), bundled in
+   1996 to 2025 (Ken French Data Library — free to use/redistribute), bundled in
    diversification-data.js as window.DIVERSIFICATION_DATA.
 
    Simulation: for each portfolio size N (1..30), run many trials. Each trial

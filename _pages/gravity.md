@@ -11,7 +11,8 @@ description: "An interactive full-screen 2D gravity sandbox by Keane Lucas: pick
 <div class="grav-app life-app">
   <div class="grav-topfade" aria-hidden="true"></div>
   <canvas id="grav-canvas" class="grav-canvas"
-          aria-label="A full-screen 2D gravity sandbox: click to drop masses, drag to fling them into orbit; they attract each other and merge on contact."></canvas>
+          aria-label="A full-screen 2D gravity sandbox: click to drop masses, drag to fling them into orbit; they attract each other and merge on contact."
+          data-tap-label="A full-screen 2D gravity sandbox: tap to drop masses, drag to fling them into orbit; they attract each other and merge on contact."></canvas>
 
   <div class="grav-panel" id="grav-panel">
     <div class="grav-panel__head">
@@ -45,15 +46,15 @@ description: "An interactive full-screen 2D gravity sandbox by Keane Lucas: pick
       <p class="grav-status-line"><span id="grav-status">0 bodies</span></p>
 
       <p class="grav-blurb">
-        Pick a <strong>mass</strong>, then <strong>click</strong> empty space to drop a body,
-        or <strong>drag and release</strong> to fling it into orbit. <strong>Click an existing body</strong>
-        to retarget its velocity (drag to aim, or click without dragging to stop it). Everything pulls on
+        Pick a <strong>mass</strong>, then <strong data-tap="tap">click</strong> empty space to drop a body,
+        or <strong>drag and release</strong> to fling it into orbit. <strong data-tap="Tap an existing body">Click an existing body</strong>
+        to retarget its velocity (drag to aim, or <span data-tap="tap">click</span> without dragging to stop it). Everything pulls on
         everything else; bodies that collide <strong>merge</strong>. Tip: drop one heavy "sun," then lower
         the mass and fling light planets around it.
       </p>
       <p class="grav-edu">Every pair attracts with F = G&middot;m&#8321;&middot;m&#8322;/r&sup2;.</p>
       <p class="grav-hint">
-        <strong>Click a body</strong>: retarget / stop it &middot; <strong>Right-click</strong> (or press and hold) a body: delete &middot;
+        <strong data-tap="Tap a body">Click a body</strong>: retarget / stop it &middot; <strong>Right-click</strong> (or press and hold) a body: delete &middot;
         <strong>Right-drag</strong>: pan &middot; <strong>Scroll / pinch</strong>: zoom &middot;
         <strong>Space</strong>: pause &middot; <strong>R</strong>: reset view
       </p>

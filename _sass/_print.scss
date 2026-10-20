@@ -16,3 +16,48 @@
     display: none;
   }
 }
+
+/*
+   Site chrome added on top of the theme: fixed widgets, the ambient Game of
+   Life canvas and the command palette would print over the text on every
+   page, and the sidebar portrait filled most of page one. Print always uses
+   the light palette (dark text on white), whatever the screen theme.
+   ========================================================================== */
+
+@media print {
+  #chat-widget,
+  #theme-toggle,
+  #life-link,
+  #life-egg,
+  #gol-bg,
+  .cmdk,
+  .skip-link,
+  .author__urls-wrapper {
+    display: none !important;
+  }
+
+  .author__avatar img {
+    max-width: 96px !important;
+    max-height: 96px !important;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+    color: #111 !important;
+  }
+
+  *,
+  *::before,
+  *::after {
+    color: #111 !important;
+    background-color: transparent !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+
+  a,
+  a:visited {
+    color: #25406b !important;
+  }
+}

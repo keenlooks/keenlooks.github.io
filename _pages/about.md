@@ -10,23 +10,23 @@ redirect_from:
 ---
 
 <div class="callout">
-  <span class="callout__label">New!</span>
-  <span class="callout__text">Latest post: <a href="https://red.anthropic.com/2026/n-days/">Measuring LLMs' Impact on N-day Exploits</a></span>
+  <span class="callout__label">Jun 2026</span>
+  <span class="callout__text">Latest post: <a href="https://www.anthropic.com/research/n-days">Measuring LLMs' Impact on N-day Exploits</a></span>
 </div>
 
 <div class="callout">
-  <span class="callout__label">New!</span>
-  <span class="callout__text"><a href="https://keanelucas.com/talks/2025-08-09-claude-climbing-a-ctf-scoreboard-near-you">Talk</a> featured in <a href="https://media.defcon.org/DEF%20CON%2033/DEF%20CON%2033%20Hackers'%20Almanack.pdf">DEF CON 33 Hackers' Almanack</a></span>
+  <span class="callout__label">Feb 2026</span>
+  <span class="callout__text"><a href="/talks/2025-08-09-claude-climbing-a-ctf-scoreboard-near-you">Talk</a> featured in <a href="https://media.defcon.org/DEF%20CON%2033/DEF%20CON%2033%20Hackers'%20Almanack.pdf">DEF CON 33 Hackers' Almanack</a></span>
 </div>
 
-Hello! I am part of [Anthropic](https://www.anthropic.com/)'s Frontier [Red](https://red.anthropic.com/) Team, where I [evaluate](https://red.anthropic.com/2025/cyber-toolkits/), [improve](https://red.anthropic.com/2025/ai-for-cyber-defenders/), and [talk about](/talks/2025-08-09-claude-climbing-a-ctf-scoreboard-near-you) large language models' (LLMs') cyber capabilities to help ensure their safe and robust development.
+Hello! I am part of [Anthropic](https://www.anthropic.com/)'s Frontier [Red](https://www.anthropic.com/research/team/frontier-red-team) Team, where I [evaluate](https://www.anthropic.com/research/cyber-toolkits), [improve](https://www.anthropic.com/research/building-ai-cyber-defenders), and [talk about](/talks/2025-08-09-claude-climbing-a-ctf-scoreboard-near-you) large language models' (LLMs') cyber capabilities to help ensure their safe and robust development.
 
 Before joining Anthropic, I completed my PhD at [Carnegie Mellon University (CMU)](https://www.cmu.edu/) studying under [Lujo Bauer](https://users.ece.cmu.edu/~lbauer/) in [CyLab](https://www.cylab.cmu.edu/), additionally earning an MS in [Machine Learning](https://www.ml.cmu.edu/). My projects involved [machine learning for malware detection](/publications/2021-06-07-malware-makeover-breaking-ml-based-static-analysis-by-modifying-executable-bytes), [cooperative reinforcement learning](/publications/2022-05-11-anyplay-an-intrinsic-augmentation-for-zero-shot-coordination), and [robust machine learning](/publications/2023-08-09-adversarial-training-for-raw-binary-malware-classifiers).
 
-Originally from [Alaska](https://www.frontiersman.com/news/trio-of-valley-students-graduate-together-from-u-s-air-force-academy/article_e0b6e5de-edad-11e3-98fc-001a4bcf887a.html), I [graduated](https://youtu.be/tCckScbNfq8?t=88) from the [US Air Force Academy](https://www.usafa.edu/) with a BS in Computer Science and from CMU [INI](https://www.cmu.edu/ini/) with an MS in [Information Security](https://www.cmu.edu/ini/academics/msis/index.html). After [serving](https://www.dvidshub.net/video/330646/usafa-team-competes-nsa-cyberdefense-exercise) in [several](https://www.wired.com/story/national-guards-fire-mapping-drones-get-ai-upgrade/) [unique](https://www.jpl.nasa.gov/) [roles](https://www.ai.mil/) in the Air Force, I separated as a Captain (O3) to pursue a PhD as an [NDSEG Fellow](https://ndseg.sysplus.com/).
+Originally from [Alaska](https://www.frontiersman.com/trio-of-valley-students-graduate-together-from-u-s-air-force-academy/), I [graduated](https://youtu.be/tCckScbNfq8?t=88) from the [US Air Force Academy](https://www.usafa.edu/) with a BS in Computer Science and from CMU [INI](https://www.cmu.edu/ini/) with an MS in [Information Security](https://www.cmu.edu/ini/academics/msis/index.html). After [serving](https://www.dvidshub.net/video/330646/usafa-team-competes-nsa-cyberdefense-exercise) in [several](https://www.wired.com/story/national-guards-fire-mapping-drones-get-ai-upgrade/) [unique](https://www.jpl.nasa.gov/) [roles](https://www.ai.mil/) in the Air Force, I separated as a Captain (O3) to pursue a PhD as an [NDSEG Fellow](https://ndseg.sysplus.com/).
 
 <div class="home-strip">
-  <p class="home-strip__lead">The small demos and tools on the <a href="/fun/">Fun page</a> are an ongoing exercise in seeing what <a href="https://claude.com/claude-code">Claude</a> can build autonomously; I supply ideas, direction, and review, and Claude writes the code. A few of the results:</p>
+  <p class="home-strip__lead">The small demos and tools on the <a href="/fun/">Fun page</a> are an ongoing exercise in seeing what <a href="https://claude.com/product/claude-code">Claude</a> can build; I supply ideas, direction, and review, and Claude writes most of the code. A few of the results:</p>
   <div class="home-strip__grid">
     <a class="xp-card" href="/lander/">
       <div class="xp-card__art" aria-hidden="true" data-thumb="lander">
@@ -57,34 +57,37 @@ Originally from [Alaska](https://www.frontiersman.com/news/trio-of-valley-studen
       <span class="home-strip__desc">Free private PDF merging, splitting, and signing, entirely in your browser. Nothing is uploaded.</span>
     </a>
   </div>
-  <p class="home-strip__note">There is more on the <a href="/fun/">Fun page</a>, including <a href="/adversarial/">fooling a neural network</a>, a <a href="/transformer/">tiny transformer</a>, <a href="/hash/">hash collisions</a>, a <a href="/gravity/">gravity sandbox</a>, <a href="/bonds/">bonds and interest rates</a>, a playable <a href="/life/">Game of Life</a>, and <a href="/imagetools/">Image Studio</a> for quick image edits.</p>
+  <p class="home-strip__note">There is more on the <a href="/fun/">Fun page</a>, including <a href="/observatory/">the Observatory</a> (a live Earth drawn from public instruments), <a href="/adversarial/">fooling a neural network</a>, a <a href="/transformer/">tiny transformer</a>, <a href="/hash/">hash collisions</a>, a <a href="/gravity/">gravity sandbox</a>, <a href="/bonds/">bonds and interest rates</a>, a playable <a href="/life/">Game of Life</a>, and <a href="/imagetools/">Image Studio</a> for quick image edits.</p>
 </div>
 
 ## Research & Writing
 
-My most recent contributions are on [Anthropic's Frontier Red Team blog](https://red.anthropic.com/), where we regularly post about our work measuring, projecting, and improving frontier LLM capabilities:
+My most recent contributions are on [Anthropic's Frontier Red Team blog](https://www.anthropic.com/research/team/frontier-red-team), where we regularly post about our work measuring, projecting, and improving frontier LLM capabilities:
 
-- **[Measuring LLMs' Impact on N-day Exploits](https://red.anthropic.com/2026/n-days/)** - How well frontier models can develop exploits for publicly disclosed but unpatched vulnerabilities (Mythos Preview reproduced a SpiderMonkey/Firefox PoC crash in about 12 minutes)
-- **[Measuring LLMs' Ability to Develop Exploits](https://red.anthropic.com/2026/exploit-evals/)** - Benchmarks (ExploitBench, ExploitGym, SCONE-bench) for measuring how well frontier models build end-to-end software and smart-contract exploits
-- **[Assessing Claude Mythos Preview's Cybersecurity Capabilities](https://red.anthropic.com/2026/mythos-preview/)** - Evaluating a frontier model's ability to autonomously discover and exploit zero-day and N-day vulnerabilities across operating systems, browsers, and libraries
-- **[Partnering with Mozilla to Improve Firefox's Security](https://red.anthropic.com/2026/firefox/)** - A collaboration with Mozilla in which Claude Opus 4.6 found 22 vulnerabilities in Firefox
-- **[Reverse Engineering Claude's CVE-2026-2796 Exploit](https://red.anthropic.com/2026/exploit/)** - A technical deep dive into an exploit Claude developed for a Firefox vulnerability
-- **[LLM-discovered 0-days](https://red.anthropic.com/2026/zero-days/)** - Claude found 500+ high-severity vulnerabilities in open-source projects
-- **[AI Models on Realistic Cyber Ranges](https://red.anthropic.com/2026/cyber-toolkits-update/)** - Claude succeeds at multistage network attacks using only standard tools
-- **[AI to Defend Critical Infrastructure](https://red.anthropic.com/2026/critical-infrastructure-defense/)** - Partnership with PNNL exploring AI-accelerated defense
-- **[AI for Cyber Defenders](https://red.anthropic.com/2025/ai-for-cyber-defenders/)** - Building defensive cybersecurity capabilities
-- **[Claude in Cyber Competitions](https://red.anthropic.com/2025/cyber-competitions/)** - Evaluating Claude's performance in CTF competitions (the subject of my [DEF CON talk](/talks/2025-08-09-claude-climbing-a-ctf-scoreboard-near-you))
-- **[Cyber Toolkits](https://red.anthropic.com/2025/cyber-toolkits/)** - An awesome collaboration with [Brian Singer](https://www.brianhacks.com/) on [measuring LLMs' network attack capabilities](https://engineering.cmu.edu/news-events/news/2025/07/24-when-llms-autonomously-attack.html).
+- **[Measuring LLMs' Impact on N-day Exploits](https://www.anthropic.com/research/n-days)** - How well frontier models can develop exploits for publicly disclosed but unpatched vulnerabilities (Mythos Preview reproduced a SpiderMonkey/Firefox PoC crash in about 12 minutes)
+- **[Measuring LLMs' Ability to Develop Exploits](https://www.anthropic.com/research/exploit-evals)** - Benchmarks (ExploitBench, ExploitGym, SCONE-bench) for measuring how well frontier models build end-to-end software and smart-contract exploits
+- **[Assessing Claude Mythos Preview's Cybersecurity Capabilities](https://www.anthropic.com/research/mythos-preview)** - Evaluating a frontier model's ability to autonomously discover and exploit zero-day and N-day vulnerabilities across operating systems, browsers, and libraries
+- **[Partnering with Mozilla to Improve Firefox's Security](https://www.anthropic.com/news/mozilla-firefox-security)** - A collaboration with Mozilla in which Claude Opus 4.6 found 22 vulnerabilities in Firefox
+- **[Reverse Engineering Claude's CVE-2026-2796 Exploit](https://www.anthropic.com/research/exploit)** - A technical deep dive into an exploit Claude developed for a Firefox vulnerability
+- **[LLM-discovered 0-days](https://www.anthropic.com/research/zero-days)** - Claude found 500+ high-severity vulnerabilities in open-source projects
+- **[AI Models on Realistic Cyber Ranges](https://www.anthropic.com/research/cyber-toolkits-update)** - Claude succeeds at multistage network attacks using only standard tools
+- **[AI to Defend Critical Infrastructure](https://www.anthropic.com/research/critical-infrastructure-defense)** - Partnership with PNNL exploring AI-accelerated defense
+- **[AI for Cyber Defenders](https://www.anthropic.com/research/building-ai-cyber-defenders)** - Building defensive cybersecurity capabilities
+- **[Claude in Cyber Competitions](https://www.anthropic.com/research/cyber-competitions)** - Evaluating Claude's performance in CTF competitions (the subject of my [DEF CON talk](/talks/2025-08-09-claude-climbing-a-ctf-scoreboard-near-you))
+- **[Cyber Toolkits](https://www.anthropic.com/research/cyber-toolkits)** - An awesome collaboration with [Brian Singer](https://www.brianhacks.com/) on [measuring LLMs' network attack capabilities](https://engineering.cmu.edu/news-events/news/2025/07/24-when-llms-autonomously-attack.html).
 
 **Recent Media Coverage:**
 - DEF CON 33 Hackers' Almanack: [First featured talk](https://media.defcon.org/DEF%20CON%2033/DEF%20CON%2033%20Hackers'%20Almanack.pdf) (Feb 2026)
 - Axios: [Claude Opus 4.6 uncovers 500 zero-day flaws](https://www.axios.com/2026/02/05/anthropic-claude-opus-46-software-hunting) (Feb 2026)
 - Axios: [PNNL makes key AI cyber defense breakthrough](https://www.axios.com/2026/01/13/pacific-northwest-national-lab-ai-cyber-defense) (Jan 2026)
 - Fortune: [Inside Anthropic's 'Red Team'](https://fortune.com/2025/09/04/anthropic-red-team-pushes-ai-models-into-the-danger-zone-and-burnishes-companys-reputation-for-safety/) (Sept 2025)
-- AI Side Notes: [Meet the Anthropic team breaking its own AI models](https://sharongoldman.substack.com/p/meet-the-anthropic-team-breaking) (Sept 2025)
+- Ground Level AI: [Meet the Anthropic team breaking its own AI models](https://www.groundlevel-ai.com/p/meet-the-anthropic-team-breaking) (Sept 2025)
 - Axios: [Claude AI takes on human hackers](https://www.axios.com/2025/08/05/anthropic-claude-ai-hacker-competitions-def-con) (Aug 2025)
 
-![](images/holdinghands_northernlights.jpg)
+<p class="home-photo"><picture>
+  <source srcset="/images/holdinghands_northernlights-1200.webp" type="image/webp">
+  <img src="/images/holdinghands_northernlights-1200.jpg" width="1200" height="800" loading="lazy" decoding="async" alt="Two people holding hands under a starry sky, with a faint green aurora over snowy mountains">
+</picture></p>
 
 <style>
 /* Homepage "interactive work" strip: a compact variant of the Fun hub cards.
@@ -161,7 +164,7 @@ My most recent contributions are on [Anthropic's Frontier Red Team blog](https:/
   .home-strip .xp-card__art { height: 72px; }
   .home-strip .xp-card__art svg { width: 28px; height: 28px; }
   .home-strip .home-strip__title { font-size: 0.76rem; padding: 0.32rem 0.4rem 0.1rem; }
-  .home-strip .home-strip__desc { font-size: 0.7rem; padding: 0 0.45rem 0.45rem; }
+  .home-strip .home-strip__desc { font-size: max(12px, 0.7rem); padding: 0 0.45rem 0.45rem; }
 }
 /* Light-theme accent on hover, in BOTH the manual and auto contexts. */
 html[data-theme="light"] .home-strip .xp-card:hover,

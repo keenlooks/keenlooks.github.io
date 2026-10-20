@@ -56,7 +56,11 @@
   }
 
   function num(v, lo, hi, def) {
-    v = (typeof v === 'number') ? v : parseFloat(v);
+    /* Only numbers and numeric strings: parseFloat on a decoded object such
+       as {"toString":"x"} throws ("Cannot convert object to primitive"),
+       which killed the gadget's restore. Anything else gets the default. */
+    if (typeof v === 'string') v = parseFloat(v);
+    else if (typeof v !== 'number') return def;
     if (!isFinite(v)) return def;
     return v < lo ? lo : (v > hi ? hi : v);
   }

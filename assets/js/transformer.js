@@ -621,11 +621,13 @@
       elPanel.classList.toggle('tt-panel--collapsed', c);
       elCollapse.textContent = c ? '+' : '–';
       elCollapse.setAttribute('aria-label', c ? 'Show controls' : 'Hide controls');
+      elCollapse.setAttribute('aria-expanded', c ? 'false' : 'true');
     };
     elCollapse.addEventListener('click', function () {
       setCollapsed(!elPanel.classList.contains('tt-panel--collapsed'));
     });
-    if (window.innerWidth < 600) setCollapsed(true);
+    /* narrow, or short (a phone in landscape): start collapsed */
+    setCollapsed(window.innerWidth < 600 || window.innerHeight < 500);
   }
 
   /* ---- theme / resize / visibility ---- */

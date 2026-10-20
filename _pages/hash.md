@@ -1,17 +1,17 @@
 ---
 layout: single
-title: "Hash Avalanche"
+title: "Hashes & Collisions"
 permalink: /hash/
 og_image: /images/og/hash.png
 author_profile: false
-excerpt: "Watch SHA-256's avalanche effect: change one character, flip half the bits."
-description: "An interactive SHA-256 avalanche-effect visualizer by Keane Lucas: the digest is drawn as a 16×16 grid of bits, and changing a single character of the message flips roughly half of them, the property that makes cryptographic hashes useful."
+excerpt: "Find a real CRC32 collision in a fraction of a second, then watch SHA-256's avalanche effect: change one character, flip half the bits."
+description: "An interactive hash demo by Keane Lucas: a live birthday search finds two inputs with the same CRC32 checksum in a fraction of a second, and the avalanche view draws SHA-256's digest as a 16×16 grid of bits, where changing a single character of the message flips roughly half of them."
 ---
 
 <div class="hash-app life-app">
   <div class="hash-topfade" aria-hidden="true"></div>
   <canvas id="hash-canvas" class="hash-canvas"
-          aria-label="A 16 by 16 grid showing the 256 bits of the message's SHA-256 digest; changed bits flash when the message changes."></canvas>
+          aria-label="A live CRC32 collision search: each dot is one input's 32-bit checksum, plotted until two different inputs share one."></canvas>
 
   <div class="hash-panel" id="hash-panel">
     <div class="hash-panel__head">
@@ -142,10 +142,11 @@ html[data-theme="light"] .hash-panel { background: rgba(255,255,255,0.97); borde
   border-radius: 6px; padding: 0.45em 0.7em; transition: background 0.15s ease;
 }
 .hash-view:hover { background: rgba(127,127,127,0.26); }
-.hash-view--on { background: #82a6cc; border-color: #82a6cc; color: #fff; }
-html[data-theme="light"] .hash-view--on { background: #34568a; border-color: #34568a; }
+/* dark text on the light accent fill (7.26:1; white was 2.53:1), white on the light theme's navy */
+.hash-view--on { background: #82a6cc; border-color: #82a6cc; color: #141414; }
+html[data-theme="light"] .hash-view--on { background: #34568a; border-color: #34568a; color: #fff; }
 @media (prefers-color-scheme: light) {
-  html:not([data-theme="dark"]) .hash-view--on { background: #34568a; border-color: #34568a; }
+  html:not([data-theme="dark"]) .hash-view--on { background: #34568a; border-color: #34568a; color: #fff; }
 }
 .hash-note { font-size: 0.85em; opacity: 0.85; }
 .hash-note summary { cursor: pointer; opacity: 0.9; }

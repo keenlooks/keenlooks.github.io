@@ -26,8 +26,9 @@
 .callout__label {
   flex: 0 0 auto;
   padding: 0.22em 0.62em;
-  font-size: 0.68em;
+  font-size: unquote("max(12px, 0.68em)"); /* 12 px floor (it was 10.3 px on phones) */
   font-weight: 700;
+  white-space: nowrap;
   letter-spacing: 0.07em;
   text-transform: uppercase;
   border-radius: 999px;

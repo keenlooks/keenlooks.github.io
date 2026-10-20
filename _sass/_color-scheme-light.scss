@@ -94,7 +94,30 @@
     border-top: 1px solid $lt-border;
     a { color: inherit; }
     .fa { color: $lt-muted; }
+    .site-footer__heading { color: $lt-muted; }
   }
+
+  /* Section headings (the theme's .page__content h2 hairline) and the Fun
+     hub card titles that copy it: the dark-palette #3d3d3d rule reads as a
+     heavy dark line on white. */
+  .page__content h2,
+  .xp-card__title { border-bottom-color: $lt-border; }
+
+  /* /fun/ jump row (end of _page.scss) */
+  .xp-jump a:hover,
+  .xp-jump a:focus-visible { color: $lt-link; border-color: $lt-link; }
+
+  /* Inline BibTeX box (end of _page.scss) */
+  .bibtex-box pre { background: $lt-surface; border-color: $lt-border; }
+  .bibtex-box__copy { background: $lt-bg; border-color: $lt-border; }
+
+  /* Dates and read times under list titles (the theme's grey is 2.6:1 on white) */
+  .page__meta { color: $lt-muted; }
+
+  /* Tool credit lines (see the end of _page.scss) */
+  .page__content .pt-credit,
+  .page__content .qs-credit,
+  .page__content .df-credit { color: $lt-muted; }
 
   /* Misc borders */
   .page__content {
@@ -138,7 +161,11 @@
 
 /* The page background lives on <html>, which can't be nested under an
    html[...] selector, so set it explicitly in each context. */
-@mixin light-bg { background-color: #ffffff; }
+@mixin light-bg { background-color: #ffffff; color-scheme: light; }
+
+/* Native controls (checkboxes, radios, scrollbars, date pickers) follow the
+   page theme: dark is the compiled base; light-bg above switches it back. */
+html { color-scheme: dark; }
 
 /* 1) Manual: visitor chose light via the toggle */
 html[data-theme="light"] { @include light-bg; }
@@ -198,6 +225,14 @@ html[data-theme="light"] { @include light-scheme; }
 @media screen and (max-width: 768px) {
   #theme-toggle,
   #life-link { bottom: 4rem; }
+}
+
+/* Phones: head/custom.html tucks the theme button away while the page scrolls
+   down (it sits over the reading column) or while it would cover a slider. */
+#theme-toggle.is-tucked {
+  opacity: 0;
+  transform: translateY(0.75rem) scale(0.9);
+  pointer-events: none;
 }
 
 /* ==========================================================================

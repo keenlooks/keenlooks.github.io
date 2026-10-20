@@ -13,14 +13,15 @@ description: "An interactive transformer demo by Keane Lucas: a small character-
 
   <div class="tt-stage" id="tt-stage">
     <div id="tt-text" class="tt-text"
-         aria-label="Generated text. Click any character to see the attention snapshot recorded when it was written."></div>
+         aria-label="Generated text. Click any character to see the attention snapshot recorded when it was written."
+         data-tap-label="Generated text. Tap any character to see the attention snapshot recorded when it was written."></div>
 
     <div class="tt-go-row">
       <button id="tt-go2" class="tt-btn tt-btn--primary" type="button">Generate</button>
     </div>
 
     <div class="tt-bars-wrap">
-      <p class="tt-caption">next character · click a bar to force it</p>
+      <p class="tt-caption">next character · <span data-tap="tap">click</span> a bar to force it</p>
       <div id="tt-bars" class="tt-bars" aria-label="Top ten next-character candidates with probabilities"></div>
     </div>
 
@@ -58,8 +59,8 @@ description: "An interactive transformer demo by Keane Lucas: a small character-
         <input id="tt-len" type="range" min="50" max="500" step="10" value="200"></label>
 
       <p class="tt-hint">
-        <strong>Click a probability bar</strong> to force that character on the model.
-        <strong>Click any character</strong> it has written to see the attention from the moment
+        <strong data-tap="Tap a probability bar">Click a probability bar</strong> to force that character on the model.
+        <strong data-tap="Tap any character">Click any character</strong> it has written to see the attention from the moment
         it was chosen. Low temperature plays the favorite every time; high temperature gambles.
       </p>
 
@@ -248,6 +249,12 @@ html[data-theme="light"] .tt-slider input[type="range"] { accent-color: #34568a;
 @media (max-width: 599px) {
   .tt-stage { padding-top: 8.75rem; }
 }
+/* Under a coarse pointer the collapse toggle is touch-sized (40px), which
+   makes the collapsed head end near 9.06rem instead of 8.25rem; keep the same
+   half-rem gap above the text card. */
+@media (max-width: 599px) and (pointer: coarse) {
+  .tt-stage { padding-top: 9.6rem; }
+}
 /* With the panel collapsed on a phone, Generate would be hidden behind the +
    toggle, so the stage carries its own copy of the button under the text.
    Hidden from 600px up, where the open panel already shows Generate. */
@@ -276,6 +283,7 @@ html[data-theme="light"] .tt-slider input[type="range"] { accent-color: #34568a;
 }
 </style>
 
+<script defer src="{{ '/assets/js/gadget-ui.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/transformer-model.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/transformer.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/editable-values.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>

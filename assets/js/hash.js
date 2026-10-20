@@ -36,20 +36,34 @@
   var elBlurb = id('hash-blurb'), elHint = id('hash-hint'), elTitle = id('hash-title');
   var TITLES = { result: 'Hash Avalanche', collide: 'Hash Collisions' };
   var BLURBS = {
-    result: 'Change one letter of the message and about half of SHA-256’s 256 output bits flip. That is the avalanche effect: from two hashes you cannot tell how similar the inputs were. Click the grid (or the button) to change a character.',
+    result: 'Change one letter of the message and about half of SHA-256’s 256 output bits flip. That is the avalanche effect: from two hashes you cannot tell how similar the inputs were. ' +
+      ((window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ? 'Tap' : 'Click') +
+      ' the grid (or the button) to change a character.',
     collide: 'A good hash makes it infeasible to find two inputs with the same output. CRC32, a real checksum used everywhere (ZIP, PNG, Ethernet), is only 32 bits and was never built to resist that, so a birthday search turns up two inputs with the same checksum in a fraction of a second.'
   };
   var HINTS = {
     result: 'Each square is one output bit. Changed bits flash as you edit.',
     collide: 'Each dot is one input’s 32-bit CRC. Press “Find a collision” to search.'
   };
+  /* the canvas's accessible name describes the view actually drawn */
+  var LABELS = {
+    result: 'A 16 by 16 grid showing the 256 bits of the message\u2019s SHA-256 digest; changed bits flash when the message changes.',
+    collide: 'A live CRC32 collision search: each dot is one input\u2019s 32-bit checksum, plotted until two different inputs share one.'
+  };
   function setText() {
     if (elTitle) elTitle.textContent = TITLES[view];   /* the panel names the view you're in */
+    canvas.setAttribute('aria-label', LABELS[view]);
     if (elBlurb) elBlurb.textContent = BLURBS[view];
     if (elHint) elHint.textContent = HINTS[view];
   }
   var W = 0, H = 0, dpr = 1, raf = null;
   var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  /* Under a coarse pointer the panel's collapse toggle is touch-sized (40px),
+     so the collapsed panel ends near y 145 instead of 132. The collide view's
+     header, ticker and scatter top all drop by TOP_DROP there to keep a gap
+     below it (the header stays well clear of the nav, gotcha 6). */
+  var TOP_DROP = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ? 12 : 0;
+  var HEAD_Y = 146 + TOP_DROP, TICK_Y = 172 + TOP_DROP;
   var seq = 0;
 
   /* ===== CRC32 (standard table-based) ===== */
@@ -112,7 +126,15 @@
      scatter ending above it so the two never stack. */
   function resultTop() { return H - Math.max(104, cornerBand + 58); }
   /* keep the scatter clear of the top nav, the top-right controls panel, and the bottom result text */
-  function plotBounds() { return { x0: 24, x1: (W > 700 ? W - 360 : W - 24), y0: 180, y1: resultTop() - 36 }; }
+  /* The live ticker is drawn at y 172 (up to 16 px tall), so the scatter
+     starts below it, at y 196, instead of under it (all plus TOP_DROP). On a short screen (a
+     phone in landscape) that would leave no plot at all, so there the ticker
+     is dropped and the plot keeps the old top, and it never inverts. */
+  function tickerRoom() { return resultTop() - 36 - (196 + TOP_DROP) >= 100; }
+  function plotBounds() {
+    var y1 = resultTop() - 36, y0 = (tickerRoom() ? 196 : 180) + TOP_DROP;
+    return { x0: 24, x1: (W > 700 ? W - 360 : W - 24), y0: y0, y1: Math.max(y0 + 12, y1) };
+  }
   function ptX(crc) { var b = plotBounds(); return b.x0 + (crc & 0xffff) / 0xffff * (b.x1 - b.x0); }
   function ptY(crc) { var b = plotBounds(); return b.y0 + ((crc >>> 16) & 0xffff) / 0xffff * (b.y1 - b.y0); }
   var SALT = 'abcdefghijklmnopqrstuvwxyz0123456789';
@@ -252,13 +274,13 @@
     var head = found
       ? 'Collision found after ' + found.tries.toLocaleString() + ' inputs'
       : (searching ? 'Searching… ' + tries.toLocaleString() + ' distinct inputs tried' : 'CRC32 collision search');
-    ctx.fillText(head, W / 2, 146);                 /* clear of the top nav / vignette */
+    ctx.fillText(head, W / 2, HEAD_Y);              /* clear of the top nav / vignette */
 
     /* live ticker: the input being hashed right now and the value it maps to */
-    if (searching && lastTried) {
+    if (searching && lastTried && tickerRoom()) {
       ctx.font = Math.max(12, Math.min(16, W / 60)) + 'px ui-monospace, SFMono-Regular, Consolas, monospace';
       ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.fillStyle = textColor(0.6);
-      ctx.fillText('hashing  "' + lastTried.s + '"  →  0x' + hex32(lastTried.c), W / 2, 172);
+      ctx.fillText('hashing  "' + lastTried.s + '"  →  0x' + hex32(lastTried.c), W / 2, TICK_Y);
     }
 
     if (found) {
@@ -294,7 +316,7 @@
          instruction fully below the header line, never overlapping it */
       ctx.font = Math.max(13, W / 64) + 'px "Source Sans 3", system-ui, sans-serif';
       ctx.fillStyle = textColor(0.55); ctx.textBaseline = 'top';
-      ctx.fillText('Press “Find a collision”: each dot is one input’s 32-bit CRC.', W / 2, 146 + headFs * 1.6);
+      ctx.fillText('Press “Find a collision”: each dot is one input’s 32-bit CRC.', W / 2, HEAD_Y + headFs * 1.6);
     }
   }
 

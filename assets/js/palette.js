@@ -195,9 +195,13 @@
     return e;
   }
 
+  /* Sets e._weak when some query word matched only as a scattered
+     subsequence of the title (no prefix, substring or desc/keys hit), so
+     queryResults can drop those hits when real matches exist. */
   function scoreEntry(e, words) {
     prep(e);
     var total = 0;
+    e._weak = false;
     for (var i = 0; i < words.length; i++) {
       var w = words[i], s = 0;
       var pre = false;
@@ -212,10 +216,12 @@
       } else if (subseq(e._t, w)) {
         s = 5;
       }
+      var subOnly = (s === 5);
       /* desc + keys, lower weight than the title */
-      if (e._h.indexOf(' ' + w) >= 0) s += 8;
-      else if (e._h.indexOf(w) >= 0) s += 4;
+      if (e._h.indexOf(' ' + w) >= 0) { s += 8; subOnly = false; }
+      else if (e._h.indexOf(w) >= 0) { s += 4; subOnly = false; }
       if (s === 0) return 0; /* every query word must match somewhere */
+      if (subOnly) e._weak = true;
       total += s;
     }
     return total;
@@ -224,7 +230,7 @@
   function secOf(e) {
     if (e.kind === 'fun') return SEC_FUN;
     if (e.kind === 'pub' || e.kind === 'talk') return SEC_PUBS;
-    if (e.kind === 'action') return SEC_ACTIONS;
+    if (e.kind === 'action' || e.kind === 'contact') return SEC_ACTIONS;
     if (e.kind === 'recent') return SEC_RECENT;
     return SEC_PAGES;
   }
@@ -274,10 +280,18 @@
     if (!words.length) return emptyResults();
     var scored = [];
     var all = (index || []).concat(ACTIONS);
+    var strong = 0;
     for (var i = 0; i < all.length; i++) {
       var s = scoreEntry(all[i], words);
-      if (s > 0) scored.push({ e: all[i], s: s });
+      if (s > 0) {
+        scored.push({ e: all[i], s: s, weak: all[i]._weak });
+        if (!all[i]._weak) strong++;
+      }
     }
+    /* Prefer real matches: "resume" should find the CV (its keys), not
+       every title that happens to contain r, e, s, u, m, e in order. The
+       scattered-letter hits stay only when nothing better matched. */
+    if (strong) scored = scored.filter(function (x) { return !x.weak; });
     scored.sort(function (a, b) {
       if (b.s !== a.s) return b.s - a.s;
       return a.e.title.length - b.e.title.length;
@@ -434,7 +448,9 @@
     });
   }
 
-  function open() {
+  /* open(prefill): an optional query string fills the box (the 404 page's
+     "Search this site" button passes the missing page's last path segment). */
+  function open(prefill) {
     if (isOpen) return;
     build();
     isOpen = true;
@@ -446,7 +462,7 @@
     document.body.style.overflow = 'hidden';
     if (sw > 0) document.body.style.paddingRight = sw + 'px';
     wrap.hidden = false;
-    input.value = '';
+    input.value = (typeof prefill === 'string') ? prefill : '';
     refresh();
     input.focus();
     if (window.requestAnimationFrame) {
@@ -455,10 +471,19 @@
       });
     }
     if (index === null && !indexP) {
+      /* A failed fetch (offline, or a 404 or HTML page mid-deploy) leaves the
+         index unloaded and the promise cleared, so the next open tries again
+         instead of showing an empty palette until a reload. */
       indexP = fetch(INDEX_URL)
-        .then(function (r) { return r.json(); })
-        .then(function (a) { index = (a instanceof Array) ? a : []; })
-        .catch(function () { index = []; })
+        .then(function (r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.json();
+        })
+        .then(function (a) {
+          if (!(a instanceof Array)) throw new Error('bad index');
+          index = a;
+        })
+        .catch(function () { index = null; indexP = null; })
         .then(function () { if (isOpen) refresh(); });
     }
   }

@@ -16,7 +16,9 @@
  *   3. Free-plan budgets are respected: at most one KV write per key per cron, the TFR write
  *      is skipped when the payload is unchanged (since the fourth pass, an unchanged list still
  *      rewrites its `checked` time once per cron), and subrequests are counted.
- *   4. No side effects at module scope beyond constant and function declarations.
+ *   4. No side effects at module scope beyond constant and function declarations. (2026-10-20: one
+ *      constant object, ISOLATE_MEMO, is written by the request path at run time, never at load; only
+ *      the Workers fetch handler passes it in, so every test and the dev server run without it.)
  *
  * Upstream politeness and licensing (see README.md for the full text):
  *   adsb.lol data is ODbL 1.0, adsb.fi is free for personal non-commercial use and requires a
@@ -1540,6 +1542,42 @@ export const VISIT_RECENT_MS = 25 * 60 * 1000;
 /* a dispatch younger than this, answered 204, with no snapshot newer than it, is "in flight" */
 export const REFRESH_INFLIGHT_MS = 4 * 60 * 1000;
 
+/* 2026-10-20 (site audit m31): dispatch:last is the only record of a dispatch, and it is a KV write. Once
+   the namespace's daily write cap (1,000 on the free plan) is hit, that write fails, nothing records the
+   dispatch, and every /planes poll sent another one. The isolate now remembers, in memory, when it last
+   decided to send (lastDispatchMs) and when a KV write of the request path last failed (kvWriteFailedAt:
+   the visit:last or the dispatch:last write), and planesOnDemand sends nothing for MEMO_HOLD_MS after
+   either. Best effort: each Cloudflare isolate holds its own copy, which is lost when the isolate is
+   recycled, so a capped day costs at most one dispatch per isolate per MEMO_HOLD_MS instead of one per
+   poll. While the cap holds, the collector's own KV writes fail too, so a dispatch then fetches for
+   nobody; the hold lifts MEMO_HOLD_MS after the last failed write once writes work again. Only the
+   Workers fetch handler passes ISOLATE_MEMO (deps.memo); deps without a memo (every test harness, the
+   node dev server, the collector) behave exactly as before. */
+export const MEMO_HOLD_MS = 25 * 60 * 1000;
+export const ISOLATE_MEMO = { lastDispatchMs: null, kvWriteFailedAt: null };
+
+/* Why the memo holds a dispatch at t, or null. A remembered time more than COLLECTOR_SKEW_MS ahead of
+   the clock holds nothing (as keptTime). Pure. */
+export function memoHold(memo, t) {
+  if (!memo || typeof memo !== 'object') return null;
+  const recent = function (v) {
+    return typeof v === 'number' && isFinite(v) && t - v >= -COLLECTOR_SKEW_MS && t - v < MEMO_HOLD_MS;
+  };
+  if (recent(memo.kvWriteFailedAt)) {
+    return 'a KV write failed ' + Math.round(Math.max(0, t - memo.kvWriteFailedAt) / 1000) + ' s ago';
+  }
+  if (recent(memo.lastDispatchMs)) {
+    return 'this isolate dispatched ' + Math.round(Math.max(0, t - memo.lastDispatchMs) / 1000) + ' s ago';
+  }
+  return null;
+}
+
+/* Records a failed KV write of the request path in deps.memo, when there is one. Never throws. */
+function memoKvFailed(deps, t) {
+  const m = deps && deps.memo;
+  if (m && typeof m === 'object') m.kvWriteFailedAt = t;
+}
+
 export function dispatchConfigured(deps) {
   const s = (deps && deps.secrets) || {};
   return !!s.ghDispatchToken;
@@ -1630,6 +1668,7 @@ async function sendDispatch(deps, t, why) {
   try {
     await kvPutJson(deps.kv, 'dispatch:last', { t: t, status: status, why: why });
   } catch (e) {
+    memoKvFailed(deps, t);
     line += '; dispatch:last not written: ' + dispatchHead((e && e.message) || e, token);
   }
   return line;
@@ -1675,7 +1714,9 @@ export async function planesOnDemand(deps, snap, t, opts) {
       out.visit = 'held, a loading poll';
     } else if (vt === null || t - vt >= VISIT_WRITE_GAP_MS) {
       out.visit = 'written';
-      jobs.push(function () { return kvPutJson(deps.kv, 'visit:last', { t: t }); });
+      jobs.push(function () {
+        return kvPutJson(deps.kv, 'visit:last', { t: t }).catch(function () { memoKvFailed(deps, t); return null; });
+      });
     } else {
       out.visit = 'held, the last was written ' + Math.round(Math.max(0, t - vt) / 1000) + ' s ago';
     }
@@ -1685,8 +1726,12 @@ export async function planesOnDemand(deps, snap, t, opts) {
       out.dispatch = 'skipped, a loading poll';
     } else if (lt !== null && t - lt < DISPATCH_GAP_MS) {
       out.dispatch = 'skipped, the last dispatch was ' + Math.round(Math.max(0, t - lt) / 1000) + ' s ago';
+    } else if (memoHold(deps.memo, t)) {
+      /* 2026-10-20 (m31): dispatch:last may be unwritable (the KV cap); no refresh is announced from memory */
+      out.dispatch = 'skipped, ' + memoHold(deps.memo, t);
     } else {
       out.dispatch = 'sending';
+      if (deps.memo && typeof deps.memo === 'object') deps.memo.lastDispatchMs = t;
       /* third pass (Fable's ruling on the review's P2): announced at once only when the previous
          dispatch:last is absent or was answered 204. After a refused or unanswered one this one is most
          likely refused too, and the page must never say "loading" for a sample nobody is fetching; if it
@@ -1812,6 +1857,8 @@ export function makeDeps(env, over) {
     /* 2026-10-12 (antenna-ondemand): the request path's background work and its one log line */
     waitUntil: o.waitUntil || null,
     log: o.log || null,
+    /* 2026-10-20 (m31): the isolate's dispatch memory; only the fetch handler passes one */
+    memo: o.memo || null,
   };
 }
 
@@ -1819,7 +1866,7 @@ export default {
   async fetch(request, env, ctx) {
     /* 2026-10-12 (antenna-ondemand): the dispatch a /planes request may start runs after the answer */
     const bg = (ctx && typeof ctx.waitUntil === 'function') ? function (p) { ctx.waitUntil(p); } : null;
-    return handleRequest(request, makeDeps(env, { waitUntil: bg, log: function (s) { console.log(s); } }));
+    return handleRequest(request, makeDeps(env, { waitUntil: bg, log: function (s) { console.log(s); }, memo: ISOLATE_MEMO }));
   },
   async scheduled(event, env, ctx) {
     const p = runCron(makeDeps(env, null)).then(function (result) {

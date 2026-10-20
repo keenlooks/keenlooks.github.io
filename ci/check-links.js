@@ -86,6 +86,10 @@ function targetExists(htmlFile, urlPath) {
 let pages = 0;
 let checked = 0;
 const missing = new Map(); /* url -> Set of referencing pages */
+/* Hard-coded https://keanelucas.com links: they leave a local or preview build
+   for production (and count as a real visit there), so they are reported as a
+   warning. CI builds with url: "", so template-made URLs never show up here. */
+const absSelf = new Map(); /* url -> Set of referencing pages */
 
 for (const file of htmlFiles(siteDir, true)) {
   pages++;
@@ -93,7 +97,11 @@ for (const file of htmlFiles(siteDir, true)) {
   for (const raw of extractRefs(fs.readFileSync(file, 'utf8'))) {
     let u = raw.replace(/&amp;/g, '&').replace(/&#38;/g, '&').trim();
     if (!u) continue;
-    if (SITE_ORIGIN_RE.test(u)) u = u.replace(SITE_ORIGIN_RE, '') || '/';
+    if (SITE_ORIGIN_RE.test(u)) {
+      if (!absSelf.has(u)) absSelf.set(u, new Set());
+      absSelf.get(u).add(rel);
+      u = u.replace(SITE_ORIGIN_RE, '') || '/';
+    }
     if (/^(?:https?:)?\/\//i.test(u)) continue; /* external / protocol-relative */
     if (/^(?:mailto|tel|javascript|data|blob|about):/i.test(u)) continue;
     if (u.startsWith('#')) continue;
@@ -110,6 +118,13 @@ for (const file of htmlFiles(siteDir, true)) {
 }
 
 console.log(`check-links: ${checked} internal reference(s) across ${pages} page(s) in ${siteDir}`);
+
+if (absSelf.size) {
+  console.warn(`\nwarning (not fatal): ${absSelf.size} link(s) hard-code the production origin; use a root-relative path:`);
+  for (const [u, sources] of [...absSelf.entries()].sort()) {
+    console.warn(`  ${u}\n    in: ${[...sources].slice(0, 4).join(', ')}${sources.size > 4 ? `, +${sources.size - 4} more` : ''}`);
+  }
+}
 
 if (missing.size) {
   console.error(`\n${missing.size} internal reference(s) have NO target in the built site:\n`);

@@ -1,5 +1,5 @@
 ---
-title: "Claude—Climbing a CTF Scoreboard Near You"
+title: "Claude: Climbing a CTF Scoreboard Near You"
 collection: talks
 type: "Talk"
 permalink: /talks/2025-08-09-claude-climbing-a-ctf-scoreboard-near-you

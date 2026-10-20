@@ -12,6 +12,7 @@ description: "A live Earth drawn from public instruments. The interesting layers
   <div class="obs-topfade" aria-hidden="true"></div>
   <canvas id="obs-canvas" class="obs-canvas" tabindex="0"
           aria-label="A live Earth drawn from public instruments. Drag to turn the planet, scroll to zoom. Arrow keys turn it, plus and minus zoom, Home shows the whole disc."></canvas>
+  <p id="obs-loading" class="obs-loading" role="status">Loading the planet (about 1.3 MB)...</p>
 
   <!-- reduced motion: the event arrives here instead of the camera flying to it.
        r19l (7): it sits HERE, directly after the canvas, because that is where
@@ -47,7 +48,7 @@ description: "A live Earth drawn from public instruments. The interesting layers
       <button id="obs-help" class="gadget-help" type="button" aria-label="What this page is" title="What this page is">?</button>
       <button id="obs-collapse" class="obs-collapse" type="button" aria-label="Hide / show controls" title="Hide / show controls">&ndash;</button>
     </div>
-    <div class="obs-panel__body" id="obs-panel-body">
+    <div class="obs-panel__body" id="obs-panel-body" inert>
 
       <div class="obs-seg" id="obs-lens" role="group" aria-label="View">
         <button id="obs-lens-planet" class="obs-seg__btn obs-seg__btn--on" type="button"
@@ -528,7 +529,9 @@ description: "A live Earth drawn from public instruments. The interesting layers
      rule is the site's and not this page's. */
 
   /* the five type steps: fine print, small body, body, heading, display */
-  --obs-fs-1: 0.74rem;
+  /* n7 (2026-10-20 audit): a 12 px floor. On a phone the root is 16 px and
+     0.74rem was 11.84 px on the chips, the key chip and the tier pill. */
+  --obs-fs-1: max(12px, 0.74rem);
   --obs-fs-2: 0.82rem;
   --obs-fs-3: 0.92rem;
   --obs-fs-4: 1.06rem;
@@ -691,6 +694,22 @@ body.obs-darksky .greedy-nav .visible-links a:focus-visible { outline-color: #82
   touch-action: none; display: block; outline: none;
 }
 .obs-canvas:focus-visible { outline: 2px solid #82a6cc; outline-offset: -2px; }
+/* m35 (2026-10-20 audit): on a slow link the scripts take seconds before the
+   planet's first frame, and a dark canvas beside live-looking controls read as
+   a broken page. This static line says what is happening, and the controls
+   are inert until there is a planet for them to act on. observatory.js takes
+   both away on the first painted frame (or at once if the renderer never
+   loaded, so its own notice can speak). Above the panel (30) and the event
+   card (32): on a phone the open panel stands over the middle of the screen. */
+.obs-loading {
+  position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  z-index: 35; margin: 0; pointer-events: none; white-space: nowrap;
+  max-width: calc(100vw - 2rem); text-align: center;
+  font-size: var(--obs-fs-3); line-height: 1.45;
+  padding: 0.5rem 0.9rem; border-radius: var(--obs-r);
+  background: var(--obs-sky-bg); border: 1px solid var(--obs-sky-bd); color: var(--obs-sky-ink);
+}
+.obs-panel__body[inert] { opacity: 0.55; }
 
 /* ---------------------------------------------------------------- panel --- */
 .obs-panel {
@@ -1841,6 +1860,25 @@ html[data-theme="light"] .obs-card--event { border-left-color: #34568a; }
    the landing headline, whose own band ends where it begins. The state classes
    are mirrored onto the page's root for that reason and for no other. */
 .obs-app { --obs-plate-max: max(17rem, calc(var(--obs-vh, 1vh) * 55)); }
+/* M12 (2026-10-20 audit): the 17rem floor is taller than a phone held
+   sideways has room for, so at 844x390 the plate's top rode up over the
+   masthead and "The planet" printed on top of "Keane Lucas". In a short
+   window that is not the phone sheet, the plate's ceiling is also the room
+   between the masthead's bottom edge (plus 8 px) and the plate's own bottom
+   edge, both published by the page. The plate itself never scrolls (it is
+   `overflow: hidden` further down, and the region is its only scroller), so
+   when the bands do not fit it is the REGION that gives up height and keeps
+   its own scroll; the head and the foot are never cut. On a fine pointer the
+   bands are made to fit as well: see the second M12 block after the queue's
+   rules. Windows taller than this are untouched. */
+@media (min-width: 769px) and (max-height: 540px) {
+  .obs-rail {
+    max-block-size: min(var(--obs-plate-max),
+                        calc(var(--obs-vh, 1vh) * 100 - var(--obs-nav, 4rem)
+                             - var(--obs-plate-bottom, 1rem) - 8px));
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+  }
+}
 .obs-app--key { --obs-plate-max: max(17rem, calc(var(--obs-vh, 1vh) * 74)); }
 .obs-app--qall { --obs-plate-max: max(17rem, calc(var(--obs-vh, 1vh) * 80)); }
 /* ---- r27 (5): THE PLANET'S FLOOR, WRITTEN DOWN -------------------------
@@ -2164,6 +2202,50 @@ html[data-theme="light"] .obs-rail--found .obs-rail__title { color: #8a6a1f; }
 .obs-rail--qall .obs-rail__queue {
   height: auto;
   max-block-size: min(11rem, calc(var(--obs-vh, 1vh) * 18));
+}
+/* M12 repair (2026-10-20 audit, verifier round 1): A SHORT DESKTOP WINDOW.
+   With a mouse, a window 769 px or wider and 540 px or shorter has the
+   corner buttons under the plate (the plate's bottom edge is 78 px up) and
+   the masthead over it, and at 844x390 the clamp above left 223 px for a
+   head of 45, a sentence of 62 (three lines, which real stops use), a region
+   and a foot of 87: the foot was cut and "+10 more" and the key's own chip
+   were out of reach, because the plate does not scroll. Three things pay for
+   it here, measured:
+   - the plate's top is the bottom of the masthead's LINKS plus 8 px rather
+     than of the masthead's box: the 18 px between them is the masthead's own
+     padding, which the finding counts as clear (no overprint), and no link
+     can be pressed through the plate;
+   - the folded queue strip is one row (the phone's short-window height): the
+     fold fits its chips to the rows it has, so "+N more" stays on it;
+   - the expanded strip scrolls inside two rows rather than 18 per cent of
+     the window, so a "+N more" press cannot push the key's chip out.
+   At 844x390 that is a 241 px plate with a 37 px region (the number line;
+   the source scrolls under it) and the whole foot. */
+@media (min-width: 769px) and (max-height: 540px) and (pointer: fine) {
+  .obs-rail {
+    --obs-queue-h: 2.3rem;
+    max-block-size: min(var(--obs-plate-max),
+                        calc(var(--obs-vh, 1vh) * 100
+                             - var(--obs-nav-ink, var(--obs-nav, 4rem))
+                             - var(--obs-plate-bottom, 1rem) - 8px));
+  }
+  .obs-rail--qall .obs-rail__queue { max-block-size: 3.4rem; }
+}
+/* and at 384 px tall or less the key cannot open (it needs two rows of
+   about 39 px, and the plate has none to give), so its chip, which could
+   only say "the key needs a taller window" (two lines under 830 px wide),
+   stands down and its line goes to the region, which keeps the number
+   readable (800x360: a region of about 30 px rather than a 7 px slit).
+   Under 800 px wide the plate is narrow enough that the chip's sentence takes
+   two lines, so there it stands down up to 400 px tall (770x385 left a 16 px
+   region otherwise).
+   `--obs-key-off` tells observatory.js the key is off in this window, so the
+   room it measures without the chip can never turn the key back on and bring
+   the chip back (no blink at the band's edge). */
+@media (min-width: 769px) and (max-height: 384px) and (pointer: fine),
+       (min-width: 769px) and (max-width: 799px) and (max-height: 400px) and (pointer: fine) {
+  .obs-rail { --obs-key-off: 1; }
+  .obs-rail .obs-rail__ask { display: none; }
 }
 .obs-rail__queue {
   display: flex; align-items: center; gap: 0.3rem;

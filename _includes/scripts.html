@@ -1,4 +1,78 @@
-<script src="{{ base_path }}/assets/js/main.min.js"></script>
+<script src="{{ base_path }}/assets/js/main.min.js?v={{ site.time | date: '%s' }}"></script>
 
 {% include analytics.html %}
 {% include /comments-providers/scripts.html %}
+
+<script>
+  (function () {
+    /* BibTeX links (publication and talk lists, paper pages) show the
+       citation inline with a Copy button instead of downloading a .bib file.
+       Without JavaScript, or with a modifier click, the link still opens the
+       file. Inline script: block comments only (the production build strips
+       newlines). */
+    var links = document.querySelectorAll('a.bibtex-link');
+    if (!links.length) return;
+    var n = 0;
+    function copyText(text, btn) {
+      function done(ok) {
+        btn.textContent = ok ? 'Copied' : 'Select the text to copy';
+        setTimeout(function () { btn.textContent = 'Copy'; }, 1800);
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(false); });
+      } else {
+        done(false);
+      }
+    }
+    function build(link) {
+      n += 1;
+      var box = document.createElement('div');
+      box.className = 'bibtex-box';
+      box.id = 'bibtex-box-' + n;
+      var pre = document.createElement('pre');
+      pre.textContent = 'Loading the citation...';
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'bibtex-box__copy';
+      btn.textContent = 'Copy';
+      btn.disabled = true;
+      box.appendChild(pre);
+      box.appendChild(btn);
+      var host = link.closest('.archive__item') || link.closest('p') || link.parentNode;
+      if (host.classList && host.classList.contains('archive__item')) host.appendChild(box);
+      else host.parentNode.insertBefore(box, host.nextSibling);
+      link.setAttribute('aria-controls', box.id);
+      fetch(link.href, { credentials: 'same-origin' }).then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.text();
+      }).then(function (t) {
+        var text = t.replace(/^\s+|\s+$/g, '');
+        pre.textContent = text;
+        btn.disabled = false;
+        btn.addEventListener('click', function () { copyText(text, btn); });
+      }).catch(function () {
+        pre.textContent = 'The citation did not load. The link opens the .bib file directly: ' + link.href;
+      });
+      return box;
+    }
+    for (var i = 0; i < links.length; i++) {
+      (function (link) {
+        link.setAttribute('aria-expanded', 'false');
+        link.addEventListener('click', function (e) {
+          if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+          e.preventDefault();
+          var id = link.getAttribute('aria-controls');
+          var box = id ? document.getElementById(id) : null;
+          if (!box) {
+            build(link);
+            link.setAttribute('aria-expanded', 'true');
+            return;
+          }
+          var open = box.hidden;
+          box.hidden = !open;
+          link.setAttribute('aria-expanded', open ? 'true' : 'false');
+        });
+      })(links[i]);
+    }
+  })();
+</script>

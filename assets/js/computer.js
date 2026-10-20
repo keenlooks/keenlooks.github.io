@@ -1839,16 +1839,31 @@
     });
 
     /* ---------- instruction reference slide-over ---------- */
+    /* The "How to use" paragraph names where the panes are, which depends on
+       the layout: three columns (code left, board middle, screen right), two
+       columns (code left, Machine/Screen tabs on the right) or the tabbed
+       phone layout. Same visibility test as the tour's m40 fix (paneOr()):
+       a tab button that is laid out means that pane lives behind a tab.
+       Rebuilt on every open, so a rotation or resize is picked up. */
+    function howToUse() {
+      function shown(el) { return !!(el && el.offsetWidth && el.offsetHeight); }
+      var codeTab = shown(document.querySelector('.comp-tab[data-tab="code"]'));
+      var machTab = shown(document.querySelector('.comp-tab[data-tab="machine"]'));
+      var codeWhere = codeTab ? 'in the Code tab' : 'on the left';
+      var boardWhere = machTab ? 'in the Machine tab' : 'in the middle pane';
+      var screenWhere = machTab ? ' in the Screen tab' : '';
+      return 'Write KL-8 assembly ' + codeWhere + ', then press <strong>Assemble &#9656; Run</strong>. ' +
+           'Watch values pulse between the registers, memory, and the ALU ' + boardWhere + ' while ' +
+           'your program draws on the 32&#215;32 screen' + screenWhere + '. Use <strong>Step</strong> to execute one ' +
+           'instruction at a time, or <strong>Micro-step</strong> to walk through the fetch, decode, ' +
+           'and execute phases one bus transfer at a time. The speed slider runs the clock from 2 Hz ' +
+           'up to 200 kHz. Load an example from the menu to see the machine put through its paces.';
+    }
     function buildReference() {
       var syn = { imp: '', imm: ' #v', abs: ' addr', abx: ' addr,X', ind: ' (addr)' };
       var h = '';
       h += '<h3>How to use</h3>';
-      h += '<p>Write KL-8 assembly on the left, then press <strong>Assemble &#9656; Run</strong>. ' +
-           'Watch values pulse between the registers, memory, and the ALU in the middle pane while ' +
-           'your program draws on the 32&#215;32 screen. Use <strong>Step</strong> to execute one ' +
-           'instruction at a time, or <strong>Micro-step</strong> to walk through the fetch, decode, ' +
-           'and execute phases one bus transfer at a time. The speed slider runs the clock from 2 Hz ' +
-           'up to 200 kHz. Load an example from the menu to see the machine put through its paces.</p>';
+      h += '<p class="comp-ref-how">' + howToUse() + '</p>';
       h += '<h3>Instruction set</h3>';
       h += '<table class="comp-ref-table"><thead><tr><th>Syntax</th><th>Op</th><th>Flags</th><th>Effect</th></tr></thead><tbody>';
       for (var i = 0; i < K.ISA.length; i++) {
@@ -1884,10 +1899,21 @@
       refBody.innerHTML = h;
     }
     function refOpen() { return refPanel.classList.contains('comp-ref--open'); }
+    function refreshHow() {
+      var how = refBody.querySelector('.comp-ref-how');
+      if (how) how.innerHTML = howToUse();
+    }
+    /* a rotation or resize while the reference is open moves the panes; this
+       listener is added after applyCols' own, so it reads the new layout */
+    window.addEventListener('resize', function () { if (refOpen()) refreshHow(); });
     function openRef() {
+      refreshHow();
       refPanel.classList.add('comp-ref--open');
       refPanel.setAttribute('aria-hidden', 'false');
       refPanel.removeAttribute('inert');
+      /* m6: the page CSS hides the floating theme and back buttons while this
+         class is on, so they cannot cover the table or take a stray tap */
+      document.body.classList.add('comp-ref-open');
       if (refClose) refClose.focus();
     }
     function closeRef() {
@@ -1897,6 +1923,7 @@
          tabbable (and focusable content inside aria-hidden is an ARIA
          violation); inert removes them from the tab order where supported */
       refPanel.inert = true;
+      document.body.classList.remove('comp-ref-open');
       if (refBtn) refBtn.focus();
     }
     refPanel.inert = true;
@@ -2069,7 +2096,14 @@
         rectOf(document.querySelector('.comp-tab[data-tab="' + tab + '"]'));
     }
     var t = window.GadgetUI.tour('computer', [
-      { text: 'A real, tiny computer. The panel on the left holds the program it runs.',
+      { get text() {
+          /* m40: the same visibility test paneOr() uses; on the tabbed phone
+             layout the code lives behind the Code tab, not on the left */
+          var tabbed = vis(document.querySelector('.comp-tab[data-tab="code"]'));
+          return (!tabbed && vis(document.getElementById('pane-code'))) ?
+            'A real, tiny computer. The panel on the left holds the program it runs.' :
+            'A real, tiny computer. The Code tab holds the program it runs.';
+        },
         rect: function () { return paneOr('pane-code', 'code'); }, side: 'right' },
       { text: 'The board lights up as it works. Slow the speed down to watch each step.',
         rect: function () { return paneOr('pane-machine', 'machine'); }, side: 'bottom' },

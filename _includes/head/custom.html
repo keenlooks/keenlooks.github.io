@@ -21,8 +21,9 @@
 <meta name="msapplication-TileColor" content="#0c1f40">
 <meta name="msapplication-TileImage" content="{{ base_path }}/images/mstile-144x144.png?v=ak1">
 <meta name="msapplication-config" content="{{ base_path }}/images/browserconfig.xml?v=ak1">
-<meta name="theme-color" content="#ffffff">
-<link rel="stylesheet" href="{{ base_path }}/assets/css/academicons.css"/>
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#141414" media="(prefers-color-scheme: dark)">
+<link rel="stylesheet" href="{{ base_path }}/assets/css/academicons.css?v={{ site.time | date: '%s' }}"/>
 
 <!-- Source Sans 3 (site typeface) -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -42,7 +43,9 @@
     }
   });
 </script>
-<script src='https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.4/latest.js?config=TeX-MML-AM_CHTML' async></script>
+<!-- Pinned to one exact MathJax file with Subresource Integrity (latest.js fetched whatever 2.x was newest).
+     The hash is cdnjs's own published SRI for 2.7.9/MathJax.js. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.9/MathJax.js?config=TeX-MML-AM_CHTML" integrity="sha512-M36RUChWzAh1veeenRZFql7HydLEnkYmoloiCvVrhz402UZgKI93qkV7SsaxtVKdN95Wzajh39ysrXCq34NTsg==" crossorigin="anonymous" referrerpolicy="no-referrer" async></script>
 {% endif %}
 
 <!-- Conway's Game of Life: subtle animated background (deferred; non-blocking) -->
@@ -67,6 +70,16 @@
       if (forced === 'light' || forced === 'dark') return forced;
       return (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
     }
+
+    /* The browser bar colour (theme-color) follows the page: the two metas
+       above answer the OS setting; a theme forced with the toggle overrides
+       both. */
+    function syncThemeColor() {
+      var c = effectiveTheme() === 'light' ? '#ffffff' : '#141414';
+      var metas = document.querySelectorAll('meta[name="theme-color"]');
+      for (var i = 0; i < metas.length; i++) metas[i].setAttribute('content', c);
+    }
+    syncThemeColor();
 
     /* Monochrome (Feather-style) icons; stroke="currentColor" so they match text. */
     var ICON_SUN = '<svg xmlns="http://www.w3.org/2000/svg" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><line x1="12" y1="2" x2="12" y2="4"></line><line x1="12" y1="20" x2="12" y2="22"></line><line x1="4.93" y1="4.93" x2="6.34" y2="6.34"></line><line x1="17.66" y1="17.66" x2="19.07" y2="19.07"></line><line x1="2" y1="12" x2="4" y2="12"></line><line x1="20" y1="12" x2="22" y2="12"></line><line x1="4.93" y1="19.07" x2="6.34" y2="17.66"></line><line x1="17.66" y1="6.34" x2="19.07" y2="4.93"></line></svg>';
@@ -114,6 +127,35 @@
         new MutationObserver(syncNav).observe(navLinks, { attributes: true, attributeFilter: ['class'] });
       }
 
+      /* The open hamburger menu also closes on a tap or click outside the nav
+         and on Escape (focus returns to the toggle). Closing goes through the
+         button's own click handler so the plugin's state stays in step. */
+      if (navBtn && navLinks) {
+        var navOpen = function () { return !navLinks.classList.contains('hidden'); };
+        var navEl = navBtn.closest('.greedy-nav');
+        var swallowUntil = 0;
+        document.addEventListener('pointerdown', function (e) {
+          if (!navOpen()) return;
+          if (navEl && navEl.contains(e.target)) return;
+          navBtn.click();
+          /* the tap that dismisses the menu does not also follow whatever
+             link was under it */
+          swallowUntil = Date.now() + 700;
+        });
+        document.addEventListener('click', function (e) {
+          if (Date.now() > swallowUntil) return;
+          swallowUntil = 0;
+          if (navEl && navEl.contains(e.target)) return;
+          e.preventDefault();
+          e.stopPropagation();
+        }, true);
+        document.addEventListener('keydown', function (e) {
+          if (e.key !== 'Escape' || !navOpen()) return;
+          navBtn.click();
+          navBtn.focus();
+        });
+      }
+
       var btn = document.createElement('button');
       btn.id = 'theme-toggle';
       btn.type = 'button';
@@ -134,6 +176,7 @@
         document.documentElement.setAttribute('data-theme', t);
         try { localStorage.setItem('theme', t); } catch (e) {}
         render(btn);
+        syncThemeColor();
       }
       btn.addEventListener('click', function () {
         var cur = (wantTheme !== null) ? wantTheme : effectiveTheme();
@@ -178,6 +221,50 @@
       });
       document.body.appendChild(btn);
 
+      /* Phones: the fixed theme button sits inside the reading column, so it
+         tucks away while the visitor scrolls down and comes back on a scroll
+         up, near the top, or once scrolling has stopped. On ordinary pages it
+         also stays tucked while it would sit over a slider. */
+      (function () {
+        if (!window.matchMedia) return;
+        var phone = window.matchMedia('(max-width: 768px)');
+        var immersive = !!document.querySelector('.life-app');
+        var lastY = window.scrollY || 0;
+        var restTimer = null;
+        function overSlider() {
+          if (immersive) return false;
+          var b = btn.getBoundingClientRect();
+          var ranges = document.querySelectorAll('input[type="range"]');
+          for (var i = 0; i < ranges.length; i++) {
+            var r = ranges[i].getBoundingClientRect();
+            if (r.width && r.left < b.right + 6 && r.right > b.left - 6 && r.top < b.bottom + 6 && r.bottom > b.top - 6) return true;
+          }
+          return false;
+        }
+        function tuck(on) {
+          if (on && document.activeElement === btn) on = false;
+          btn.classList.toggle('is-tucked', on);
+        }
+        function settle() {
+          restTimer = null;
+          tuck(phone.matches && overSlider());
+        }
+        window.addEventListener('scroll', function () {
+          var y = window.scrollY || 0;
+          var dy = y - lastY;
+          lastY = y;
+          if (!phone.matches) { tuck(false); return; }
+          if (y < 80) tuck(overSlider());
+          else if (dy > 4) tuck(true);
+          else if (dy < -4) tuck(overSlider());
+          if (restTimer) clearTimeout(restTimer);
+          restTimer = setTimeout(settle, 1200);
+        }, { passive: true });
+        window.addEventListener('resize', function () { if (!restTimer) settle(); });
+        btn.addEventListener('focus', function () { tuck(false); });
+        setTimeout(settle, 600);
+      })();
+
       /* Bottom-left "back" button — shown ONLY on full-screen immersive pages
          (e.g. the Game of Life playground) that hide the normal nav. Returns to
          the previous in-site page, falling back to the Fun hub. The Fun nav tab
@@ -193,7 +280,9 @@
         back.addEventListener('click', function (e) {
           if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
           var ref = document.referrer;
-          if (ref && ref.indexOf(window.location.origin) === 0 && ref !== window.location.href) {
+          /* A page opened in a new tab from an in-site link has a same-origin
+             referrer but nothing to go back to: follow the link to /fun/ then. */
+          if (window.history.length > 1 && ref && ref.indexOf(window.location.origin) === 0 && ref !== window.location.href) {
             e.preventDefault();
             window.history.back();
           }
@@ -220,7 +309,7 @@
       if (window.matchMedia) {
         try {
           window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', function () {
-            if (!document.documentElement.getAttribute('data-theme')) render(btn);
+            if (!document.documentElement.getAttribute('data-theme')) { render(btn); syncThemeColor(); }
           });
         } catch (e) {}
       }

@@ -431,7 +431,8 @@
 
   /* panel collapse + first-run hint (shared helper; adds the sub-600px auto-collapse) */
   if (window.GadgetUI) {
-    var hint = GadgetUI.firstRunHint('gravity', 'Click to drop a body, drag to fling one.');
+    var hint = GadgetUI.firstRunHint('gravity',
+      (GadgetUI.coarse && GadgetUI.coarse() ? 'Tap' : 'Click') + ' to drop a body, drag to fling one.');
     GadgetUI.initPanel({
       panel: elPanel, toggle: elCollapse,
       collapsedClass: 'grav-panel--collapsed',

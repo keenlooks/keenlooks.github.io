@@ -381,7 +381,8 @@
 
   /* collapse / expand the controls + first-run hint (shared helper) */
   if (window.GadgetUI) {
-    var hint = GadgetUI.firstRunHint('life', 'Click or drag to draw cells.');
+    var hint = GadgetUI.firstRunHint('life',
+      (GadgetUI.coarse && GadgetUI.coarse() ? 'Tap' : 'Click') + ' or drag to draw cells.');
     GadgetUI.initPanel({
       panel: 'life-panel', toggle: 'life-collapse',
       collapsedClass: 'life-panel--collapsed',

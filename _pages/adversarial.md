@@ -45,7 +45,7 @@ description: "An interactive adversarial-example demo by Keane Lucas: a small MN
       </div>
 
       <p class="adv-hint">
-        <strong>Click a confidence bar</strong> to aim the attack at that digit. You can also
+        <strong data-tap="Tap a confidence bar">Click a confidence bar</strong> to aim the attack at that digit. You can also
         <strong>draw on the left image</strong> (right-drag erases; on a touchscreen, press and hold,
         then drag, to erase); the network reads it live and the attack adapts. The
         adversarially-trained model has seen attacks during training, so it is much harder to fool

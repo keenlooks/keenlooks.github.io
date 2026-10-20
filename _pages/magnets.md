@@ -39,7 +39,7 @@ description: "An interactive full-screen magnetic-field sandbox by Keane Lucas: 
       <p class="mag-status-line"><span id="mag-status">0 magnets</span></p>
 
       <p class="mag-blurb">
-        <strong>Click</strong> empty space to drop a bar magnet. <strong>Drag the middle</strong>
+        <strong data-tap="Tap">Click</strong> empty space to drop a bar magnet. <strong>Drag the middle</strong>
         to move it, <strong>drag an end</strong> to spin it. Each has a north (red) and south (blue)
         pole; field lines leave the north and curl into the south. Bring opposite poles together and
         they <strong>snap</strong> into a stronger magnet; line up like poles and they shove apart.

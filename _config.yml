@@ -85,7 +85,7 @@ analytics:
 # Site Author
 author:
   name             : "Keane Lucas"
-  avatar           : "https://github.com/keenlooks.png"
+  avatar           : "keane-lucas-avatar.jpg" # same-origin copy of the GitHub avatar (460x460), under /images/
   bio              : "Anthropic Frontier Red Team"
   location         : #"Location"
   employer         : "Anthropic"
@@ -174,6 +174,28 @@ exclude:
   - package.json
   - tmp
   - vendor
+  # Template leftovers (academicpages samples), not linked from anywhere: the
+  # empty archive pages and the theme's sample images (site review 2026-10-14).
+  - _pages/category-archive.html
+  - _pages/collection-archive.html
+  - _pages/page-archive.html
+  - _pages/portfolio.html
+  - _pages/tag-archive.html
+  - _pages/teaching.html
+  - _pages/year-archive.html
+  - images/3953273590_704e3899d5_m.jpg
+  - images/500x300.png
+  - images/bio-photo.jpg
+  - images/bio-photo-2.jpg
+  - images/editing-talk.png
+  - images/foo-bar-identity.jpg
+  - images/foo-bar-identity-th.jpg
+  - images/image-alignment-1200x4002.jpg
+  - images/image-alignment-150x150.jpg
+  - images/image-alignment-300x200.jpg
+  - images/image-alignment-580x300.jpg
+  - images/paragraph-indent.png
+  - images/paragraph-no-indent.png
 keep_files:
   - .git
   - .svn
@@ -203,13 +225,7 @@ kramdown:
 
 # Collections
 collections:
-  teaching:
-    output: true
-    permalink: /:collection/:path/
   publications:
-    output: true
-    permalink: /:collection/:path/
-  portfolio:
     output: true
     permalink: /:collection/:path/
   talks:
@@ -237,15 +253,6 @@ defaults:
     values:
       layout: single
       author_profile: true
-  # _teaching
-  - scope:
-      path: ""
-      type: teaching
-    values:
-      layout: single
-      author_profile: true
-      share: true
-      comments: true
   # _publications
   - scope:
       path: ""
@@ -255,15 +262,6 @@ defaults:
       author_profile: true
       share: true
       comments: true
-  # _portfolio
-  - scope:
-      path: ""
-      type: portfolio
-    values:
-      layout: single
-      author_profile: true
-      share: true
-      comment: true
   # _talks
   - scope:
       path: ""
@@ -272,6 +270,12 @@ defaults:
       layout: talk
       author_profile: true
       share: true
+  # Vendored libraries' VENDOR-LICENSES.md files render as pages; keep them
+  # (the tool pages link them) but out of sitemap.xml and the human sitemap.
+  - scope:
+      path: "assets"
+    values:
+      sitemap: false
 
 # Sass/SCSS
 sass:

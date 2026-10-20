@@ -5354,9 +5354,25 @@
 
   function fineEl() { return byId('kit-fine'); }
 
+  /* m22: both cards move focus to their own close button when they open, and
+     hiding a card that holds focus drops it to the page body. Each card
+     remembers the control that opened it and hands focus back on close, but
+     only when focus was still inside the card (a click on another act keeps
+     the focus that click gave). */
+  var fineOpener = null, helpOpener = null;
+  function openerOf(card) {
+    var a = document.activeElement;
+    return (a && a !== document.body && !(card && card.contains(a))) ? a : null;
+  }
+  function giveBackFocus(op) {
+    if (!op || !op.isConnected || !op.getClientRects().length) return;
+    try { op.focus({ preventScroll: true }); } catch (e) {}
+  }
+
   function startFine() {
     closeHelp();
     var el = fineEl();
+    fineOpener = openerOf(el);
     FX.caption = 'What is measured here, what comes from the paper, and what is mine.';
     setProse([{ text: 'The fine print is open. Escape closes it.' }]);
     fillFineNumbers();
@@ -5378,7 +5394,12 @@
 
   function closeFine() {
     var el = fineEl();
-    if (el && !el.hidden) { el.hidden = true; placeCoach(); syncModalChrome(); }
+    if (el && !el.hidden) {
+      var held = el.contains(document.activeElement);
+      el.hidden = true; placeCoach(); syncModalChrome();
+      if (held) giveBackFocus(fineOpener);
+      fineOpener = null;
+    }
   }
 
   /* s7.21 ruling 10: the fine print is a card you open FROM an act, so closing
@@ -10298,6 +10319,7 @@
   function openHelp() {
     var el = byId('kit-helpcard');
     if (!el) return;
+    if (el.hidden) helpOpener = openerOf(el);
     closeFine();
     /* s7.21 ruling 10: the panel line named the fine print while the HELP card
        was what stood open. It names whichever card is really up, and the act's
@@ -10320,11 +10342,14 @@
   function closeHelp() {
     var el = byId('kit-helpcard');
     if (!el || el.hidden) return false;
+    var held = el.contains(document.activeElement);
     el.hidden = true;
     if (proseSaved !== null) { setProse(proseSaved); proseSaved = null; }
     placeCoach();
     syncModalChrome();          /* s7.26 ruling 9 */
     layout();
+    if (held) giveBackFocus(helpOpener);   /* m22 */
+    helpOpener = null;
     return true;
   }
 

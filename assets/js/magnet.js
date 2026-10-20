@@ -361,7 +361,8 @@
 
   /* panel collapse + first-run hint (shared helper; adds the sub-600px auto-collapse) */
   if (window.GadgetUI) {
-    var hint = GadgetUI.firstRunHint('magnets', 'Click to add a magnet, drag its ends to rotate.');
+    var hint = GadgetUI.firstRunHint('magnets',
+      (GadgetUI.coarse && GadgetUI.coarse() ? 'Tap' : 'Click') + ' to add a magnet, drag its ends to rotate.');
     GadgetUI.initPanel({
       panel: elPanel, toggle: elCollapse,
       collapsedClass: 'mag-panel--collapsed',

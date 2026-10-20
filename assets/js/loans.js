@@ -353,32 +353,46 @@
   // last month a dragged payment can land on and still count
   function dragMaxMonth(idx) { return Math.max(1, payoffWithout(idx) - 1); }
 
+  // On a touch screen the browser decides only AFTER pointerdown whether a finger
+  // is a tap or a page scroll (touch-action pan-y). Acting on pointerdown would
+  // add a payment (and open its editor) under every scroll that starts on the
+  // chart, so a touch tap is held until pointerup and dropped if the browser
+  // cancels the pointer for a scroll or the finger travels more than a few px.
+  // A mouse click still acts at once.
+  var tap = null;
+  function onTap(e, run) {
+    e.preventDefault();                                 // no compat mousedown to blur the editor
+    if (e.pointerType && e.pointerType !== 'mouse') { tap = { id: e.pointerId, cx: e.clientX, cy: e.clientY, run: run }; return; }
+    run();
+  }
   canvas.addEventListener('pointerdown', function (e) {
+    tap = null;
     if (!W || !H) return;
     if (overlay && overlay.isOpen()) return;            // a click-away commits the open editor
     var rect = canvas.getBoundingClientRect();
     var x = e.clientX - rect.left, y = e.clientY - rect.top;
     if (x < M.l - 14 || x > W - M.r + 14) return;
     // click the x-axis tick row -> set a start date (ticks become calendar years)
-    if (y >= H - M.b + 2 && y <= H - M.b + 26) { e.preventDefault(); openDateEditor(nearestTick(x)); return; }
+    if (y >= H - M.b + 2 && y <= H - M.b + 26) { onTap(e, function () { openDateEditor(nearestTick(x)); }); return; }
     // click near an existing payment -> begin a drag (a click without dragging edits its amount)
     for (var k = 0; k < s.lumps.length; k++) {
       if (Math.abs(xPx(s.lumps[k].month / 12) - x) < 14) { drag = { idx: k, startX: x, moved: false, maxMonth: dragMaxMonth(k) }; e.preventDefault(); return; }
     }
     if (y < M.t - 12 || y > H - M.b + 4) return;
-    var month = clampMonth(pxToMonth(x));
-    // a payment past the payoff point does nothing: say so instead of silently ignoring the click
-    if (month >= simulate(s.extra, Math.round(s.startYear * 12), s.lumps).payoffMonths) {
-      e.preventDefault();
-      showNotice('The loan is already paid off by then.', x, y);
-      return;
-    }
-    e.preventDefault();
-    s.lumps.push({ month: month, amount: DEFAULT_LUMP });
-    update();
-    openLumpEditor(s.lumps.length - 1, true);           // immediately type the amount (Esc removes it again)
+    onTap(e, function () {
+      var month = clampMonth(pxToMonth(x));
+      // a payment past the payoff point does nothing: say so instead of silently ignoring the click
+      if (month >= simulate(s.extra, Math.round(s.startYear * 12), s.lumps).payoffMonths) {
+        showNotice('The loan is already paid off by then.', x, y);
+        return;
+      }
+      s.lumps.push({ month: month, amount: DEFAULT_LUMP });
+      update();
+      openLumpEditor(s.lumps.length - 1, true);         // immediately type the amount (Esc removes it again)
+    });
   });
   window.addEventListener('pointermove', function (e) {
+    if (tap && e.pointerId === tap.id && (Math.abs(e.clientX - tap.cx) > 8 || Math.abs(e.clientY - tap.cy) > 8)) tap = null;
     if (!drag) return;
     var rect = canvas.getBoundingClientRect(), x = e.clientX - rect.left;
     if (!drag.moved && Math.abs(x - drag.startX) < 4) return;   // tiny move = still a click
@@ -396,11 +410,15 @@
       update();
     }
   });
-  window.addEventListener('pointerup', function () {
+  window.addEventListener('pointerup', function (e) {
+    if (tap) { var t = tap; tap = null; if (e.pointerId === t.id) t.run(); }
     if (!drag) return;
     if (!drag.moved) openLumpEditor(drag.idx);          // it was a click, not a drag -> edit amount
     drag = null; update();
   });
+  // a vertical swipe that started on the chart becomes a page scroll (touch-action
+  // pan-y): the browser cancels the pointer, so drop the held tap and any half-started drag
+  window.addEventListener('pointercancel', function () { tap = null; if (drag) { drag = null; update(); } });
 
   // ---- controls ----------------------------------------------------------
   function syncStartMax() {

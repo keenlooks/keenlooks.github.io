@@ -51,6 +51,14 @@
   /* ---- state ---- */
   var g = 0.22, wind = 0, padX = 0.5, autopilot = true, showBrain = true;
   var s, action = 0, status = 'fly', statusT = 0, fuel = 0;
+  /* Episode timeout. Past the wind it trained on (|wind| about 0.15 and up)
+     the agent can hover forever without landing or drifting off (measured:
+     300 of 300 episodes at wind 0.15 still airborne after 300 s), and the page
+     sat on that hover with no end. Every real episode ends well inside this
+     (at most about 18 s across the slider range), so 30 s of autopilot flight
+     only ever cuts a hover; it then says so and a new rocket spawns. Manual
+     flight is never timed. */
+  var EPISODE_STEPS = 1500, flySteps = 0;
   var W = 0, H = 0, dpr = 1, raf = null, acc = 0, lastT = 0;
   var drag = null, padDrag = false;
   /* prefers-reduced-motion: start paused on a static frame; New rocket, the
@@ -60,7 +68,7 @@
 
   function reset() {
     s = { x: 0.5 + (Math.random() - 0.5) * 0.4, y: 0.92, vx: (Math.random() - 0.5) * 0.2, vy: -0.05, th: (Math.random() - 0.5) * 0.3, w: 0 };
-    status = 'fly'; statusT = 0; fuel = 0; action = 0;
+    status = 'fly'; statusT = 0; fuel = 0; action = 0; flySteps = 0;
   }
   function step() {
     if (status !== 'fly') return;
@@ -77,7 +85,9 @@
       s.y = GROUND_Y;
       var ok = Math.abs(s.x - padX) < 0.03 && Math.abs(s.vx) < 0.17 && Math.abs(s.vy) < 0.20 && Math.abs(s.th) < 0.28 && Math.abs(s.w) < 0.85;
       status = ok ? 'landed' : 'crashed'; statusT = performance.now();
+      return;
     }
+    if (autopilot && ++flySteps >= EPISODE_STEPS) { status = 'timeout'; statusT = performance.now(); }
   }
 
   /* ---- theme / scene helpers ---- */
@@ -104,7 +114,35 @@
      (they never see pixels), and the inverse mapping below uses the same width so
      dragging and flinging still land where the pointer is. */
   function groundPix() { return H * 0.84; }
-  function topPix() { return H * 0.10; }
+  /* On a narrow screen the brain plate is DOCKED at the top of the stage and
+     the flight column starts below it, so the plate can never cover the
+     rocket (it sat in the middle of the column and hid the rocket for about
+     half of every descent on a phone). The margin keeps even a rocket at the
+     fly-off height (y 1.12) clear of the plate's bottom edge. */
+  function brainDocked() { return showBrain && W < 600; }
+  function brainBox() {
+    var bw = Math.min(320, W < 600 ? W * 0.74 : W * 0.33), bh = Math.min(220, H * 0.36);
+    var bx = 14, by;
+    if (W < 600) {
+      bh = Math.min(180, H * 0.30);
+      by = 92;
+      if (elPanel) {
+        var pr = elPanel.getBoundingClientRect();
+        /* clear the (collapsed) panel's header when it reaches over the plate */
+        if (pr.height && pr.left < bx + bw && pr.bottom < H * 0.5) by = Math.max(by, pr.bottom + 10);
+      }
+    } else {
+      /* sit the brain so its BOTTOM is just above the ground line: keeps the pad/landing
+         visible (and clear of the bottom-left back/theme buttons) even for a far-left pad */
+      by = Math.max(92, groundPix() - bh - 78);
+    }
+    return { bx: bx, by: by, bw: bw, bh: bh };
+  }
+  function topPix() {
+    if (!brainDocked()) return H * 0.10;
+    var b = brainBox(), bottom = b.by + b.bh;
+    return Math.min(groundPix() - 120, bottom + 2.6 * rocketScale() + 0.12 * (groundPix() - bottom));
+  }
   function panelReserve() {
     if (!elPanel || W < 600 || elPanel.classList.contains('land-panel--collapsed')) return 0;
     var pw = elPanel.offsetWidth;
@@ -271,7 +309,8 @@
       ctx.font = '700 ' + Math.max(22, W / 32) + 'px "Source Sans 3", system-ui, sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillStyle = status === 'landed' ? good() : bad();
-      var msg = status === 'landed' ? 'Landed' : (status === 'lost' ? 'Flew off' : 'Crashed');
+      var msg = status === 'landed' ? 'Landed' : (status === 'lost' ? 'Flew off' :
+        (status === 'timeout' ? 'Out of time: it hovered' : 'Crashed'));
       var msgY = H * 0.17;
       if (elPanel) {
         var pr = elPanel.getBoundingClientRect();
@@ -280,6 +319,8 @@
           msgY = Math.min(H * 0.42, pr.bottom + 30);
         }
       }
+      /* a docked brain plate (narrow screens) sits at the top: go below it */
+      if (brainDocked()) { var bb = brainBox(); if (msgY - 24 < bb.by + bb.bh) msgY = bb.by + bb.bh + 30; }
       ctx.fillText(msg, W / 2, msgY);
     }
   }
@@ -289,10 +330,7 @@
   /* action 1 increases the angle (nose tips right); action 3 decreases it (nose left) */
   var ACT_LABELS = ['idle', 'spin ▶', 'thrust ▲', 'spin ◀'];
   function drawBrain() {
-    var bw = Math.min(320, W < 600 ? W * 0.74 : W * 0.33), bh = Math.min(220, H * 0.36);
-    /* sit the brain so its BOTTOM is just above the ground line — keeps the pad/landing
-       visible (and clear of the bottom-left back/theme buttons) even for a far-left pad */
-    var bx = 14, by = Math.max(92, groundPix() - bh - 78);
+    var box = brainBox(), bw = box.bw, bh = box.bh, bx = box.bx, by = box.by;
     /* backing */
     ctx.fillStyle = light() ? 'rgba(255,255,255,0.82)' : 'rgba(16,20,28,0.78)';
     ctx.strokeStyle = txt(0.18); ctx.lineWidth = 1;
@@ -433,7 +471,7 @@
     if (drag && drag.kind === 'rocket') {
       s.vx = drag.vx / worldW() * 1.2;                           /* screen px/move → world vel (same scale as sx) */
       s.vy = -drag.vy / (groundPix() - topPix()) * 1.2;          /* screen-down is world-down (−y) */
-      status = 'fly'; statusT = 0;
+      status = 'fly'; statusT = 0; flySteps = 0;                 /* a fling is a fresh attempt */
     }
     drag = null; padDrag = false;
   }
@@ -450,7 +488,7 @@
   if (elWind) elWind.addEventListener('input', function () { wind = +elWind.value; if (elWindV) elWindV.textContent = fmtWind(wind); });
   if (elPad) elPad.addEventListener('input', function () { padX = +elPad.value; if (elPadV) elPadV.textContent = (padX).toFixed(2); if (paused && !raf) drawStatic(); });
   if (btnReset) btnReset.addEventListener('click', function () { reset(); if (paused) resume(); });
-  if (elAuto) elAuto.addEventListener('change', function () { autopilot = elAuto.checked; updateTouchControls(); if (paused) resume(); });
+  if (elAuto) elAuto.addEventListener('change', function () { autopilot = elAuto.checked; flySteps = 0; updateTouchControls(); if (paused) resume(); });
   if (elBrain) elBrain.addEventListener('change', function () { showBrain = elBrain.checked; if (paused && !raf) drawStatic(); });
 
   /* panel collapse + first-run hint (shared helper) */
@@ -543,6 +581,9 @@
   if (elGV) elGV.textContent = g.toFixed(2);
   if (elWindV) elWindV.textContent = fmtWind(wind);
   if (elPadV) elPadV.textContent = padX.toFixed(2);
+  /* narrow screens start with the brain off: the docked plate costs the
+     flight column its top third, so it is the visitor's choice there */
+  if (window.innerWidth < 600) { showBrain = false; if (elBrain) elBrain.checked = false; }
   resize(); reset();
   if (paused) drawStatic(); else start();
 })();

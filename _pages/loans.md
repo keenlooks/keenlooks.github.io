@@ -85,7 +85,9 @@ You borrow a lump sum today and pay it back in fixed monthly chunks. If you pay 
 .loan-foot  { margin: 1.25rem 0 0; opacity: 0.92; }
 .loan-explainer { max-width: 760px; }
 
-.loan-canvas { width: 100%; height: 380px; display: block; cursor: crosshair; touch-action: none; }
+/* pan-y pinch-zoom: vertical swipes scroll the page on phones; taps and
+   sideways drags of a payment still reach the canvas */
+.loan-canvas { width: 100%; height: 380px; display: block; cursor: crosshair; touch-action: pan-y pinch-zoom; }
 @media (max-width: 600px) { .loan-canvas { height: 300px; } }
 .loan-hint { font-size: 0.88rem; opacity: 0.75; margin: 0.4rem 0 0; }
 

@@ -37,8 +37,15 @@
   var DIVERGE_RAD = 0.35;                   // divergence threshold in STATE space (radians, ~20°) — viewport-independent
 
   // state vectors [th1, w1, th2, w2]; lengths/masses equal (1, 1)
-  var main = [2.1, 0, 2.5, 0];
-  var twin = [2.1 + EPS, 0, 2.5, 0];
+  /* The start pose is jittered by up to 0.15 rad per joint, so the split
+     really does land at a different time on each run, as the page says (a
+     fixed pose split at 5.2 s every time; jittered, two batches of 200 node
+     runs split between 3.0 and 12.1 s, every one of them within that). */
+  function startPose() {
+    return [2.1 + (Math.random() - 0.5) * 0.3, 0, 2.5 + (Math.random() - 0.5) * 0.3, 0];
+  }
+  var main = startPose();
+  var twin = [main[0] + EPS, 0, main[2], 0];
   var trailA = [], trailB = [];
   var runTime = 0, divergedAt = -1;
   var divHist = [];                         // [t, d] angular separation over time (the divergence plot)
@@ -114,7 +121,7 @@
     resetTimers();
   }
   function reset() {
-    main = [2.1, 0, 2.5, 0];
+    main = startPose();
     syncTwin();
   }
 

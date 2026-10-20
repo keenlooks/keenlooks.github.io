@@ -12965,7 +12965,7 @@
      not breathe while the browser's bar slides in and out under a reader's
      thumb; it is rewritten only when the window itself changes. */
   function publishMetrics(v) {
-    var root = document.documentElement, key, chat, band, nav;
+    var root = document.documentElement, key, chat, band, nav, ink;
     if (!root || !root.style) return;
     chat = rectOf(document.getElementById('chat-widget'));
     band = cornerBandPx(v);
@@ -12978,9 +12978,13 @@
        the key's own switch) would be under it for the rest of the visit. The
        three bands are IN the key, so the moment one of them lands the page
        publishes it and the stylesheet takes it from there. */
+    /* M12 repair (2026-10-20 audit): and the bottom of the masthead's LINKS,
+       which a short desktop window's plate may rise to (the masthead's own
+       padding under them is clear sky, not chrome a reader can press) */
+    ink = navBottom();
     key = Math.round(v.w) + 'x' + Math.round(v.h) + '|' + Math.round(nav) +
           '|' + Math.round((chat && chat.height > 0) ? chat.height : 0) +
-          '|' + Math.round(band);
+          '|' + Math.round(band) + '|' + Math.round(ink);
     if (key === st.metricsKey) return;
     st.metricsKey = key;
     root.style.setProperty('--obs-vh', (v.h / 100) + 'px');
@@ -12989,6 +12993,7 @@
        higher, and a band measured from those runs under the masthead's own
        bottom rule. */
     root.style.setProperty('--obs-nav', Math.round(nav) + 'px');
+    root.style.setProperty('--obs-nav-ink', Math.round(Math.min(ink, nav)) + 'px');
     root.style.setProperty('--obs-chatbar',
       Math.round((chat && chat.height > 0) ? chat.height : 0) + 'px');
     root.style.setProperty('--obs-corner', Math.round(band) + 'px');
@@ -21532,7 +21537,18 @@
     now = keyFootNowPx();
     return (fin(up.foot) && up.foot > now) ? up.foot - now : 0;
   }
+  /* M12 repair (2026-10-20 audit): the stylesheet's word that the key is off
+     in this window (a desktop window 380 px tall or less, where its chip
+     stands down). Read off the plate, so it is the media query's answer and
+     never a second copy of its numbers. */
+  function keyOffHere() {
+    var cs;
+    if (!el.rail || !global.getComputedStyle) return false;
+    try { cs = global.getComputedStyle(el.rail); } catch (e) { return false; }
+    return !!cs && String(cs.getPropertyValue('--obs-key-off') || '').replace(/\s+/g, '') === '1';
+  }
   function keyFitsHere(v) {
+    if (keyOffHere()) return false;
     /* r26 (16) owns the phone, where two rows and an honest count line are the
        measured answer, so the phone's floor is ONE whole row and not the
        round's desktop floor. It is not zero: at 720x450 with the panel folded
@@ -21973,6 +21989,18 @@
     guard = 0;
     while (vis.length > 1 && guard++ < 12 && !queueChipInClip(b)) {
       vis[vis.length - 1].hidden = true;
+      vis.pop();
+      hid++;
+      b.textContent = '+' + hid + ' more';
+      b.title = b.textContent + ' in the queue';
+    }
+    /* M12 repair (2026-10-20 audit): and the last stop chip too, if that is
+       what it takes. A one-row strip on a short desktop window 800 px wide
+       holds one 38-character chip OR the control, not both, and stopping at
+       one chip left "+11 more" on a second row the slot does not show. The
+       count then names every stop, which is still the honest number. */
+    if (vis.length === 1 && !queueChipInClip(b)) {
+      vis[0].hidden = true;
       vis.pop();
       hid++;
       b.textContent = '+' + hid + ' more';
@@ -24182,6 +24210,16 @@
     }
   }
 
+  /* m35 (2026-10-20 audit): the markup carries a static loading line and an
+     inert control panel for the seconds a slow link spends on the scripts.
+     Both go on the first painted frame, once. */
+  function bootDone() {
+    st.bootDone = true;
+    var n = document.getElementById('obs-loading');
+    if (n && n.parentNode) n.parentNode.removeChild(n);
+    var b = document.getElementById('obs-panel-body');
+    if (b) { b.removeAttribute('inert'); b.inert = false; }
+  }
   function loop(t) {
     st.raf = global.requestAnimationFrame(loop);
     /* r22 (P2): the plate's own layout reads, counted for THIS frame. The bar
@@ -24195,6 +24233,8 @@
       try { g.frame(t); st.painted++; } catch (e) { /* one bad frame must not kill the loop */ }
       if (st.painted === 1) syncSave();
     }
+    /* m35: the first painted frame (or no renderer at all) ends the boot */
+    if (!st.bootDone && (st.painted > 0 || !g)) bootDone();
     var n = nowMs();
     expireStatus(n);
     tickVitals(n);

@@ -25,7 +25,7 @@ Highlighted Experience
 ======
 * Member of Technical Staff at Anthropic (Frontier Red Team)
   * July 2024 to Present
-  * Evaluates, measures, and improves the cyber capabilities of frontier large language models to support their safe and robust deployment. Builds benchmarks and realistic evaluations for autonomous vulnerability discovery and exploit development (e.g., ExploitBench, ExploitGym), assesses model performance in cyber competitions and against real-world software, and develops defensive applications through partnerships with external organizations (e.g., Mozilla, PNNL). Regularly publishes findings on the [Anthropic Frontier Red Team blog](https://red.anthropic.com/).
+  * Evaluates, measures, and improves the cyber capabilities of frontier large language models to support their safe and robust deployment. Builds benchmarks and realistic evaluations for autonomous vulnerability discovery and exploit development (e.g., ExploitBench, ExploitGym), assesses model performance in cyber competitions and against real-world software, and develops defensive applications through partnerships with external organizations (e.g., Mozilla, PNNL). Regularly publishes findings on the [Anthropic Frontier Red Team blog](https://www.anthropic.com/research/team/frontier-red-team).
 
 * Student Researcher at Google AI
   * Summer 2022
@@ -33,7 +33,7 @@ Highlighted Experience
 
 * Summer Intern at Massachusetts Institute of Technology Lincoln Laboratory
   * Summer 2021
-  * Worked with Dr Ross Allen on an intrinsic augmentation to cooperative reinforcement learning that incentivizes accommodative behavior in agents, resulting in demonstrated zero-shot coordination. [Paper published at AAMAS 2022 (click for more details)](https://keanelucas.com/anyplay/).
+  * Worked with Dr Ross Allen on an intrinsic augmentation to cooperative reinforcement learning that incentivizes accommodative behavior in agents, resulting in demonstrated zero-shot coordination. [Paper published at AAMAS 2022 (click for more details)](/publications/2022-05-11-anyplay-an-intrinsic-augmentation-for-zero-shot-coordination).
 
 * Deep Learning Researcher at Department of Defense (DoD) Research Directorate (RD)
   * Spring 2017 to Fall 2019

@@ -11,7 +11,8 @@ description: "An interactive epidemic simulator by Keane Lucas: every cell is a 
 <div class="epi-app life-app">
   <div class="epi-topfade" aria-hidden="true"></div>
   <canvas id="epi-canvas" class="epi-canvas"
-          aria-label="A full-screen grid epidemic simulation: red cells are infected, blue cells recovered, faint cells susceptible. Click to start infections."></canvas>
+          aria-label="A full-screen grid epidemic simulation: red cells are infected, blue cells recovered, faint cells susceptible. Click to start infections."
+          data-tap-label="A full-screen grid epidemic simulation: red cells are infected, blue cells recovered, faint cells susceptible. Tap to start infections."></canvas>
 
   <div class="epi-panel" id="epi-panel">
     <div class="epi-panel__head">
@@ -30,7 +31,7 @@ description: "An interactive epidemic simulator by Keane Lucas: every cell is a 
       <p class="epi-r0" id="epi-r0"></p>
 
       <div class="epi-modes">
-        <span class="epi-modes__label">Click to:</span>
+        <span class="epi-modes__label" data-tap="Tap to:">Click to:</span>
         <button class="epi-mode epi-mode--on" data-mode="infect" type="button">Infect</button>
         <button class="epi-mode" data-mode="vaccinate" type="button">Vaccinate</button>
         <button class="epi-mode" data-mode="erase" type="button" title="Paint cells back to plain susceptible (a mouse can also right-drag)">Erase</button>
@@ -48,7 +49,7 @@ description: "An interactive epidemic simulator by Keane Lucas: every cell is a 
       <p class="epi-blurb">
         Every cell is a person. Each day, the <strong style="color:#c4574a">infected</strong> cells pass it
         to nearby susceptible cells with the transmission chance you set, then they recover and become
-        immune. <strong>Click or drag</strong> to start infections and watch the case curve along the bottom.
+        immune. <strong data-tap="Tap or drag">Click or drag</strong> to start infections and watch the case curve along the bottom.
         If you vaccinate enough of the grid first, an outbreak often can't spread, which is roughly what
         herd immunity means. The vaccinated slider works while it's running, and you can also paint
         vaccinated regions directly.
@@ -193,10 +194,11 @@ html[data-theme="light"] .epi-panel::after { background: linear-gradient(to bott
   border-radius: 6px; padding: 0.4em 0.7em; transition: background 0.15s ease;
 }
 .epi-mode:hover { background: rgba(127,127,127,0.26); }
-.epi-mode--on { background: #82a6cc; border-color: #82a6cc; color: #fff; }
-html[data-theme="light"] .epi-mode--on { background: #34568a; border-color: #34568a; }
+/* dark text on the light accent fill (7.26:1; white was 2.53:1), white on the light theme's navy */
+.epi-mode--on { background: #82a6cc; border-color: #82a6cc; color: #141414; }
+html[data-theme="light"] .epi-mode--on { background: #34568a; border-color: #34568a; color: #fff; }
 @media (prefers-color-scheme: light) {
-  html:not([data-theme="dark"]) .epi-mode--on { background: #34568a; border-color: #34568a; }
+  html:not([data-theme="dark"]) .epi-mode--on { background: #34568a; border-color: #34568a; color: #fff; }
 }
 .epi-status-line { margin: 0; font-size: 0.85em; opacity: 0.75; font-variant-numeric: tabular-nums; min-height: 1.2em; }
 .epi-r0 { margin: 0; font-size: 0.82em; opacity: 0.75; font-variant-numeric: tabular-nums; }

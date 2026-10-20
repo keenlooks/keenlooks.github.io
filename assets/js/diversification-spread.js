@@ -2,7 +2,7 @@
    Diversification — "blend the lines" intro plot (sits ABOVE the funnel).
    --------------------------------------------------------------------------
    Goal: make the funnel below click. We plot the growth of $10,000 over the
-   full 1995–2024 history (y = value, log scale; x = years held). The SHADED
+   full 1996 to 2025 history (y = value, log scale; x = years held). The SHADED
    FAN is the variance of the blend itself for the current N — per-year 5–95 and
    25–75 percentiles of the equal-weight portfolio across many random N-subsets
    (recomputed when N changes). It is WIDE for small N and collapses to a single
@@ -187,7 +187,7 @@
     ctx.strokeStyle = c.axis; ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.moveTo(M.l, M.t); ctx.lineTo(M.l, H - M.b); ctx.lineTo(W - M.r, H - M.b); ctx.stroke();
     ctx.fillStyle = c.muted; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
-    ctx.fillText('Years held (1995–2024)', (M.l + (W - M.r)) / 2, H - 5);
+    ctx.fillText('Years held (1996 to 2025)', (M.l + (W - M.r)) / 2, H - 5);
 
     // corner labels; the y-axis cue is shortened progressively so it never
     // runs past the plot's right edge at phone widths

@@ -22,7 +22,7 @@ description: "A full-screen, interactive version of Conway's Game of Life: draw 
     <div class="life-panel__body" id="life-panel-body">
       <p class="life-blurb">
         A cellular automaton devised by <a href="https://en.wikipedia.org/wiki/John_Horton_Conway" target="_blank" rel="noopener">John Horton Conway</a> in 1970.
-        Click or drag anywhere to draw (or erase) cells.
+        <span data-tap="Tap or drag">Click or drag</span> anywhere to draw (or erase) cells.
       </p>
 
       <div class="life-row">
@@ -192,7 +192,14 @@ html[data-theme="light"] .life-panel {
 .life-rule-label { font-size: 0.85em; opacity: 0.9; }
 .life-toggles { display: flex; flex-wrap: wrap; gap: 0.3rem; }
 .life-toggle { width: 2em; padding: 0.4em 0; text-align: center; }
-.life-toggle.on { background: #5b82b8; border-color: #5b82b8; color: #fff; }
+/* white on the old #5b82b8 fill was 3.95:1, under AA: the site accent pairs
+   instead, as the other gadgets' active buttons use: dark text on #82a6cc,
+   white on #34568a */
+.life-toggle.on { background: #82a6cc; border-color: #82a6cc; color: #141414; }
+html[data-theme="light"] .life-toggle.on { background: #34568a; border-color: #34568a; color: #fff; }
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .life-toggle.on { background: #34568a; border-color: #34568a; color: #fff; }
+}
 .life-presets { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; font-size: 0.9em; }
 .life-rulestring { font-size: 0.92em; }
 .life-credit { margin: 0; font-size: 0.85em; opacity: 0.8; }

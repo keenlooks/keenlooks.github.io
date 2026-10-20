@@ -5,21 +5,22 @@ permalink: /diversification/
 og_image: /images/og/diversification.png
 author_profile: false
 excerpt: "An interactive look at how holding many investments narrows the range of outcomes, cutting the worst cases while keeping most of the upside, and how fees skim off the top."
-description: "Interactive diversification explainer by Keane Lucas using real 1995–2024 industry returns (Ken French Data Library): as you hold more industries, the spread of 10-year outcomes funnels inward, and a red line shows how much annual fees skim off."
+description: "Interactive diversification explainer by Keane Lucas using real 1996 to 2025 industry returns (Ken French Data Library): as you hold more industries, the spread of 10-year outcomes funnels inward, and a red line shows how much annual fees skim off."
 ---
 
 <p class="div-intro">
-Put all your money in one industry and 30 years later you might have <strong>50&times;</strong>, or
-barely your money back. Spread it across <em>many</em> industries and the wild swings temper significantly. The chart below plays this out on real returns: it grows <strong>$10,000</strong> from
-1995&ndash;2024. The faint grey band is the full range <em>any single industry</em> landed in. Drag the
+Put all your money in one industry and 30 years later you might have nearly <strong>50&times;</strong>, or
+barely your money back. Spread it across <em>many</em> industries and the wild swings temper significantly. The chart below plays this out on real returns: it grows <strong>$10,000</strong> over
+1996 to 2025. The shaded band is where a blend of that many industries tends to end up, and the faint grey
+lines are the industries in the current pick. Drag the
 slider to <strong>invest in more industries</strong>, and watch the bold line: your portfolio. The plot
-keeps <strong>reshuffling which industries you hold</strong> every half-second, so you can feel
+keeps <strong>reshuffling which industries you hold</strong> about every two-thirds of a second, so you can feel
 how much the outcome rides on luck when you hold a few, and how little when you hold many.
 </p>
 
 <div class="div-spread tex2jax_ignore">
   <canvas id="div-spread-canvas" class="div-spread-canvas"
-          aria-label="Animated chart: the growth of $10,000 from 1995 to 2024 on a log scale. A grey band shows the full range any single industry landed in. A slider sets how many industries are blended equal-weight; the chart reshuffles which ones it holds every half-second. With more industries the blended line and the cloud of recent blends vary less."></canvas>
+          aria-label="Animated chart: the growth of $10,000 from 1996 to 2025 on a log scale. A shaded band shows where a blend of that many industries tends to end up, with faint lines for the industries in the current pick. A slider sets how many industries are blended equal-weight; the chart reshuffles which ones it holds about every two-thirds of a second. With more industries the blended line and the cloud of recent blends vary less."></canvas>
 
   <div class="div-spread-controls">
     <label class="div-slider"><span>Industries blended: <strong id="div-n-val" class="editable-val" data-range="div-n">3</strong></span>
@@ -69,14 +70,17 @@ outcomes depending on how many industries are held (each size simulated over hun
   barely moves, so you give up little expected return for a lot less risk. <strong>Fees</strong>: the
   red line sits below the median no matter how well you diversify, and the gap compounds over time.
   That gap is the core reason low-fee index funds are hard to beat after costs.
-  <span class="div-src">Data: <a href="https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html">Ken French Data Library</a>, 30 Industry Portfolios, 1995&ndash;2024. Illustrative; past performance isn't predictive.</span>
+  <span class="div-src">Data: <a href="https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html">Ken French Data Library</a>, 30 Industry Portfolios, 1996&ndash;2025. Illustrative; past performance isn't predictive.</span>
 </p>
 
 <style>
 .div-intro, .div-foot { max-width: 760px; line-height: 1.65; }
 .div-intro { margin: 0.25rem 0 1.25rem; }
 .div-foot  { margin: 1.4rem 0 0; opacity: 0.92; }
-.div-src { display: block; margin-top: 0.6rem; font-size: 0.85rem; opacity: 0.7; }
+/* solid muted colour, not opacity: the dimmed Ken French link fell below AA */
+.div-src { display: block; margin-top: 0.6rem; font-size: 0.85rem; color: #a3a3a3; }
+html[data-theme="light"] .div-src { color: #5e5e5e; }
+@media (prefers-color-scheme: light) { html:not([data-theme="dark"]) .div-src { color: #5e5e5e; } }
 .div-explainer { max-width: 760px; }
 
 .div-canvas { width: 100%; height: 420px; display: block; }

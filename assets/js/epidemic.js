@@ -50,12 +50,32 @@
     if (f === 'light' || f === 'dark') return f;
     return (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
   }
-  function bg() { return effectiveTheme() === 'light' ? '#f3f5f8' : '#101216'; }
+  /* The theme is resolved ONCE per theme change, never per cell: calling
+     matchMedia for every cell of every frame kept a CPU core busy forever
+     (2.3 s of matchMedia in a 5 s profile). The page observes data-theme and
+     the OS scheme below and refreshes this, then redraws. */
+  var theme = effectiveTheme();
+  var dirty = true;                 // the canvas needs a redraw (step, input, theme, resize)
+  function bg() { return theme === 'light' ? '#f3f5f8' : '#101216'; }
   function cInfected() { return '#c4574a'; }                       // reserved warm red = harm
-  function cRecovered() { return effectiveTheme() === 'light' ? 'rgba(52,86,138,0.55)' : 'rgba(130,166,204,0.50)'; }
-  function cVax() { return effectiveTheme() === 'light' ? 'rgba(52,86,138,0.22)' : 'rgba(130,166,204,0.20)'; }
+  function cRecovered() { return theme === 'light' ? 'rgba(52,86,138,0.55)' : 'rgba(130,166,204,0.50)'; }
+  function cVax() { return theme === 'light' ? 'rgba(52,86,138,0.22)' : 'rgba(130,166,204,0.20)'; }
   function cSus() { return 'rgba(127,127,127,0.10)'; }
-  function textColor(a) { return effectiveTheme() === 'light' ? 'rgba(38,38,38,' + a + ')' : 'rgba(214,214,214,' + a + ')'; }
+  function textColor(a) { return theme === 'light' ? 'rgba(38,38,38,' + a + ')' : 'rgba(214,214,214,' + a + ')'; }
+  function refreshTheme() {
+    var t = effectiveTheme();
+    if (t !== theme) { theme = t; dirty = true; }
+  }
+  new MutationObserver(refreshTheme).observe(document.documentElement,
+    { attributes: true, attributeFilter: ['data-theme'] });
+  if (window.matchMedia) {
+    var mqLight = window.matchMedia('(prefers-color-scheme: light)');
+    if (mqLight.addEventListener) mqLight.addEventListener('change', refreshTheme);
+    else if (mqLight.addListener) mqLight.addListener(refreshTheme);
+  }
+  /* "Tap" for touch visitors, "Click" for a mouse (n19) */
+  var coarse = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+  var CLICK = coarse ? 'Tap' : 'Click';
 
   /* The floating chrome that sits above the canvas: the bottom-left corner
      buttons (#theme-toggle / #life-link, raised to bottom: 4rem on phones) and
@@ -78,8 +98,16 @@
       r = el.getBoundingClientRect();
       if (r.height) b = Math.max(b, window.innerHeight - r.top);
     }
-    cornerBand = b || fallbackBand();
-    panelBox = elPanel ? elPanel.getBoundingClientRect() : null;
+    b = b || fallbackBand();
+    var p = elPanel ? elPanel.getBoundingClientRect() : null;
+    /* the curve is laid out against these, so a change means a redraw */
+    if (b !== cornerBand || !sameBox(p, panelBox)) dirty = true;
+    cornerBand = b;
+    panelBox = p;
+  }
+  function sameBox(a, b) {
+    if (!a || !b) return a === b;
+    return a.left === b.left && a.top === b.top && a.right === b.right && a.bottom === b.bottom;
   }
 
   function resize() {
@@ -88,6 +116,7 @@
     if (!W || !H) return;
     canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    dirty = true;
   }
 
   function initGrid() {
@@ -105,6 +134,7 @@
     grid[c0] = durDays;
     history = [];
     over = false;
+    dirty = true;
   }
 
   function stepSim() {
@@ -132,6 +162,7 @@
     history.push(counts.i);
     if (history.length > HIST_MAX) history.shift();
     if (counts.i === 0) over = true;
+    dirty = true;
   }
 
   function recount() {
@@ -141,6 +172,7 @@
       if (v === 0) s++; else if (v === -1) rec++; else if (v === -2) vax++; else inf++;
     }
     counts = { s: s, i: inf, r: rec, v: vax };
+    dirty = true;                   // the status line reads these
   }
 
   function draw() {
@@ -150,14 +182,18 @@
     var i, x, y;
 
     ctx.fillStyle = cSus(); ctx.fillRect(0, 0, cols * cell, rows * cell);
-    for (y = 0; y < rows; y++) {
-      for (x = 0; x < cols; x++) {
-        var v = grid[y * cols + x];
-        if (v === 0) continue;
-        if (v > 0) ctx.fillStyle = cInfected();
-        else if (v === -1) ctx.fillStyle = cRecovered();
-        else ctx.fillStyle = cVax();
-        ctx.fillRect(x * cell, y * cell, cell - 1, cell - 1);
+    /* batched by colour: one fillStyle per state, not one per cell */
+    var pass, want, fills = [cInfected(), cRecovered(), cVax()];
+    for (pass = 0; pass < 3; pass++) {
+      ctx.fillStyle = fills[pass];
+      for (y = 0; y < rows; y++) {
+        for (x = 0; x < cols; x++) {
+          var v = grid[y * cols + x];
+          if (v === 0) continue;
+          want = v > 0 ? 0 : (v === -1 ? 1 : 2);
+          if (want !== pass) continue;
+          ctx.fillRect(x * cell, y * cell, cell - 1, cell - 1);
+        }
       }
     }
 
@@ -202,9 +238,11 @@
     if (status) {
       var n = cols * rows;
       var everPct = (((counts.r + counts.i) / Math.max(1, n - counts.v)) * 100).toFixed(0);
-      status.textContent = over
-        ? 'Outbreak over: ' + everPct + '% of the unvaccinated ever infected. Click to reignite.'
+      var msg = over
+        ? 'Outbreak over: ' + everPct + '% of the unvaccinated ever infected. ' + CLICK + ' to reignite.'
         : counts.i + ' infected · ' + counts.r + ' recovered · ' + counts.s + ' susceptible';
+      /* only on a real change: every write re-fires the aria-live mirror */
+      if (status.textContent !== msg) status.textContent = msg;
     }
   }
 
@@ -215,7 +253,9 @@
       lastStep = t;
       stepSim();
     }
-    draw();
+    /* redraw only after a step, input, theme change or resize: a paused or
+       finished outbreak costs next to nothing */
+    if (dirty) { dirty = false; draw(); }
   }
   function start() { if (!raf) raf = requestAnimationFrame(loop); }
 
@@ -257,6 +297,7 @@
       if (ni >= 0) { grid[ni] = durDays; infected++; }
     }
     if (doErase || paintMode === 'vaccinate' || infected) over = false;
+    dirty = true;
   }
   canvas.addEventListener('pointerdown', function (e) {
     /* take focus off any panel control: preventDefault below suppresses the
@@ -358,7 +399,7 @@
 
   /* panel collapse + first-run hint (shared helper) */
   if (window.GadgetUI) {
-    var hint = GadgetUI.firstRunHint('epidemic', 'Click or drag to infect.');
+    var hint = GadgetUI.firstRunHint('epidemic', CLICK + ' or drag to infect.');
     GadgetUI.initPanel({
       panel: elPanel, toggle: elCollapse,
       collapsedClass: 'epi-panel--collapsed',

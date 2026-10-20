@@ -6,7 +6,8 @@
    initPanel(opts)   — owns the top-right control panel's collapse state:
                        the toggle click handler, glyph flip (– open, +
                        collapsed), aria-expanded + aria-label updates, and
-                       auto-collapse below 600px at init. Optionally wires a
+                       auto-collapse below 600px wide or 500px tall (phone
+                       landscape) at init. Optionally wires a
                        quiet "?" help button to re-show the first-run hint.
                        opts: { panel, toggle, collapsedClass, help, hint,
                        onToggle } (panel/toggle/help take an id or element).
@@ -57,6 +58,11 @@
                        so page hotkeys like Space-to-pause and R-to-reset
                        stay alive after a click lands focus on a slider.
 
+   coarse()          — true under a coarse (touch) primary pointer. At load,
+                       every element carrying data-tap gets that text and
+                       every data-tap-label becomes its aria-label, so static
+                       copy says "Tap" to touch visitors and "Click" otherwise.
+
    liveStatus(el)    — mirrors el's textContent into a visually-hidden
                        role="status" div appended to document.body, so a
                        status line that lives inside a collapsible panel
@@ -80,10 +86,45 @@
     '.gadget-hint--show{opacity:1;}' +
     'html[data-theme="light"] .gadget-hint{background:rgba(255,255,255,0.92);color:#3a3a3a;}' +
     '@media (prefers-color-scheme: light){html:not([data-theme="dark"]) .gadget-hint{background:rgba(255,255,255,0.92);color:#3a3a3a;}}' +
-    '@media (prefers-reduced-motion: reduce){.gadget-hint{transition:none;}}';
+    '@media (prefers-reduced-motion: reduce){.gadget-hint{transition:none;}}' +
+    touchCss();
   var st = document.createElement('style');
   st.textContent = css;
   document.head.appendChild(st);
+
+  /* Touch sizing for the older gadget panels (36 to 40 px targets under a
+     coarse pointer). Scoped to these panels by id: the newer pages (voyage,
+     observatory, Keep It Together, creatures, fourinarow, computer) size
+     their own controls and are left exactly as they are. */
+  function touchCss() {
+    var ids = ['life', 'grav', 'mag', 'pend', 'epi', 'hash', 'adv', 'land', 'tt', 'fx'];
+    function sel(tail) {
+      return ids.map(function (k) { return '#' + k + '-panel ' + tail; }).join(',');
+    }
+    return '@media (pointer: coarse){' +
+      sel('.gadget-help') + '{min-width:40px;min-height:40px;padding:0 0.6em;}' +
+      sel('button') + '{min-width:36px;min-height:40px;}' +
+      sel('select') + '{min-height:40px;}' +
+      sel('input[type="checkbox"]') + '{width:20px;height:20px;flex:0 0 auto;}' +
+      sel('label[class$="-check"]') + '{min-height:40px;}' +
+    '}';
+  }
+  function isCoarse() {
+    return !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+  }
+  /* "Tap" for touch visitors: swap the static copy marked up for it */
+  function tapWords() {
+    if (!isCoarse() || !document.querySelectorAll) return;
+    var i, n, els = document.querySelectorAll('[data-tap]');
+    for (i = 0; i < els.length; i++) els[i].textContent = els[i].getAttribute('data-tap');
+    els = document.querySelectorAll('[data-tap-label]');
+    for (i = 0; i < els.length; i++) {
+      n = els[i];
+      n.setAttribute('aria-label', n.getAttribute('data-tap-label'));
+    }
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', tapWords);
+  else tapWords();
 
   function byId(x) { return typeof x === 'string' ? document.getElementById(x) : x; }
   function reducedMotion() {
@@ -106,8 +147,10 @@
     btn.addEventListener('click', function () {
       setCollapsed(!panel.classList.contains(cls));
     });
-    /* small screens start collapsed; this also normalizes the glyph + aria at init */
-    setCollapsed(window.innerWidth < 600);
+    /* small screens start collapsed, and so does a short one (a phone in
+       landscape, where the open panel covered about a third of the stage);
+       this also normalizes the glyph + aria at init */
+    setCollapsed(window.innerWidth < 600 || window.innerHeight < 500);
     /* every page calls firstRunHint before initPanel, so this is where a hint
        that is already on screen first learns where the panel is */
     placeHints();
@@ -499,6 +542,7 @@
     placeHints: placeHints,
     isTyping: isTyping,
     liveStatus: liveStatus,
+    coarse: isCoarse,
     /* the placement law on its own, for the node test in _tests/site/hint */
     PURE: { hintStrip: hintStrip, hintPlace: hintPlace, hintCovered: hintCovered }
   };

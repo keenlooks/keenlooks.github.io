@@ -75,13 +75,17 @@
   min-width: 7.5em;
 }
 
+/* Solid colours rather than opacity, so the small text clears WCAG AA (4.5:1)
+   in both themes: #8f8f8f on the dark footer is about 6:1; the light theme
+   sets $lt-muted (#6b6b6b, about 5.3:1 on #f5f5f5) in _color-scheme-light.scss.
+   12 px floor for the small caps headings (they were 9.6 px on phones). */
 .site-footer__heading {
   margin: 0 0 0.5em;
-  font-size: 0.8em;
+  font-size: unquote("max(12px, 0.8em)");
   font-weight: 700;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  opacity: 0.55;
+  color: #8f8f8f;
 }
 
 .site-footer__list {
@@ -118,7 +122,8 @@
 }
 
 .site-footer__copyright {
-  opacity: 0.7;
+  /* full footer colour: the 0.7 opacity it had fell below AA in light mode */
+  opacity: 1;
 }
 
 .site-footer__glider {
@@ -154,6 +159,18 @@
 @media (max-width: 600px) {
   .site-footer__grid {
     display: block;
+  }
+
+  /* Taller tap targets for the footer links on phones (they were 17 px tall
+     on a 23 px pitch). */
+  .site-footer__list li {
+    margin: 0;
+  }
+
+  .site-footer__list a,
+  .site-footer__colophon a {
+    display: inline-block;
+    padding: 0.45em 0;
   }
 
   .site-footer__col {

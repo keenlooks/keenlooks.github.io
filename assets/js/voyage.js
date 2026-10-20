@@ -3534,6 +3534,10 @@
 
   function selectBody(s, opts) {
     opts = opts || {};
+    /* m1: a chosen body opens a card the first-run plate would sit over, and
+       a keyboard or search choice never fires the pointerdown that dissolves
+       it, so every selection retires the plate */
+    if (firstHint) firstHint.dismiss();
     exitShipIdle('quiet');
     cancelStarCruise(true);
     cancelSysCruise();
@@ -11006,6 +11010,7 @@
       ariaLast = nowMs; setStatus(ariaPend); ariaPend = null;
     }
     draw(nowMs);
+    if (!skyShown) skyReady();           /* m35: the first painted frame */
     frameBudget(t - lastFrameT);
     cruiseBudget(t - lastFrameT);
     lastFrameT = t;
@@ -11018,6 +11023,20 @@
     bhWarmLens();
   }
   var lastFrameT = 0, framesPainted = 0, lastMode = null;
+  /* m35: the page markup carries a static loading line and holds the search
+     box and the buttons that act on the sky disabled (data-voy-boot) until
+     there is a sky to act on; the first painted frame releases both. */
+  var skyShown = false;
+  function skyReady() {
+    skyShown = true;
+    var n = id('voy-loading');
+    if (n && n.parentNode) n.parentNode.removeChild(n);
+    var w = document.querySelectorAll('[data-voy-boot]');
+    for (var i = 0; i < w.length; i++) {
+      w[i].disabled = false;
+      w[i].removeAttribute('data-voy-boot');
+    }
+  }
   function start() { if (!raf) { lastT = 0; raf = requestAnimationFrame(loop); } }
 
   /* ---------------- pointer input ---------------- */
@@ -11570,6 +11589,7 @@
     if (!h) return;
     closeSearchList();
     if (elSearch) elSearch.value = h.label;
+    if (firstHint) firstHint.dismiss();   /* m1: the Sun has no selectBody */
     userTouched();   /* a search during the intro must end it, or introStep
                         keeps overriding the flyTo camera */
     exitShipIdle('quiet');
@@ -11751,6 +11771,7 @@
         b.setAttribute('tabindex', qi === 0 ? '0' : '-1');
         b.addEventListener('click', function () {
           closeSurprise();
+          if (firstHint) firstHint.dismiss();   /* m1 */
           userTouched();
           SURPRISES[qi].go();
         });
@@ -12128,6 +12149,15 @@
     var hint = GadgetUI.firstRunHint('voyage',
       'Tap any planet or star, or search for one, and plan the trip.');
     firstHint = hint;                  /* A2-11: the wheel dismisses it too */
+    /* m1: and so does any key but Tab (and the bare modifiers that go with
+       it), so a keyboard visitor who starts typing or steering retires it
+       the way a pointer visitor does with the first press */
+    document.addEventListener('keydown', function (e) {
+      var k = e.key;
+      if (k === 'Tab' || k === 'Shift' || k === 'Control' || k === 'Alt' ||
+          k === 'Meta' || k === 'CapsLock') return;
+      if (firstHint) firstHint.dismiss();
+    }, true);
     var pnl = GadgetUI.initPanel({
       panel: elPanel, toggle: elCollapse,
       collapsedClass: 'voy-panel--collapsed',

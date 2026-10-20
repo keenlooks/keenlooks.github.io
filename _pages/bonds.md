@@ -98,7 +98,9 @@ If you have a bond (which is again really just a future payout of a specific amo
   width: 100%;
   height: 420px;
   display: block;
-  touch-action: none;
+  /* vertical swipes scroll the page on phones; taps and sideways drags of a
+     payout still reach the canvas */
+  touch-action: pan-y pinch-zoom;
 }
 .bond-explainer.coupon-mode .bond-canvas { cursor: pointer; }
 
