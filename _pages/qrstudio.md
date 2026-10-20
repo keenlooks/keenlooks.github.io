@@ -138,9 +138,9 @@ description: "A private, in-browser QR utility by Keane Lucas: generate static Q
   <section id="qs-scan" class="qs-panel" role="tabpanel" hidden>
     <div class="qs-grid">
       <div class="qs-left">
-        <div id="qs-drop" class="qs-drop">
+        <div id="qs-drop" class="qs-drop" tabindex="0" role="button" aria-label="Choose an image of a QR code">
           <input id="qs-file" type="file" accept="image/*" hidden style="display:none!important">
-          <div class="qs-drop__hint"><strong>Drop an image of a QR code here</strong><br>or click to choose one</div>
+          <div class="qs-drop__hint"><strong>Drop an image of a QR code here</strong><br>or <span id="qs-drop-verb">click</span> to choose one</div>
         </div>
         <div class="qs-camrow">
           <button id="qs-cam" class="qs-btn" type="button">Use camera</button>
@@ -153,11 +153,16 @@ description: "A private, in-browser QR utility by Keane Lucas: generate static Q
         <h2 class="qs-h">Result</h2>
         <p class="qs-status" id="qs-scan-status">Nothing decoded yet.</p>
         <div id="qs-result" hidden>
-          <pre class="qs-code qs-code--result"><code id="qs-decoded"></code></pre>
+          <div id="qs-items">
+            <div class="qs-item">
+              <p class="qs-item__label" hidden></p>
+              <pre class="qs-code qs-code--result"><code id="qs-decoded"></code></pre>
+              <button id="qs-copy" class="qs-btn qs-copy" type="button">Copy text</button>
+            </div>
+          </div>
           <p class="qs-warn" id="qs-linkwarn" hidden>This decodes to a link, shown as plain text on
           purpose. Check it before you open it. A code on a poster or sticker can point anywhere,
           including lookalike domains.</p>
-          <button id="qs-copy" class="qs-btn" type="button">Copy text</button>
         </div>
       </div>
     </div>
@@ -177,12 +182,12 @@ description: "A private, in-browser QR utility by Keane Lucas: generate static Q
     There is nothing in it to expire.</p>
   </details>
 
-  <p class="qs-privacy">🔒 Everything runs locally in your browser. What you encode or scan never
+  <p class="qs-privacy">Everything runs locally in your browser. What you encode or scan never
   leaves your device. (I use Google Analytics to see whether anyone visits this page, but it
   cannot see your data.)</p>
   <p class="qs-privacy" style="margin-top:0.35rem">A caveat: this is a personal side project and I make
   no guarantees; test a generated code with the scanner here (or your phone) before printing it
-  somewhere important.</p>
+  somewhere important. Found a problem? <a class="qs-report" href="mailto:{{ site.author.email }}?subject=QR%20Studio%20problem">Tell me</a>.</p>
   <p class="qs-credit">Built on two open-source libraries:
     <a href="https://github.com/kazuhikoarase/qrcode-generator" target="_blank" rel="noopener">qrcode-generator</a>
     by Kazuhiko Arase (MIT) for encoding, and
@@ -192,11 +197,14 @@ description: "A private, in-browser QR utility by Keane Lucas: generate static Q
 </div>
 
 <style>
-/* This is a utility, not an article — let it use more width than the reading column. */
+/* This is a utility, not an article: let it use more width than the reading column. */
 #main { max-width: 1200px; }
 .page { float: none; width: 100%; padding-left: 0; padding-right: 0; }
 .page__inner-wrap, .page__content { max-width: 100%; }
 .qs-wrap { max-width: 1040px; margin: 0 auto; }
+/* One left inset for the title and the tool: the h1 sits in the same centred
+   1040px column as .qs-wrap (it used to start 62px left of it on desktop). */
+.page__inner-wrap > header { max-width: 1040px; margin-left: auto; margin-right: auto; }
 .qs-wrap [hidden] { display: none !important; }   /* the hidden attr loses to display: rules otherwise */
 .qs-intro { max-width: 66ch; opacity: 0.9; line-height: 1.6; }
 
@@ -204,9 +212,10 @@ description: "A private, in-browser QR utility by Keane Lucas: generate static Q
 .qs-tabs { display: inline-flex; border: 1px solid rgba(127,127,127,0.4); border-radius: 8px; overflow: hidden; margin: 0.5rem 0 1.3rem; }
 .qs-tab { font: inherit; color: inherit; background: transparent; border: none; padding: 0.5em 1.4em; cursor: pointer; transition: background 0.15s ease; }
 .qs-tab:hover:not(.qs-tab--on) { background: rgba(127,127,127,0.14); }
-.qs-tab--on { background: #82a6cc; color: #fff; cursor: default; }
-html[data-theme="light"] .qs-tab--on { background: #34568a; }
-@media (prefers-color-scheme: light) { html:not([data-theme="dark"]) .qs-tab--on { background: #34568a; } }
+/* Dark text on the dark-theme accent fill (white on #82a6cc is 2.5:1); light keeps white on navy. */
+.qs-tab--on { background: #82a6cc; color: #141414; cursor: default; }
+html[data-theme="light"] .qs-tab--on { background: #34568a; color: #fff; }
+@media (prefers-color-scheme: light) { html:not([data-theme="dark"]) .qs-tab--on { background: #34568a; color: #fff; } }
 
 .qs-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 1.6rem; align-items: start; }
 @media (max-width: 760px) { .qs-grid { grid-template-columns: 1fr; } }
@@ -250,10 +259,14 @@ html[data-theme="light"] .qs-check input { accent-color: #34568a; }
 }
 .qs-btn:hover:not(:disabled) { background: rgba(127,127,127,0.26); }
 .qs-btn:disabled { opacity: 0.45; cursor: default; }
-.qs-btn--accent { background: #82a6cc; border-color: #82a6cc; color: #fff; }
+.qs-btn--accent { background: #82a6cc; border-color: #82a6cc; color: #141414; }
 .qs-btn--accent:hover:not(:disabled) { background: #6f97c2; }
-html[data-theme="light"] .qs-btn--accent { background: #34568a; border-color: #34568a; }
-@media (prefers-color-scheme: light) { html:not([data-theme="dark"]) .qs-btn--accent { background: #34568a; border-color: #34568a; } }
+html[data-theme="light"] .qs-btn--accent { background: #34568a; border-color: #34568a; color: #fff; }
+html[data-theme="light"] .qs-btn--accent:hover:not(:disabled) { background: #25406b; }
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .qs-btn--accent { background: #34568a; border-color: #34568a; color: #fff; }
+  html:not([data-theme="dark"]) .qs-btn--accent:hover:not(:disabled) { background: #25406b; }
+}
 
 /* Scan side */
 .qs-drop {
@@ -262,6 +275,9 @@ html[data-theme="light"] .qs-btn--accent { background: #34568a; border-color: #3
   transition: border-color 0.15s ease, background 0.15s ease;
 }
 .qs-drop--over { border-color: #82a6cc; background: rgba(130,166,204,0.10); }
+.qs-drop:focus-visible { border-color: #82a6cc; outline: 2px solid #82a6cc; outline-offset: 2px; }
+html[data-theme="light"] .qs-drop:focus-visible { border-color: #34568a; outline-color: #34568a; }
+@media (prefers-color-scheme: light) { html:not([data-theme="dark"]) .qs-drop:focus-visible { border-color: #34568a; outline-color: #34568a; } }
 #qs-file { display: none !important; }   /* the theme styles inputs, overriding the hidden attr */
 .qs-drop__hint { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: max-content; max-width: 90%; text-align: center; opacity: 0.7; pointer-events: none; line-height: 1.6; }
 .qs-camrow { display: flex; gap: 0.5rem; margin-top: 0.8rem; }
@@ -271,12 +287,23 @@ html[data-theme="light"] .qs-btn--accent { background: #34568a; border-color: #3
 .qs-status { font-size: 0.9em; opacity: 0.8; min-height: 1.2em; margin: 0 0 0.6rem; }
 .qs-code { background: rgba(127,127,127,0.12); border: 1px solid rgba(127,127,127,0.25); border-radius: 8px; padding: 0.6em 0.8em; margin: 0 0 0.7rem; }
 .qs-code code { white-space: pre-wrap; word-break: break-all; font-size: 0.88em; background: none; border: none; padding: 0; }
+.qs-item + .qs-item { margin-top: 1.3rem; }
+.qs-item__label { font-size: 0.85em; opacity: 0.8; margin: 0 0 0.3rem; font-variant-numeric: tabular-nums; }
+.qs-item .qs-code { margin-top: 0; }
+.qs-copy { margin-bottom: 0.2rem; }
+#qs-linkwarn { margin-top: 0.8rem; }
 .qs-warn { font-size: 0.9em; opacity: 0.85; line-height: 1.55; border-left: 3px solid rgba(127,127,127,0.5); padding-left: 0.7em; margin: 0 0 0.8rem; }
 
 .qs-note { margin: 1.6rem 0 0; font-size: 0.95em; max-width: 75ch; }
 .qs-note summary { cursor: pointer; opacity: 0.85; }
 .qs-note p { font-size: 0.92em; line-height: 1.6; opacity: 0.9; margin: 0.6rem 0 0; }
-.qs-privacy { font-size: 0.82em; opacity: 0.7; margin: 1.1rem 0 0; }
+.qs-privacy { font-size: 0.82em; margin: 1.1rem 0 0; }
+/* A solid muted colour, not opacity: opacity also dimmed the 'Tell me' link below AA
+   (3.6:1 light). Same greys as the shared credit-line rule in _page.scss:
+   #a3a3a3 on #141414 is about 7:1, #6b6b6b on white about 5.3:1. */
+.page__content .qs-privacy { color: #a3a3a3; }
+html[data-theme="light"] .page__content .qs-privacy { color: #6b6b6b; }
+@media (prefers-color-scheme: light) { html:not([data-theme="dark"]) .page__content .qs-privacy { color: #6b6b6b; } }
 .qs-credit { font-size: 0.8em; opacity: 0.6; line-height: 1.5; margin: 0.4rem 0 0; }
 
 /* Room at the end of the page so the last controls (the quiet-zone field on a

@@ -478,6 +478,33 @@
     });
   }
 
+  // decrypt a source PDF for export: qpdf --decrypt with the password pdf.js accepted
+  // ('' for a file with only an owner password). The core calls this as PT.qpdfDecrypt
+  // the first time pdf-lib reports a source as encrypted (decryptedLibDoc in
+  // pdftools.js), so a reopened protected PDF exports vector pages, not images.
+  function qpdfDecrypt(bytes, pw) {
+    if (typeof WebAssembly !== 'object') return Promise.reject(new Error('this browser does not support WebAssembly'));
+    return loadQpdf().then(function (factory) {
+      return factory({
+        locateFile: function (f) { return PT.jsBase + 'qpdflib/' + f; },
+        print: function () {},
+        printErr: function () {}
+      });
+    }).then(function (mod) {
+      mod.FS.writeFile('/in.pdf', bytes);
+      var args = (pw ? ['--password=' + pw] : []).concat(['--decrypt', '/in.pdf', '/out.pdf']);
+      var rc = 0;
+      try { rc = mod.callMain(args); }
+      catch (e) { rc = -1; }
+      var out = null;
+      try { out = mod.FS.readFile('/out.pdf'); } catch (e2) {}
+      // exit 3 is "succeeded with warnings"; the caller checks the output is not encrypted
+      if (!out || !out.length) throw new Error('decryption failed' + (rc ? ' (qpdf exit ' + rc + ')' : ''));
+      return out;
+    });
+  }
+  PT.qpdfDecrypt = qpdfDecrypt;
+
   if (protDialog) {
     var protPw = $('pt-protect-pw'), protPw2 = $('pt-protect-pw2'), protErr = $('pt-protect-err');
     var protShow = $('pt-protect-show');
@@ -574,7 +601,9 @@
       var aspect = (sz && sz.w > 0 && sz.h > 0) ? sz.h / sz.w : 1;
       return (words || []).map(function (w) {
         var fs = Math.max(1e-4, w.y1 - w.y0);
-        return { text: w.text, x0: w.x0, y0: w.y0, x1: w.x1, y1: w.y1, fontSize: fs, fontSizeX: fs * aspect };
+        // word: an OCR word is a whole word, so PURE.groupLines spaces it from the next
+        // one even when the tight boxes leave a gap under its threshold ("ofNovember")
+        return { text: w.text, x0: w.x0, y0: w.y0, x1: w.x1, y1: w.y1, fontSize: fs, fontSizeX: fs * aspect, word: true };
       });
     }
 
@@ -652,13 +681,23 @@
       return Promise.all([PT.pdfjsPage(pg), PT.effPointSize(pg), PT.pageEffRotation(pg)]).then(function (r) {
         var page = r[0], eff = r[1], rot = r[2];
         var baseRot = (((rot - (pg.rot || 0)) % 360) + 360) % 360;
-        return page.getTextContent().then(function (tc) {
+        // includeMarkedContent only adds marker items (pdf.js splits runs at marked content
+        // either way); it lets a reopened searchable PDF's own OCR layer (the sequence
+        // PURE.drawOcrWords tags PURE.OCR_TAG) be read as whole words, which PURE.groupLines
+        // spaces whatever the gap. A native text layer is read exactly as before: pdf.js's
+        // whitespace items there are often zero-width or sub-space and are no word breaks.
+        return page.getTextContent({ includeMarkedContent: true }).then(function (tc) {
           var vp = page.getViewport({ scale: 1, rotation: baseRot });
           var base = { w: vp.width, h: vp.height };
           var toks = [];
+          var tags = [];
           (tc.items || []).forEach(function (it) {
+            if (it && (it.type === 'beginMarkedContent' || it.type === 'beginMarkedContentProps')) { tags.push(it.tag); return; }
+            if (it && it.type === 'endMarkedContent') { tags.pop(); return; }
             var tok = PURE.itemToToken(vp.transform, it, base.w, base.h, tc.styles);
-            if (tok) toks.push(tok);
+            if (!tok) return;
+            if (tags.indexOf(PURE.OCR_TAG) >= 0) tok.word = true;
+            toks.push(tok);
           });
           if (!toks.length) toks = ocrWordsToTokens(words, base);
           return finish(toks, textTokens(pg.texts, eff, back, base));

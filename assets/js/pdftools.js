@@ -61,6 +61,116 @@
     }
   };
 
+  // A file opened with its password is exported decrypted, so the "-protected" that
+  // Protect put in its name ("lease-protected.pdf", or "lease-protected (1).pdf" after a
+  // second download) must not ride into exports that are no longer protected.
+  PURE.dropProtectedSuffix = function (name) {
+    return String(name || '').replace(/-protected(?=(?: \(\d+\))?(?:\.pdf)?$)/i, '');
+  };
+
+  // MS-DOS date and time words for a ZIP entry: local time, two-second resolution, and
+  // nothing before 1980 (the format's epoch; an all-zero date reads as 00-00-1980)
+  PURE.dosDateTime = function (d) {
+    var y = d.getFullYear();
+    if (!(y >= 1980)) return { date: (1 << 5) | 1, time: 0 };
+    return {
+      date: ((Math.min(y, 2107) - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate(),
+      time: (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1)
+    };
+  };
+
+  // A JPEG as a camera or phone wrote it carries more than pixels: EXIF (GPS position,
+  // camera make, model and serial, capture time), XMP, IPTC, an ICC profile, MPF secondary
+  // images, comments, and on some phones data appended after the image. None of it belongs
+  // in a PDF made from the photo (pdf-lib's embedJpg stores the file as it is, whatever
+  // "Strip metadata" says). Returns { orientation (the EXIF tag, 1 when absent or bad),
+  // w, h (the STORED pixel size, from the frame header), bytes } where bytes keeps only
+  // what decoding needs: SOI, a JFIF APP0, an Adobe APP14 (it says how to read CMYK), the
+  // tables, the frame header, the scans, EOI; everything else is dropped, and so is
+  // anything after EOI. null when the data does not parse (the caller then re-encodes
+  // the picture through a canvas instead). The compressed image data is not touched.
+  PURE.cleanJpeg = function (b) {
+    if (!b || b.length < 4 || b[0] !== 0xFF || b[1] !== 0xD8) return null;
+    var n = b.length, keep = [[0, 2]], i = 2, orientation = 1, w = 0, h = 0, inScan = false;
+    function u16(p, le) { return le ? (b[p] | (b[p + 1] << 8)) : ((b[p] << 8) | b[p + 1]); }
+    function u32(p, le) { return le ? ((b[p] | (b[p + 1] << 8) | (b[p + 2] << 16)) + b[p + 3] * 16777216) : (b[p] * 16777216 + ((b[p + 1] << 16) | (b[p + 2] << 8) | b[p + 3])); }
+    function has(p, s) { for (var k = 0; k < s.length; k++) if (b[p + k] !== s.charCodeAt(k)) return false; return true; }
+    // the Orientation tag (0x0112, SHORT) in IFD0 of the TIFF block starting at t, inside [t, end)
+    function exifOrientation(t, end) {
+      if (t + 8 > end) return 0;
+      var le = b[t] === 0x49 && b[t + 1] === 0x49;
+      if (!le && !(b[t] === 0x4D && b[t + 1] === 0x4D)) return 0;
+      if (u16(t + 2, le) !== 42) return 0;
+      var ifd = t + u32(t + 4, le);
+      if (ifd + 2 > end) return 0;
+      var cnt = u16(ifd, le);
+      for (var k = 0; k < cnt; k++) {
+        var e = ifd + 2 + k * 12;
+        if (e + 12 > end) return 0;
+        if (u16(e, le) === 0x0112 && u16(e + 2, le) === 3) {
+          var v = u16(e + 8, le);
+          return v >= 1 && v <= 8 ? v : 0;
+        }
+      }
+      return 0;
+    }
+    while (i < n) {
+      if (inScan) {
+        // entropy-coded data runs to the next marker that is not a stuffed FF00 or an RSTn
+        var j = i;
+        while (j < n - 1 && !(b[j] === 0xFF && b[j + 1] !== 0x00 && !(b[j + 1] >= 0xD0 && b[j + 1] <= 0xD7))) j++;
+        if (j >= n - 1) return null;   // no EOI: truncated
+        keep.push([i, j]); i = j; inScan = false;
+        continue;
+      }
+      if (b[i] !== 0xFF || i + 1 >= n) return null;
+      var m = b[i + 1];
+      if (m === 0xFF) { i++; continue; }                                       // fill byte
+      if (m === 0xD9) {                                                        // EOI: stop here
+        keep.push([i, i + 2]);
+        if (!(w > 0 && h > 0)) return null;
+        var size = keep.reduce(function (a, r) { return a + r[1] - r[0]; }, 0);
+        var out = new Uint8Array(size), pos = 0;
+        keep.forEach(function (r) { out.set(b.subarray(r[0], r[1]), pos); pos += r[1] - r[0]; });
+        return { orientation: orientation, w: w, h: h, bytes: out };
+      }
+      if (m === 0x01 || (m >= 0xD0 && m <= 0xD7)) { keep.push([i, i + 2]); i += 2; continue; }
+      if (i + 4 > n) return null;
+      var len = u16(i + 2), end = i + 2 + len;
+      if (len < 2 || end > n) return null;
+      var drop = false;
+      if (m === 0xFE) drop = true;                                              // COM
+      else if (m >= 0xE0 && m <= 0xEF) {                                        // APPn
+        if (m === 0xE1 && orientation === 1 && has(i + 4, 'Exif\0\0')) orientation = exifOrientation(i + 10, end) || 1;
+        drop = !((m === 0xE0 && has(i + 4, 'JFIF\0')) || (m === 0xEE && has(i + 4, 'Adobe')));
+      }
+      // SOF0..SOF15 (not DHT C4, JPG C8, DAC CC): precision, height, width
+      if (m >= 0xC0 && m <= 0xCF && m !== 0xC4 && m !== 0xC8 && m !== 0xCC && len >= 7) { h = u16(i + 5); w = u16(i + 7); }
+      if (!drop) keep.push([i, end]);
+      if (m === 0xDA) inScan = true;
+      i = end;
+    }
+    return null;
+  };
+
+  // The PDF drawing matrix (a b c d e f, for the cm operator) that shows a stored image
+  // the way a viewer honouring EXIF orientation o shows the photo, on a page of PW x PH
+  // points that is already sized to the UPRIGHT picture (so 5 to 8 swap the stored width
+  // and height). PDF draws an image into the unit square with its first stored row at
+  // the top; 1 is the plain [PW 0 0 PH 0 0].
+  PURE.orientMatrix = function (o, PW, PH) {
+    switch (o) {
+      case 2: return [-PW, 0, 0, PH, PW, 0];      // mirrored left to right
+      case 3: return [-PW, 0, 0, -PH, PW, PH];    // turned 180
+      case 4: return [PW, 0, 0, -PH, 0, PH];      // mirrored top to bottom
+      case 5: return [0, -PH, -PW, 0, PW, PH];    // transposed
+      case 6: return [0, -PH, PW, 0, 0, PH];      // turned 90 clockwise
+      case 7: return [0, PH, PW, 0, 0, 0];        // transversed
+      case 8: return [0, PH, -PW, 0, PW, 0];      // turned 90 counterclockwise
+      default: return [PW, 0, 0, PH, 0, 0];
+    }
+  };
+
   // Plan the COPY-route pages of an export into as few pdf-lib copyPages() calls as
   // possible. This is the whole fix for the split-size bug: pdf-lib 1.17.1 builds a FRESH
   // PDFObjectCopier inside every copyPages() call, and that copier's traversedObjects map
@@ -680,8 +790,15 @@
   // invisible OCR text layer: words carry normalized bboxes {text, x0, y0, x1, y1}
   // (fractions of page width/height, y down from the top). Font size is chosen so the
   // drawn word width matches the recognized box, which makes selection/search line up.
+  // Each word is drawn WITH a trailing space (its size still from the word alone): an
+  // extractor that infers spaces from gaps (Apple PDFKit: Preview, Safari, iOS) read
+  // tight OCR gaps as no gap at all ("foxjumps", "ofNovember").
+  // The words sit inside one marked-content sequence tagged PURE.OCR_TAG, so Copy clean
+  // text on a reopened searchable PDF can tell this layer's words apart (each is a whole
+  // word) from a native text layer, where pdf.js's tiny whitespace items are no spaces.
+  PURE.OCR_TAG = 'OCRText';
   PURE.drawOcrWords = function (P, page, font, words, W, H, ox, oy) {
-    var drawn = 0;
+    var drawn = 0, opened = false;
     ox = ox || 0; oy = oy || 0;   // the visible box's origin (CropBox pages); 0, 0 otherwise
     (words || []).forEach(function (w) {
       var text = PURE.sanitizeWinAnsi(w.text);
@@ -693,10 +810,12 @@
       if (!(w1 > 0)) return;
       var size = Math.max(1, Math.min(bw / w1, bh * 1.6, 200));
       try {
-        page.drawText(text, { x: ox + w.x0 * W, y: oy + (H - w.y1 * H + bh * 0.18), size: size, font: font, opacity: 0 });
+        if (!opened && P.beginMarkedContent) { page.pushOperators(P.beginMarkedContent(PURE.OCR_TAG)); opened = true; }
+        page.drawText(text + ' ', { x: ox + w.x0 * W, y: oy + (H - w.y1 * H + bh * 0.18), size: size, font: font, opacity: 0 });
         drawn++;
       } catch (e2) { /* one unencodable word must not break the page */ }
     });
+    if (opened) page.pushOperators(P.endMarkedContent());
     return drawn;
   };
 
@@ -1346,7 +1465,9 @@
         if (prev) {
           var gap = t.x0 - prev.x1;
           var thresh = Math.max(gapUnit(prev), gapUnit(t)) * 0.18;
-          if (gap > thresh) text += ' ';
+          // two OCR words (token.word) are separate words whatever the gap: their boxes are
+          // tight to the ink, so a normal word space can measure under the threshold
+          if (gap > thresh || (prev.word && t.word)) text += ' ';
         }
         text += s;
         prev = t;
@@ -1636,7 +1757,7 @@
   })();
 
   // ---- state ----
-  var docs = [];             // { name, bytes:Uint8Array (for pdf-lib), js:pdfjsDoc (for rendering), formValues }
+  var docs = [];             // { name, bytes:Uint8Array (for pdf-lib), js:pdfjsDoc (for rendering), formValues, pw (until decrypted) }
   var pages = [];            // page model — see newPage()
   var pageNums = null;       // { fmt:'n'|'nofm', pos:'bc'|'br', start, skipFirst, size } or null
   var lastFlattenedRot = 0;  // pages the last build rasterized because overlays sat on a rotated page
@@ -1787,7 +1908,7 @@
     undoStack.entries().forEach(function (e) { mark(e.pages); });
     docs.forEach(function (d, i) {
       if (!d || used[i] || !d.bytes) return;
-      d.bytes = null;
+      d.bytes = null; d.pw = null;
       if (d.js) { try { d.js.destroy(); } catch (e) {} d.js = null; }
     });
   }
@@ -1919,9 +2040,15 @@
     // pdf.js detaches the buffer it's given, so hand it a COPY and keep `bytes` for pdf-lib.
     // Retry with a password from the styled modal if the PDF is password-protected.
     function attempt(password) {
-      return pdfjsLib.getDocument({ data: bytes.slice(0), password: password }).promise.then(function (jsDoc) {
+      // isEvalSupported: false keeps pdf.js from compiling font glyph programs with
+      // new Function (CVE-2024-4367: a crafted FontMatrix ran script on this origin)
+      return pdfjsLib.getDocument({ data: bytes.slice(0), password: password, isEvalSupported: false }).promise.then(function (jsDoc) {
         var docIndex = docs.length;
-        docs.push({ name: name, bytes: bytes, js: jsDoc, formValues: null });
+        // a password-protected source keeps the password until its first export decrypts
+        // it (decryptedLibDoc), and its exports are not protected, so not named so
+        var rec = { name: password != null ? PURE.dropProtectedSuffix(name) : name, bytes: bytes, js: jsDoc, formValues: null };
+        if (password != null) rec.pw = password;
+        docs.push(rec);
         for (var i = 0; i < jsDoc.numPages; i++) pages.push(newPage(docIndex, i));
       }).catch(function (e) {
         var needsPw = e && (e.name === 'PasswordException' || /password/i.test(e.message || ''));
@@ -1981,24 +2108,51 @@
     passDialog.addEventListener('click', function (e) { if (e.target === passDialog) passDone(null); });
   }
 
-  // wrap an image file in a single-page PDF (so it flows through the same pipeline)
+  // wrap an image file in a single-page PDF (so it flows through the same pipeline).
+  // A JPEG is embedded from PURE.cleanJpeg's copy (EXIF with its GPS and camera data, XMP
+  // and the rest cut out, the compressed pixels untouched) and drawn through the matrix
+  // its EXIF Orientation asks for, so a portrait phone photo is a portrait page in every
+  // picture (thumbnail, editor, export) on every browser. A JPEG that does not parse is
+  // re-encoded through a canvas, which writes no metadata either. PNG needs nothing:
+  // pdf-lib decodes it and stores only the pixels; webp/gif/bmp go through a canvas.
   function imageToPdfBytes(file) {
     return file.arrayBuffer().then(function (buf) {
       var bytes = new Uint8Array(buf);
       return PDFLib.PDFDocument.create().then(function (doc) {
+        function pageSize(W, H) {
+          var maxSide = 1100, s = Math.min(1, maxSide / Math.max(W, H));
+          return [Math.max(1, Math.round(W * s)), Math.max(1, Math.round(H * s))];
+        }
         function place(img) {
-          var W = img.width, H = img.height, maxSide = 1100, s = Math.min(1, maxSide / Math.max(W, H));
-          var pw = Math.max(1, Math.round(W * s)), ph = Math.max(1, Math.round(H * s));
-          doc.addPage([pw, ph]).drawImage(img, { x: 0, y: 0, width: pw, height: ph });
+          var sz = pageSize(img.width, img.height);
+          doc.addPage(sz).drawImage(img, { x: 0, y: 0, width: sz[0], height: sz[1] });
+          return doc.save();
+        }
+        function placeOriented(img, o) {
+          if (o === 1) return place(img);
+          var swap = o >= 5;
+          var sz = pageSize(swap ? img.height : img.width, swap ? img.width : img.height);
+          var page = doc.addPage(sz), m = PURE.orientMatrix(o, sz[0], sz[1]);
+          var xo = page.node.newXObject('Image', img.ref);
+          page.pushOperators(PDFLib.pushGraphicsState(),
+            PDFLib.concatTransformationMatrix(m[0], m[1], m[2], m[3], m[4], m[5]),
+            PDFLib.drawObject(xo), PDFLib.popGraphicsState());
           return doc.save();
         }
         if (/png$/i.test(file.type) || /\.png$/i.test(file.name)) return doc.embedPng(bytes).then(place);
-        if (/jpe?g$/i.test(file.type) || /\.jpe?g$/i.test(file.name)) return doc.embedJpg(bytes).then(place);
+        if (/jpe?g$/i.test(file.type) || /\.jpe?g$/i.test(file.name)) {
+          var jp = PURE.cleanJpeg(bytes);
+          if (jp) return doc.embedJpg(jp.bytes).then(function (img) { return placeOriented(img, jp.orientation); });
+          return blobToImageBytes(file, 'image/jpeg', 0.92).then(function (jpg) { return doc.embedJpg(jpg).then(place); });
+        }
         return blobToPngBytes(file).then(function (png) { return doc.embedPng(png).then(place); });   // webp/gif/bmp via canvas
       });
     });
   }
-  function blobToPngBytes(file) {
+  function blobToPngBytes(file) { return blobToImageBytes(file, 'image/png'); }
+  // decode an image file with the browser (which applies any orientation tag) and encode
+  // it afresh as `mime` (a canvas writes no metadata); JPEG output is drawn on white
+  function blobToImageBytes(file, mime, quality) {
     return new Promise(function (res, rej) {
       var url = URL.createObjectURL(file), im = new Image();
       im.onload = function () {
@@ -2008,8 +2162,10 @@
         // drawImage throw would leave addFiles stuck busy forever with the toolbar inert
         try {
           var c = document.createElement('canvas'); c.width = im.naturalWidth; c.height = im.naturalHeight;
-          c.getContext('2d').drawImage(im, 0, 0);
-          canvasToBytes(c, 'image/png').then(function (png) { c.width = 0; res(png); }, rej);
+          var cx = c.getContext('2d');
+          if (mime === 'image/jpeg') { cx.fillStyle = '#fff'; cx.fillRect(0, 0, c.width, c.height); }
+          cx.drawImage(im, 0, 0);
+          canvasToBytes(c, mime, quality).then(function (out) { c.width = 0; res(out); }, rej);
         } catch (e) { rej(e); }
       };
       im.onerror = function () { URL.revokeObjectURL(url); rej(new Error('could not decode image')); };
@@ -2680,11 +2836,38 @@
   });
 
   // ---------- build / download ----------
+  // pdf-lib reads an encrypted PDF (ignoreEncryption) but cannot decrypt it, so its pages
+  // would copy as garbage. The vendored qpdf (PT.qpdfDecrypt, pdftools-tools.js) decrypts
+  // the source ONCE, with the password pdf.js accepted ('' for a file that has only an
+  // owner password, which opens without asking), and the plain bytes replace d.bytes, so
+  // every later build copies vector pages. Any failure (the engine cannot load, qpdf reads
+  // the password differently, the output is still encrypted) hands back the encrypted
+  // doc, and copyBatch rasterizes its pages as before: the raster route stays for files
+  // that cannot be decrypted or are damaged.
+  function decryptedLibDoc(d, encDoc) {
+    var dec = window.__PT && window.__PT.qpdfDecrypt;
+    if (!dec || !d.bytes) return encDoc;
+    if (!d.decrypting) d.decrypting = dec(d.bytes, d.pw || '').then(null, function (e) {
+      if (window.console) console.warn('pdftools: could not decrypt ' + d.name + '; its pages will be flattened to images', e);
+      return null;
+    });
+    return d.decrypting.then(function (plain) {
+      if (!plain) return encDoc;
+      return PDFLib.PDFDocument.load(plain, { ignoreEncryption: true }).then(function (doc) {
+        if (doc.isEncrypted) { d.decrypting = Promise.resolve(null); return encDoc; }
+        if (d.bytes) { d.bytes = plain; d.pw = null; }
+        return doc;
+      }, function () { d.decrypting = Promise.resolve(null); return encDoc; });
+    });
+  }
+
   function getLibDoc(cache, docIndex) {
     if (cache[docIndex]) return cache[docIndex];
     var d = docs[docIndex];
     if (!d || !d.bytes) return (cache[docIndex] = Promise.reject(new Error('source PDF is no longer available')));   // tombstoned by pruneDocs
     cache[docIndex] = PDFLib.PDFDocument.load(d.bytes, { ignoreEncryption: true }).then(function (doc) {
+      return doc.isEncrypted ? decryptedLibDoc(d, doc) : doc;
+    }).then(function (doc) {
       // apply any filled form values, then flatten so the values bake into page content
       if (d.formValues && Object.keys(d.formValues).length) {
         try {
@@ -3026,8 +3209,10 @@
   function copyBatch(out, cache, routes, b) {
     return Promise.resolve(getLibDoc(cache, b.docIndex)).then(function (src) {
       // pdf-lib loads encrypted PDFs (ignoreEncryption) but does NOT decrypt their streams,
-      // so copyPages would copy encrypted garbage → blank/corrupt pages. pdf.js decrypts and
-      // renders fine, so route encrypted sources through the rasterize fallback instead.
+      // so copyPages would copy encrypted garbage → blank/corrupt pages. getLibDoc has
+      // already tried qpdf (decryptedLibDoc); a source still encrypted here is one that
+      // could not be decrypted, and pdf.js renders it fine, so route it through the
+      // rasterize fallback instead.
       // Decided ONCE per document, before any copy is attempted: one warning, no probing,
       // no trial copies for a document that is known not to be copyable.
       if (src && src.isEncrypted) {
@@ -3686,19 +3871,20 @@
   function storeZip(files) {
     var enc = new TextEncoder();
     var locals = [], central = [], offset = 0;
+    var dt = PURE.dosDateTime(new Date());   // every entry dated now (an all-zero date unzips as 1979/1980)
     files.forEach(function (f) {
       var name = enc.encode(f.name), data = f.data, crc = crc32(data);
       var lh = new Uint8Array(30 + name.length);
       var dv = new DataView(lh.buffer);
       dv.setUint32(0, 0x04034b50, true); dv.setUint16(4, 20, true); dv.setUint16(6, 0x0800, true);   /* bit 11: names are UTF-8 */
-      dv.setUint16(8, 0, true); dv.setUint16(10, 0, true); dv.setUint16(12, 0, true);
+      dv.setUint16(8, 0, true); dv.setUint16(10, dt.time, true); dv.setUint16(12, dt.date, true);
       dv.setUint32(14, crc, true); dv.setUint32(18, data.length, true); dv.setUint32(22, data.length, true);
       dv.setUint16(26, name.length, true); dv.setUint16(28, 0, true);
       lh.set(name, 30);
       locals.push(lh, data);
       var ch = new Uint8Array(46 + name.length); var cv = new DataView(ch.buffer);
       cv.setUint32(0, 0x02014b50, true); cv.setUint16(4, 20, true); cv.setUint16(6, 20, true);
-      cv.setUint16(8, 0x0800, true); cv.setUint16(10, 0, true); cv.setUint16(12, 0, true); cv.setUint16(14, 0, true);   /* bit 11: names are UTF-8 */
+      cv.setUint16(8, 0x0800, true); cv.setUint16(10, 0, true); cv.setUint16(12, dt.time, true); cv.setUint16(14, dt.date, true);   /* bit 11: names are UTF-8 */
       cv.setUint32(16, crc, true); cv.setUint32(20, data.length, true); cv.setUint32(24, data.length, true);
       cv.setUint16(28, name.length, true); cv.setUint32(42, offset, true);
       ch.set(name, 46);

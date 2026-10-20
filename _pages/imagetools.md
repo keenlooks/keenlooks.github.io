@@ -1,16 +1,14 @@
 ---
 layout: single
-title: "Resize an Image to an Exact File Size in Your Browser"
+title: "Image Studio"
 permalink: /imagetools/
 og_image: /images/og/imagetools.png
 author_profile: false
 excerpt: "Remove a background or resize an image to a target file size, crop, rotate, strip metadata, and generate a favicon pack, all running privately in your browser with nothing uploaded."
-description: "Remove a background without uploading the photo anywhere: brush what to keep and what to remove, and it runs in your browser. Also resize an image to an exact file size (like 500 KB), crop, rotate, convert JPEG/PNG/WebP, strip EXIF metadata, and generate a favicon pack as a .zip. Nothing is uploaded."
+description: "Resize an image to an exact file size in your browser, like under 100 KB or 500 KB. Also remove a background by brushing what to keep and what to remove, crop, rotate, convert JPEG/PNG/WebP, strip EXIF metadata, and generate a favicon pack as a .zip. Nothing is uploaded."
 ---
 
 <div class="it-wrap">
-
-  <h1 class="it-title">Image Studio</h1>
 
   <p class="it-intro">
     A small image utility that runs entirely in your browser. Resize a photo down to whatever file
@@ -18,19 +16,21 @@ description: "Remove a background without uploading the photo anywhere: brush wh
     Nothing is uploaded anywhere; the file never leaves your device, and re-saving it strips the EXIF
     metadata (camera model, GPS location, timestamps) along the way.
   </p>
-  <p class="it-privacy" style="margin:0 0 0.4rem">A caveat: this is a personal side project and I have not
-  tested it exhaustively. I make no guarantees; keep your original files.</p>
+  <p class="it-privacy it-caveat" style="margin:0 0 0.4rem">A caveat: this is a personal side project and I have not
+  tested it exhaustively. I make no guarantees; keep your original files. Found a problem?
+  <a href="mailto:{{ site.author.email }}?subject=Image%20Studio%20problem">Tell me</a>.</p>
 
   <div class="it-grid">
     <div class="it-left">
-      <div id="it-drop" class="it-drop">
+      <div id="it-drop" class="it-drop" tabindex="0" role="button" aria-label="Choose an image">
         <input id="it-file" type="file" accept="image/*" hidden style="display:none!important">
         <canvas id="it-canvas" class="it-canvas" aria-label="Image preview"></canvas>
         <div class="it-drop__hint">
-          <strong>Drop an image here</strong><br>or click to choose one
+          <strong>Drop an image here</strong><br>or <span class="it-drop__verb">click</span> to choose one
         </div>
       </div>
       <div class="it-tools">
+        <button id="it-choose" class="it-btn" type="button">Choose image</button>
         <button id="it-rot-l" class="it-btn" type="button" title="Rotate 90° left">⟲</button>
         <button id="it-rot-r" class="it-btn" type="button" title="Rotate 90° right">⟳</button>
         <button id="it-flip-h" class="it-btn" type="button" title="Flip horizontal">⇋</button>
@@ -78,7 +78,7 @@ description: "Remove a background without uploading the photo anywhere: brush wh
       <button id="it-favicon" class="it-btn it-wide" type="button">Generate favicon pack (.zip)</button>
 
       <p class="it-status" id="it-status" aria-live="polite"></p>
-      <p class="it-privacy">🔒 100% in-browser. Your image is never uploaded. (I use Google Analytics to see whether anyone visits this page, but it cannot see your image.)</p>
+      <p class="it-privacy">100% in-browser. Your image is never uploaded. (I use Google Analytics to see whether anyone visits this page, but it cannot see your image.)</p>
     </div>
   </div>
 
@@ -270,9 +270,11 @@ description: "Remove a background without uploading the photo anywhere: brush wh
 #main { max-width: 1200px; }
 .page { float: none; width: 100%; padding-left: 0; padding-right: 0; }
 .page__inner-wrap, .page__content { max-width: 100%; }
-/* The front-matter title is search-facing; the on-page heading stays "Image Studio". */
-.page__title { display: none; }
-.it-title { margin: 0 0 0.2em; }
+/* The layout's h1 (the front-matter title) is the page heading: line it up with
+   the tool's column below. */
+.page__inner-wrap > header { max-width: 1080px; margin: 0 auto; }
+.page__title { margin: 0 0 0.2em; }
+.page__inner-wrap > header > p { margin: 0; }   /* the layout's empty byline paragraph */
 /* Bottom padding so the Export column's buttons can always be scrolled clear of
    the fixed chat bar (full width at 768px and under) and the corner buttons. */
 .it-wrap { max-width: 1080px; margin: 0 auto; padding-bottom: 2rem; }
@@ -289,17 +291,20 @@ description: "Remove a background without uploading the photo anywhere: brush wh
   cursor: pointer; transition: border-color 0.15s ease, background 0.15s ease; overflow: hidden;
 }
 .it-drop--over { border-color: #82a6cc; background: rgba(130,166,204,0.10); }
+.it-drop:focus-visible { border-color: #82a6cc; outline: 2px solid #82a6cc; outline-offset: 2px; }
 .it-drop--has { cursor: default; }
 .it-drop--has .it-drop__hint { display: none; }
-/* touch-action: none — crop drags and the rotation gizmo use Pointer Events;
-   without it, touch drags fight page scrolling on phones (site playbook). */
-.it-canvas { width: 100%; height: 420px; display: block; touch-action: none; -ms-touch-action: none; }
+/* A finger on the preview scrolls the page; only crop mode takes the whole
+   gesture (.it-canvas--crop, set by setCropping). The rotate handle claims its
+   own touches with a non-passive touchstart in imagetools.js. */
+.it-canvas { width: 100%; height: 420px; display: block; touch-action: pan-y pinch-zoom; }
+.it-canvas.it-canvas--crop { touch-action: none; -ms-touch-action: none; }
 #it-file { display: none !important; }   /* the theme styles inputs, overriding the `hidden` attr */
 .it-drop__hint { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; opacity: 0.7; pointer-events: none; line-height: 1.6; }
 
 .it-tools { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.7rem; }
 .it-dims { font-size: 0.85em; opacity: 0.7; margin: 0.5rem 0 0; font-variant-numeric: tabular-nums; }
-.it-hint { opacity: 0.85; }
+.it-hint { opacity: 1; }   /* stacked on .it-dims' 0.7 it fell below AA in light */
 
 .it-h { font-size: 1.15rem; margin: 0 0 0.45rem; }
 .it-h--gap { margin-top: 1.6rem; }
@@ -334,30 +339,36 @@ html[data-theme="light"] .it-rotfield input[type="range"] { accent-color: #34568
 }
 .it-btn:hover { background: rgba(127,127,127,0.26); }
 .it-btn:disabled { opacity: 0.45; cursor: default; }
-.it-btn--on { background: #82a6cc; border-color: #82a6cc; color: #fff; }
+/* #141414 on the dark-theme accent is 7.3:1; white on it was 2.5:1 */
+.it-btn--on { background: #82a6cc; border-color: #82a6cc; color: #141414; }
 /* `.it-btn:hover` out-specifies `.it-btn--on`, which washed the selected
    state out of a pressed toggle (Crop, and the cutout's Keep/Remove pair).
    On touch the hover sticks after a tap, so the mode looked unset. */
-.it-btn--on:hover { background: #82a6cc; border-color: #82a6cc; color: #fff; }
-.it-btn--accent { background: #82a6cc; border-color: #82a6cc; color: #fff; }
+.it-btn--on:hover { background: #82a6cc; border-color: #82a6cc; color: #141414; }
+.it-btn--accent { background: #82a6cc; border-color: #82a6cc; color: #141414; }
 .it-btn--accent:hover { background: #6f97c2; }
 .it-wide { width: 100%; padding: 0.6em; margin-top: 0.3rem; }
 .it-estimate { font-size: 0.9em; opacity: 0.85; min-height: 1.2em; margin: 0.15rem 0 0.4rem; font-variant-numeric: tabular-nums; }
 .it-note { font-size: 0.85em; opacity: 0.8; line-height: 1.5; margin: 0 0 0.6rem; }
 .it-status { font-size: 0.88em; opacity: 0.9; min-height: 1.2em; margin: 0.8rem 0 0.4rem; }
 .it-privacy { font-size: 0.82em; opacity: 0.7; margin: 0; }
+/* The caveat carries the "Tell me" link, and opacity would fade the link below
+   AA too, so this line gets the same grey as a solid colour instead. */
+.it-caveat { opacity: 1; color: #9c9c9c; }
+html[data-theme="light"] .it-caveat { color: #676767; }
+@media (prefers-color-scheme: light) { html:not([data-theme="dark"]) .it-caveat { color: #676767; } }
 
 .it-faq { margin-top: 2.2rem; max-width: 64ch; }
 .it-faq details { margin: 0.5rem 0; }
 .it-faq summary { cursor: pointer; font-weight: 600; }
 .it-faq p { font-size: 0.95em; line-height: 1.6; opacity: 0.9; margin: 0.5rem 0 0.3rem; }
 
-html[data-theme="light"] .it-btn--on, html[data-theme="light"] .it-btn--accent { background: #34568a; border-color: #34568a; }
-html[data-theme="light"] .it-btn--on:hover { background: #34568a; border-color: #34568a; }
+html[data-theme="light"] .it-btn--on, html[data-theme="light"] .it-btn--accent { background: #34568a; border-color: #34568a; color: #fff; }
+html[data-theme="light"] .it-btn--on:hover { background: #34568a; border-color: #34568a; color: #fff; }
 html[data-theme="light"] .it-field input[type="range"] { accent-color: #34568a; }
 @media (prefers-color-scheme: light) {
-  html:not([data-theme="dark"]) .it-btn--on, html:not([data-theme="dark"]) .it-btn--accent { background: #34568a; border-color: #34568a; }
-  html:not([data-theme="dark"]) .it-btn--on:hover { background: #34568a; border-color: #34568a; }
+  html:not([data-theme="dark"]) .it-btn--on, html:not([data-theme="dark"]) .it-btn--accent { background: #34568a; border-color: #34568a; color: #fff; }
+  html:not([data-theme="dark"]) .it-btn--on:hover { background: #34568a; border-color: #34568a; color: #fff; }
   html:not([data-theme="dark"]) .it-field input[type="range"] { accent-color: #34568a; }
 }
 

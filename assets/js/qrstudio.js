@@ -4,7 +4,8 @@
  *
  * Encoding: qrcode-generator 1.5.0 (Kazuhiko Arase, MIT) — assets/js/qrlib/qrcode.js
  * Decoding: jsQR 1.4.0 (Apache-2.0) — assets/js/qrlib/jsQR.js, with the browser's
- * native BarcodeDetector preferred for the live camera where available.
+ * native BarcodeDetector preferred (camera and image files) where available.
+ * BarcodeDetector finds every code in an image; jsQR finds at most one.
  *
  * The preview and both exports are always pure black modules on white,
  * regardless of site theme, so the code stays scannable.
@@ -342,17 +343,50 @@
     $('qs-scan-status').textContent = msg;
   }
 
-  function showResult(text) {
+  var items = $('qs-items');
+  var LINKWARN_ONE = $('qs-linkwarn').textContent.replace(/\s+/g, ' ').trim();
+  var LINKWARN_MANY = 'At least one of these decodes to a link, shown as plain text on purpose. ' +
+    'Check each one before you open it. A code on a poster or sticker can point anywhere, ' +
+    'including lookalike domains.';
+
+  function isLink(t) { return /^(https?:\/\/|www\.)/i.test(String(t).trim()); }
+
+  /* texts: an array of decoded strings (every code found), a single string,
+   * or null/empty for "nothing found". The first result block is the static
+   * markup (#qs-decoded, #qs-copy); blocks for further codes are clones. */
+  function showResult(texts) {
     var res = $('qs-result');
-    if (!text) {
+    if (typeof texts === 'string') texts = [texts];
+    if (!texts || !texts.length) {
       res.hidden = true;
-      scanStatus('No QR code found in that image. A larger, straighter, better-lit shot usually works.');
+      scanStatus('No QR code found in that image. A larger, straighter, better-lit shot usually works. ' +
+        'If the image has more than one code, crop it to one.');
       return;
     }
-    $('qs-decoded').textContent = text;
-    $('qs-linkwarn').hidden = !/^(https?:\/\/|www\.)/i.test(text.trim());
+    var blocks = items.querySelectorAll('.qs-item'), i;
+    for (i = blocks.length - 1; i >= 1; i--) blocks[i].remove();
+    var first = blocks[0], many = texts.length > 1, anyLink = false;
+    for (i = 0; i < texts.length; i++) {
+      var blk = i === 0 ? first : first.cloneNode(true);
+      if (i > 0) {
+        var withId = blk.querySelectorAll('[id]');
+        for (var j = 0; j < withId.length; j++) withId[j].removeAttribute('id');
+        items.appendChild(blk);
+      }
+      var lab = blk.querySelector('.qs-item__label');
+      lab.hidden = !many;
+      lab.textContent = many ? 'Code ' + (i + 1) + ' of ' + texts.length : '';
+      blk.querySelector('code').textContent = texts[i];
+      blk.querySelector('.qs-copy').textContent = 'Copy text';
+      blk.querySelector('.qs-copy').setAttribute('aria-label', many ? 'Copy code ' + (i + 1) : 'Copy text');
+      if (isLink(texts[i])) anyLink = true;
+    }
+    var warn = $('qs-linkwarn');
+    warn.textContent = many ? LINKWARN_MANY : LINKWARN_ONE;
+    warn.hidden = !anyLink;
     res.hidden = false;
-    scanStatus('Decoded ' + text.length + ' character' + (text.length === 1 ? '' : 's') + '.');
+    if (many) scanStatus('Found ' + texts.length + ' QR codes in that image.');
+    else scanStatus('Decoded ' + texts[0].length + ' character' + (texts[0].length === 1 ? '' : 's') + '.');
   }
 
   function jsqrOn(source, w, h) {
@@ -388,22 +422,59 @@
     return null;
   }
 
+  /* Every distinct code BarcodeDetector sees, in reading order (rows top to
+   * bottom, then left to right). Resolves null when the API is missing, fails,
+   * or finds nothing, so the caller falls back to jsQR. */
+  function detectAllNative(img) {
+    if (!window.BarcodeDetector) return Promise.resolve(null);
+    var bd;
+    try { bd = new window.BarcodeDetector({ formats: ['qr_code'] }); } catch (e) { return Promise.resolve(null); }
+    return bd.detect(img).then(function (codes) {
+      var list = [], seen = {}, i, c, b;
+      for (i = 0; i < (codes || []).length; i++) {
+        c = codes[i];
+        if (!c || typeof c.rawValue !== 'string' || !c.rawValue || seen[c.rawValue]) continue;
+        seen[c.rawValue] = true;
+        b = c.boundingBox || { x: 0, y: 0, width: 0, height: 0 };
+        list.push({ text: c.rawValue, x: b.x, y: b.y, h: b.height });
+      }
+      list.sort(function (a, z) {
+        var tol = Math.min(a.h, z.h) / 2;
+        if (Math.abs(a.y - z.y) > tol) return a.y - z.y;
+        return a.x - z.x;
+      });
+      return list.length ? list.map(function (o) { return o.text; }) : null;
+    }, function () { return null; });
+  }
+
+  var fileSeq = 0;   /* a newer file wins over a decode still in flight */
+
   function handleFile(file) {
     if (!file) return;
     if (!/^image\//.test(file.type)) {
       scanStatus('That does not look like an image file.');
       return;
     }
+    var my = ++fileSeq;
     var url = URL.createObjectURL(file);
     var img = new Image();
     img.onload = function () {
       URL.revokeObjectURL(url);
+      if (my !== fileSeq) return;
       scanStatus('Decoding…');
       /* let the status paint before the (possibly slow) decode */
-      setTimeout(function () { showResult(decodeImageEl(img)); }, 20);
+      setTimeout(function () {
+        detectAllNative(img).then(function (list) {
+          if (my !== fileSeq) return;
+          if (list) { showResult(list); return; }
+          var one = decodeImageEl(img);
+          showResult(one ? [one] : null);
+        });
+      }, 20);
     };
     img.onerror = function () {
       URL.revokeObjectURL(url);
+      if (my !== fileSeq) return;
       scanStatus('Could not read that image.');
     };
     img.src = url;
@@ -411,6 +482,18 @@
 
   var drop = $('qs-drop'), fileInput = $('qs-file');
   drop.addEventListener('click', function () { fileInput.click(); });
+  /* keyboard path: the zone is a role=button with tabindex=0 */
+  drop.addEventListener('keydown', function (e) {
+    if (e.target !== drop) return;
+    if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+      e.preventDefault();
+      fileInput.click();
+    }
+  });
+  if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) {
+    var verb = $('qs-drop-verb');
+    if (verb) verb.textContent = 'tap';
+  }
   fileInput.addEventListener('change', function () {
     handleFile(fileInput.files && fileInput.files[0]);
     fileInput.value = '';
@@ -527,9 +610,12 @@
     return ok;
   }
 
-  $('qs-copy').addEventListener('click', function () {
-    var t = $('qs-decoded').textContent;
-    var b = $('qs-copy');
+  /* one delegated handler for every result block's Copy button */
+  items.addEventListener('click', function (e) {
+    var b = e.target && e.target.closest ? e.target.closest('.qs-copy') : null;
+    if (!b) return;
+    var blk = b.closest('.qs-item');
+    var t = blk ? blk.querySelector('code').textContent : '';
     function done(ok) {
       b.textContent = ok ? 'Copied' : 'Copy failed';
       setTimeout(function () { b.textContent = 'Copy text'; }, 1400);

@@ -45,6 +45,7 @@ description: "A private, in-browser diff checker by Keane Lucas: compare two pie
     <label class="df-check"><input type="checkbox" id="df-trim"> Ignore leading/trailing whitespace</label>
     <label class="df-check"><input type="checkbox" id="df-allws"> Ignore all whitespace</label>
     <label class="df-check"><input type="checkbox" id="df-case"> Ignore case</label>
+    <label class="df-check"><input type="checkbox" id="df-wrapln"> Wrap long lines</label>
     <span class="df-spacer"></span>
     <button id="df-compare" class="df-btn df-btn--accent" type="button" title="Ctrl+Enter">Compare</button>
     <button id="df-copy" class="df-btn" type="button">Copy unified diff</button>
@@ -61,8 +62,8 @@ description: "A private, in-browser diff checker by Keane Lucas: compare two pie
   <p class="df-stats" id="df-stats" aria-live="polite"></p>
   <div id="df-out" class="df-out"></div>
 
-  <p class="df-privacy">🔒 100% in-browser. Your text and files are never uploaded. (I use Google Analytics to see whether anyone visits this page, but it cannot see your content.)</p>
-  <p class="df-privacy" style="margin-top:0.35rem">A caveat: this is a personal side project and I have not tested it exhaustively; for anything important, double-check the result rather than trusting it blindly.</p>
+  <p class="df-privacy">100% in-browser. Your text and files are never uploaded. (I use Google Analytics to see whether anyone visits this page, but it cannot see your content.)</p>
+  <p class="df-privacy" style="margin-top:0.35rem">A caveat: this is a personal side project and I have not tested it exhaustively; for anything important, double-check the result rather than trusting it blindly. Found a problem? <a class="df-report" href="mailto:{{ site.author.email }}?subject=Diff%20Checker%20problem">Tell me</a>.</p>
   <p class="df-credit">Text diffing by <a href="https://github.com/kpdecker/jsdiff" rel="noopener">jsdiff</a> (BSD 3-Clause). PDF text extraction by Mozilla's <a href="https://mozilla.github.io/pdf.js/" rel="noopener">pdf.js</a> (Apache 2.0). Both are served from this site.</p>
 </div>
 
@@ -72,7 +73,7 @@ description: "A private, in-browser diff checker by Keane Lucas: compare two pie
 #main { max-width: 1400px; }
 .page { float: none; width: 100%; padding-left: 0; padding-right: 0; }
 .page__inner-wrap, .page__content { max-width: 100%; }
-.df-wrap { max-width: 1340px; margin: 0 auto; }
+.df-wrap { max-width: 1340px; margin: 0; }   /* left edge shared with the page title */
 .df-wrap [hidden] { display: none !important; }   /* [hidden] loses to any display: rule */
 .df-intro { max-width: 72ch; opacity: 0.9; line-height: 1.6; }
 
@@ -121,14 +122,15 @@ html[data-theme="light"] .df-ta::placeholder { color: #737373; }
 }
 .df-btn:hover { background: rgba(127,127,127,0.26); }
 .df-btn--sm { padding: 0.35em 0.65em; font-size: 0.85em; }
-.df-btn--on, .df-btn--accent { background: #82a6cc; border-color: #82a6cc; color: #fff; }
+/* Dark text on the light dark-theme accent (white on #82a6cc is 2.5:1; #141414 is 7.3:1). */
+.df-btn--on, .df-btn--accent { background: #82a6cc; border-color: #82a6cc; color: #141414; }
 .df-btn--accent:hover, .df-btn--on:hover { background: #6f97c2; }
-html[data-theme="light"] .df-btn--on, html[data-theme="light"] .df-btn--accent { background: #34568a; border-color: #34568a; }
+html[data-theme="light"] .df-btn--on, html[data-theme="light"] .df-btn--accent { background: #34568a; border-color: #34568a; color: #fff; }
 html[data-theme="light"] .df-btn--accent:hover, html[data-theme="light"] .df-btn--on:hover { background: #2c4a77; }
 html[data-theme="light"] .df-check input[type="checkbox"] { accent-color: #34568a; }
 html[data-theme="light"] .df-pane--over { border-color: #34568a; background: rgba(52,86,138,0.06); }
 @media (prefers-color-scheme: light) {
-  html:not([data-theme="dark"]) .df-btn--on, html:not([data-theme="dark"]) .df-btn--accent { background: #34568a; border-color: #34568a; }
+  html:not([data-theme="dark"]) .df-btn--on, html:not([data-theme="dark"]) .df-btn--accent { background: #34568a; border-color: #34568a; color: #fff; }
   html:not([data-theme="dark"]) .df-btn--accent:hover, html:not([data-theme="dark"]) .df-btn--on:hover { background: #2c4a77; }
   html:not([data-theme="dark"]) .df-check input[type="checkbox"] { accent-color: #34568a; }
   html:not([data-theme="dark"]) .df-pane--over { border-color: #34568a; background: rgba(52,86,138,0.06); }
@@ -172,6 +174,10 @@ html[data-theme="light"] .df-out {
   font-family: Consolas, "SF Mono", Menlo, Monaco, "Liberation Mono", monospace;
   font-size: 0.8rem; line-height: 1.5;
 }
+/* Rows sit in blocks of 200 (.df-chunk); off-screen blocks skip layout and paint. A block
+   is as wide as its longest row (paint containment would otherwise clip long lines). */
+.df-chunk { content-visibility: auto; contain-intrinsic-block-size: auto 300em; width: max-content; min-width: 100%; }
+.df-out--wrap .df-chunk { width: auto; }
 .df-row { display: flex; width: max-content; min-width: 100%; min-height: 1.5em; }
 .df-ln {
   flex: none; width: var(--df-gw, 4ch); padding-right: 0.7ch; text-align: right;
@@ -180,6 +186,16 @@ html[data-theme="light"] .df-out {
 .df-pre { flex: none; width: 1.4ch; opacity: 0.7; user-select: none; white-space: pre; }
 .df-code { white-space: pre; padding-right: 1ch; }
 .df-code:empty::after { content: "\00a0"; }
+
+/* Wrap long lines: rows grow downward instead of scrolling sideways. Side by side puts
+   each line pair in one row (.df-pair) so the two halves stay level. */
+.df-out--wrap .df-row { width: auto; }
+.df-out--wrap .df-code { flex: 1 1 auto; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.df-out--wrap .df-col { overflow-x: hidden; }
+.df-pairhead, .df-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.df-pairhead { column-gap: 0.75rem; }
+.df-pair > .df-row { min-width: 0; }
+.df-pair > .df-row + .df-row { border-left: 1px solid rgba(127,127,127,0.3); }
 
 .df-add { background: var(--df-add-bg); }
 .df-del { background: var(--df-del-bg); }
@@ -196,8 +212,14 @@ html[data-theme="light"] .df-out {
 html[data-theme="light"] .df-foldrow:focus-visible { outline-color: #34568a; }
 @media (prefers-color-scheme: light) { html:not([data-theme="dark"]) .df-foldrow:focus-visible { outline-color: #34568a; } }
 
-.df-privacy { font-size: 0.82em; opacity: 0.7; margin: 1.4rem 0 0; }
-.df-credit { font-size: 0.78em; opacity: 0.6; margin: 0.3rem 0 0; }
+/* Solid muted colours rather than opacity, so the links in these lines keep their contrast. */
+.df-privacy { font-size: 0.82em; color: #9c9c9c; margin: 1.4rem 0 0; }
+.df-credit { font-size: 0.78em; color: #9c9c9c; margin: 0.3rem 0 0; }
+.df-report { text-decoration: underline; text-underline-offset: 0.15em; }
+html[data-theme="light"] .df-privacy, html[data-theme="light"] .df-credit { color: #6b6b6b; }
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .df-privacy, html:not([data-theme="dark"]) .df-credit { color: #6b6b6b; }
+}
 </style>
 
 <script defer src="{{ '/assets/js/difflib/diff.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>

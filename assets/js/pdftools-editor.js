@@ -378,6 +378,10 @@
   }
   function coarse() { try { return window.matchMedia('(pointer: coarse)').matches; } catch (er) { return false; } }
   function gripLift() { return coarse() ? 34 : 22; }
+  // n19: the grid tip above the thumbnails says "Double-tap" under a coarse pointer
+  // (the static HTML says "Double-click", which is what a mouse visitor sees)
+  var gridTip = $('pt-tip');
+  if (gridTip && coarse()) gridTip.textContent = gridTip.textContent.replace(/^Double-click\b/, 'Double-tap');
   function buildTextHandles(el) {
     var t = el.__model;
     var grip = document.createElement('span'); grip.className = 'pt-anno__grip';

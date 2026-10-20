@@ -72,17 +72,27 @@
   /* ---------- tiny CRC32 + store-only ZIP writer ---------- */
   var CRC = (function () { var t = new Uint32Array(256); for (var n = 0; n < 256; n++) { var c = n; for (var k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1); t[n] = c >>> 0; } return t; })();
   function crc32(buf) { var c = 0xFFFFFFFF; for (var i = 0; i < buf.length; i++) c = CRC[(c ^ buf[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+  /* MS-DOS time and date of "now" in local time, as unzip expects (a zero
+     date lists as 1980-00-00 and extracts as 1979/1980) */
+  function dosStamp(d) {
+    return {
+      time: (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1),
+      date: (Math.max(0, d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate()
+    };
+  }
   function zipStore(files) {
-    var enc = new TextEncoder(), parts = [], central = [], offset = 0, i;
+    var enc = new TextEncoder(), parts = [], central = [], offset = 0, i, ds = dosStamp(new Date());
     for (i = 0; i < files.length; i++) {
       var name = enc.encode(files[i].name), data = files[i].data, crc = crc32(data);
       var lh = new DataView(new ArrayBuffer(30));
       lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true);
+      lh.setUint16(10, ds.time, true); lh.setUint16(12, ds.date, true);
       lh.setUint32(14, crc, true); lh.setUint32(18, data.length, true); lh.setUint32(22, data.length, true);
       lh.setUint16(26, name.length, true);
       parts.push(new Uint8Array(lh.buffer), name, data);
       var cd = new DataView(new ArrayBuffer(46));
       cd.setUint32(0, 0x02014b50, true); cd.setUint16(4, 20, true); cd.setUint16(6, 20, true);
+      cd.setUint16(12, ds.time, true); cd.setUint16(14, ds.date, true);
       cd.setUint32(16, crc, true); cd.setUint32(20, data.length, true); cd.setUint32(24, data.length, true);
       cd.setUint16(28, name.length, true); cd.setUint32(42, offset, true);
       central.push(new Uint8Array(cd.buffer), name);
@@ -104,22 +114,66 @@
     var x = c.getContext('2d'); x.imageSmoothingQuality = 'high'; x.drawImage(src, 0, 0, c.width, c.height);
     return c;
   }
-  function fmtBytes(n) { return n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(2) + ' MB'; }
+  /* KB and MB are 1,000 and 1,000,000 bytes, the unit Finder and most upload
+     forms use; the target slider means the same unit (see buildExport) */
+  function fmtBytes(n) { return n < 1000 ? n + ' B' : n < 1e6 ? (n / 1000).toFixed(1) + ' KB' : (n / 1e6).toFixed(2) + ' MB'; }
+  /* "Scan of receipt (2).JPG" -> "Scan of receipt (2)", safe as a file name base
+     (the same rule PDF Toolbench uses) */
+  function baseName(name) {
+    var b = String(name || '').replace(/\.[^.]*$/, '');
+    b = b.replace(/[\/\\:*?"<>|\x00-\x1f]+/g, ' ').replace(/\s+/g, ' ').trim();
+    var chars = Array.from(b);
+    if (chars.length > 60) b = chars.slice(0, 60).join('').trim();
+    return b || 'image';
+  }
 
   /* ---------- load ---------- */
+  var srcName = '';                  /* the loaded file's name, for the export name */
   function loadFile(file) {
     var st = id('it-status');
-    if (!file || !/^image\//.test(file.type)) { if (st) st.textContent = 'That doesn’t look like an image file.'; return; }
+    var fname = (file && file.name) || '';
+    /* some systems give HEIC/AVIF files an empty type; let the extension vouch for them */
+    var isHeic = /\.(heic|heif)$/i.test(fname) || /heic|heif/i.test((file && file.type) || '');
+    if (!file || !(/^image\//.test(file.type) || /\.(heic|heif|avif)$/i.test(fname))) { if (st) st.textContent = 'That doesn’t look like an image file.'; return; }
     var url = URL.createObjectURL(file);
     var im = new Image();
-    im.onerror = function () { URL.revokeObjectURL(url); if (st) st.textContent = 'Could not read that image (unsupported or corrupt).'; };
+    im.onerror = function () {
+      URL.revokeObjectURL(url);
+      if (st) st.textContent = isHeic
+        ? 'This browser cannot open HEIC photos (Safari can). Save the photo as a JPEG first, then choose that.'
+        : 'Could not read that image (unsupported or corrupt).';
+    };
     im.onload = function () {
+      /* An SVG with HTML inside (foreignObject) taints any canvas it is drawn
+         on, and a tainted canvas can never be exported: every save would hang.
+         Probe on a scratch canvas first so the current image stays intact. */
+      try {
+        var probe = document.createElement('canvas'); probe.width = 1; probe.height = 1;
+        var pctx = probe.getContext('2d'); pctx.drawImage(im, 0, 0, 1, 1); pctx.getImageData(0, 0, 1, 1);
+      } catch (taint) {
+        URL.revokeObjectURL(url);
+        if (st) st.textContent = /svg/i.test(file.type) || /\.svg$/i.test(fname)
+          ? 'This SVG embeds HTML content the browser will not let a page re-save; export it as PNG first.'
+          : 'Your browser will not let this page re-save that image.';
+        return;
+      }
       work.width = im.naturalWidth; work.height = im.naturalHeight;
       wctx.drawImage(im, 0, 0);
       orig.width = work.width; orig.height = work.height;
       orig.getContext('2d').drawImage(work, 0, 0);
       URL.revokeObjectURL(url);
       loaded = true; cropRect = null; cropping = false; fineAngle = 0; history = []; fmtSwitch = null; editSeq++;
+      srcName = fname;
+      if (disp) disp.classList.remove('it-canvas--crop');
+      var cbt = id('it-crop'); if (cbt) cbt.classList.remove('it-btn--on');
+      if (st) st.textContent = '';
+      var ch = id('it-choose'); if (ch) ch.textContent = 'Choose another image';
+      /* the drop zone is a "choose a file" button only while it is empty; after
+         a load the canvas inside it is for cropping and rotating, and the
+         Choose another image button takes over */
+      var hadFocus = document.activeElement === drop;
+      drop.removeAttribute('role'); drop.removeAttribute('tabindex'); drop.removeAttribute('aria-label');
+      if (hadFocus && ch) ch.focus();
       var u = id('it-undo'); if (u) u.disabled = true;
       var cb = id('it-cutout'); if (cb) cb.disabled = false;
       var db = id('it-download'); if (db) { db.disabled = false; db.removeAttribute('title'); }
@@ -134,8 +188,19 @@
   drop.addEventListener('dragleave', function () { drop.classList.remove('it-drop--over'); });
   drop.addEventListener('drop', function (e) { e.preventDefault(); drop.classList.remove('it-drop--over'); if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]); });
   var fileInput = id('it-file');
-  if (fileInput) fileInput.addEventListener('change', function () { if (fileInput.files[0]) loadFile(fileInput.files[0]); });
+  /* clear the value afterwards so choosing the same file again still fires */
+  if (fileInput) fileInput.addEventListener('change', function () { if (fileInput.files[0]) loadFile(fileInput.files[0]); fileInput.value = ''; });
   drop.addEventListener('click', function (e) { if (!loaded && fileInput) fileInput.click(); });
+  /* keyboard path in: the empty drop zone is a button (role, tabindex and label in the markup) */
+  drop.addEventListener('keydown', function (e) {
+    if (loaded || !fileInput || e.target !== drop) return;
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+  });
+  var chooseBtn = id('it-choose');
+  if (chooseBtn) chooseBtn.addEventListener('click', function () { if (fileInput) fileInput.click(); });
+  /* "tap" on touch screens, "click" otherwise */
+  var verb = drop.querySelector('.it-drop__verb');
+  if (verb && window.matchMedia && window.matchMedia('(pointer: coarse)').matches) verb.textContent = 'tap';
 
   /* ---------- preview render (fit work canvas into the display) + crop overlay ---------- */
   var viewScale = 1, viewX = 0, viewY = 0;
@@ -211,7 +276,7 @@
         try { disp.setPointerCapture(e.pointerId); } catch (er) {}
         e.preventDefault(); return;
       }
-      if (handlePos && Math.hypot(px - handlePos.x, py - handlePos.y) < 18) {   /* grab the rotate handle */
+      if (handlePos && Math.hypot(px - handlePos.x, py - handlePos.y) < (e.pointerType === 'touch' ? 24 : 18)) {   /* grab the rotate handle */
         rotating = true; try { disp.setPointerCapture(e.pointerId); } catch (er2) {}
         e.preventDefault();
       }
@@ -245,6 +310,21 @@
         setCropping(false); updateInfo();
       }
     });
+    disp.addEventListener('pointercancel', function () {
+      cdrag = null;
+      if (rotating) { rotating = false; fineAngle = 0; }
+      if (cropping) cropRect = null;
+      render();
+    });
+    /* The canvas lets a finger scroll the page (touch-action: pan-y) except
+       while cropping (.it-canvas--crop sets none). A touch that starts on the
+       rotate handle is a rotation, so it cancels the scroll here; a
+       non-passive touchstart is the only way to do that once the gesture began. */
+    disp.addEventListener('touchstart', function (e) {
+      if (!loaded || cropping || !handlePos || !e.touches || e.touches.length !== 1) return;
+      var r = disp.getBoundingClientRect(), t = e.touches[0];
+      if (Math.hypot(t.clientX - r.left - handlePos.x, t.clientY - r.top - handlePos.y) < 24) e.preventDefault();
+    }, { passive: false });
     disp.addEventListener('pointermove', function (e) {   /* hover cursor over the handle */
       if (cropping || rotating || cdrag || !handlePos) return;
       var r = disp.getBoundingClientRect();
@@ -252,7 +332,7 @@
     });
   }
   function setCropping(on) {
-    cropping = on; if (disp) disp.style.cursor = on ? 'crosshair' : 'default';
+    cropping = on; if (disp) { disp.style.cursor = on ? 'crosshair' : 'default'; disp.classList.toggle('it-canvas--crop', on); }
     var cb = id('it-crop'); if (cb) cb.classList.toggle('it-btn--on', on);
     if (on) bakeRotation();          /* crop works on the un-rotated (baked) image */
     else cropRect = null;
@@ -277,7 +357,13 @@
   }
   /* free-angle rotation is done by dragging the on-image handle (see the pointer
      handlers above); the 90° buttons are still here for quick quarter turns. */
-  window.addEventListener('keydown', function (e) { if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); undo(); } });
+  window.addEventListener('keydown', function (e) {
+    if (!(e.ctrlKey || e.metaKey) || (e.key !== 'z' && e.key !== 'Z')) return;
+    /* inside a field, Ctrl+Z belongs to the field's own text undo */
+    var t = e.target;
+    if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+    e.preventDefault(); undo();
+  });
   id('it-rot-l').addEventListener('click', function () { rotate(-1); });
   id('it-rot-r').addEventListener('click', function () { rotate(1); });
   id('it-flip-h').addEventListener('click', function () { flip(true); });
@@ -331,28 +417,32 @@
     /* toBlob can return null (not throw) when the canvas is too big for the
        browser to encode — guard every result so one null doesn't crash the
        search or clobber an earlier usable blob. */
+    /* Returns { blob, w, h }: the size of the canvas actually encoded, which
+       is smaller than the source whenever the search had to downscale. */
     var scale = 1, best = null;
     for (var attempt = 0; attempt < 7; attempt++) {
       var c = scaledCanvas(src, scale);
       if (type === 'image/png') {
         var p = await toBlob(c, type);                /* png: quality not adjustable → downscale only */
-        if (p) { best = p; if (p.size <= targetBytes) return p; }
+        if (p) { best = { blob: p, w: c.width, h: c.height }; if (p.size <= targetBytes) return best; }
       } else {
         var lo = 0.25, hi = 0.95, b = await toBlob(c, type, hi);
-        if (b && b.size <= targetBytes) return b;
+        if (b && b.size <= targetBytes) return { blob: b, w: c.width, h: c.height };
         if (b) {
-          for (var it = 0; it < 8; it++) { var mid = (lo + hi) / 2; b = await toBlob(c, type, mid); if (b && b.size <= targetBytes) { best = b; lo = mid; } else hi = mid; }
-          if (best && best.size <= targetBytes) return best;
+          for (var it = 0; it < 8; it++) { var mid = (lo + hi) / 2; b = await toBlob(c, type, mid); if (b && b.size <= targetBytes) { best = { blob: b, w: c.width, h: c.height }; lo = mid; } else hi = mid; }
+          if (best && best.blob.size <= targetBytes) return best;
         }
       }
       scale *= 0.8;
     }
-    return best;
+    return best;   /* PNG only: the smallest it got, still over the target (the caller says so) */
   }
   async function buildExport() {
-    var src = exportSource(), type = typeStr(), blob, encodeFailed = false;
+    var src = exportSource(), type = typeStr(), blob = null, w = src.width, h = src.height, encodeFailed = false, targetBytes = 0;
     if (elMode.value === 'target') {
-      blob = await encodeToTarget(src, type, (+elTarget.value) * 1024);
+      targetBytes = (+elTarget.value) * 1000;   /* 1 KB = 1,000 bytes: passes a "max 100 KB" check either way */
+      var hit = await encodeToTarget(src, type, targetBytes);
+      if (hit) { blob = hit.blob; w = hit.w; h = hit.h; }
       /* Distinguish "couldn't reach the target size" from "the browser refused
          to encode this canvas at all" (typically an image beyond canvas limits):
          if a plain encode of the export canvas also yields null, it's the latter. */
@@ -361,7 +451,13 @@
       blob = await toBlob(src, type, type === 'image/png' ? undefined : +elQual.value);
       encodeFailed = !blob;
     }
-    return { blob: blob, w: src.width, h: src.height, encodeFailed: encodeFailed };
+    return { blob: blob, w: w, h: h, encodeFailed: encodeFailed, missed: !!(blob && targetBytes && blob.size > targetBytes) };
+  }
+  /* PNG cannot trade quality for size, so a photo can stay over the target
+     even after the search shrinks it; say that instead of a plain "Saved". */
+  function missLine(r, saved) {
+    return 'PNG cannot get this image under ' + (+elTarget.value) + ' KB; ' + (saved ? 'it was saved' : 'it would be saved') +
+      ' at ' + fmtBytes(r.blob.size) + ' and ' + r.w + '×' + r.h + '. Try JPEG or WebP.';
   }
   /* nothing to export until an image loads — start both buttons disabled like
      Undo and Cut out, so they say so instead of silently doing nothing */
@@ -371,7 +467,9 @@
   id('it-download').addEventListener('click', async function () {
     if (!loaded) return;
     var st = id('it-status'); st.textContent = 'Encoding…';
-    var r = await buildExport();
+    var r;
+    try { r = await buildExport(); }
+    catch (err) { st.textContent = 'Your browser could not re-encode this image.'; return; }
     if (!r.blob) {
       st.textContent = r.encodeFailed
         ? 'This image is too large for your browser to re-encode. Try the max-dimension setting in Advanced first.'
@@ -379,8 +477,9 @@
       return;
     }
     var ext = elFmt.value === 'png' ? 'png' : elFmt.value === 'webp' ? 'webp' : 'jpg';
-    downloadBlob(r.blob, 'image-' + r.w + 'x' + r.h + '.' + ext);
-    st.textContent = 'Saved ' + r.w + '×' + r.h + ' · ' + fmtBytes(r.blob.size) + ' (metadata stripped).';
+    downloadBlob(r.blob, baseName(srcName) + '-' + r.w + 'x' + r.h + '.' + ext);
+    st.textContent = r.missed ? missLine(r, true) + ' (Metadata stripped.)'
+      : 'Saved ' + r.w + '×' + r.h + ' · ' + fmtBytes(r.blob.size) + ' (metadata stripped).';
   });
 
   var infoSeq = 0;
@@ -389,13 +488,14 @@
     id('it-dims').textContent = work.width + ' × ' + work.height + ' px';
     /* live estimate of the export size — guard against overlapping async runs (slider drag) */
     var my = ++infoSeq;
-    var r = await buildExport();
+    var r;
+    try { r = await buildExport(); } catch (err) { r = null; }
     if (my !== infoSeq) return;   /* a newer request superseded this one */
     /* a failed encode must overwrite the line too — a stale estimate from the
        previous settings reads as if the current target were reachable */
-    if (r && r.blob) id('it-estimate').textContent = 'Output: ' + r.w + '×' + r.h + ' · ~' + fmtBytes(r.blob.size);
-    else id('it-estimate').textContent = (r && r.encodeFailed)
-      ? 'This image is too large for your browser to re-encode.'
+    if (r && r.blob) id('it-estimate').textContent = r.missed ? missLine(r, false) : 'Output: ' + r.w + '×' + r.h + ' · ~' + fmtBytes(r.blob.size);
+    else id('it-estimate').textContent = !r ? 'Your browser could not re-encode this image.'
+      : r.encodeFailed ? 'This image is too large for your browser to re-encode.'
       : 'Cannot reach ' + (+elTarget.value) + ' KB even at lowest quality.';
   }
   /* recompute the estimate when controls change */

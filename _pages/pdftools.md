@@ -20,8 +20,8 @@ description: "Free private PDF tools that run entirely in your browser: merge an
     the file, or lock it with a password. Everything runs locally on your device, your PDFs are
     never uploaded, and Ctrl+Z undoes mistakes.
   </p>
-  <p class="pt-privacy">🔒 Everything runs locally in your browser. Your PDF is never uploaded and never leaves your device. (I use Google Analytics to see whether anyone visits this page, but it cannot see your files or anything you do with them.)</p>
-  <p class="pt-privacy" style="margin-top:-0.55rem">A caveat: this is a personal side project and I have not tested it exhaustively. I make no guarantees; keep your originals and check the output before relying on it.</p>
+  <p class="pt-privacy">Everything runs locally in your browser. Your PDF is never uploaded and never leaves your device. (I use Google Analytics to see whether anyone visits this page, but it cannot see your files or anything you do with them.)</p>
+  <p class="pt-privacy" style="margin-top:-0.55rem">A caveat: this is a personal side project and I have not tested it exhaustively. I make no guarantees; keep your originals and check the output before relying on it. Found a problem? <a href="mailto:{{ site.author.email }}?subject=PDF%20Toolbench%20problem">Tell me by email</a> (no need to send the file).</p>
 
   <div class="pt-toolbar" id="pt-toolbar" hidden>
     <div class="pt-toolbar__row">
@@ -55,7 +55,7 @@ description: "Free private PDF tools that run entirely in your browser: merge an
       <button id="pt-shrink" class="pt-btn" type="button" data-pt-needs-pages disabled title="Shrink the file by rasterizing pages">⤓ Shrink…</button>
       <button id="pt-protect" class="pt-btn" type="button" data-pt-needs-pages disabled title="Encrypt the PDF with a password (AES-256)">Protect…</button>
       <span class="pt-spacer"></span>
-      <label class="pt-check" title="Remove author / producer / dates on download"><input type="checkbox" id="pt-stripmeta" checked> Strip metadata</label>
+      <label class="pt-check" title="Remove the title, author, producer and dates on download. Photos you add never keep their location or camera details."><input type="checkbox" id="pt-stripmeta" checked> Strip metadata</label>
     </div>
   </div>
 
@@ -536,12 +536,17 @@ description: "Free private PDF tools that run entirely in your browser: merge an
 }
 .pt-btn:hover:not(:disabled) { background: rgba(127,127,127,0.26); }
 .pt-btn:disabled { opacity: 0.45; cursor: default; }
-.pt-btn--accent { background: #82a6cc; border-color: #82a6cc; color: #fff; }
+/* labels on the accent fill: dark on the dark theme's light-blue fill (#141414 on #82a6cc
+   is 7.3:1; white was 2.5:1), white on the light theme's dark-blue fill (7.4:1) */
+.pt-btn--accent { background: #82a6cc; border-color: #82a6cc; color: #141414; }
 .pt-btn--accent:hover:not(:disabled) { background: #6f97c2; }
 .pt-btn--danger { background: #c4574a; border-color: #c4574a; color: #fff; }
 .pt-btn--danger:hover:not(:disabled) { background: #b04438; }
-html[data-theme="light"] .pt-btn--accent { background: #34568a; border-color: #34568a; }
-@media (prefers-color-scheme: light) { html:not([data-theme="dark"]) .pt-btn--accent { background: #34568a; border-color: #34568a; } }
+html[data-theme="light"] .pt-btn--accent { background: #34568a; border-color: #34568a; color: #fff; }
+@media (prefers-color-scheme: light) { html:not([data-theme="dark"]) .pt-btn--accent { background: #34568a; border-color: #34568a; color: #fff; } }
+/* the generic hover above out-specifies the light fills, which left white on #6f97c2 (3.1:1) */
+html[data-theme="light"] .pt-btn--accent:hover:not(:disabled) { background: #25406b; }
+@media (prefers-color-scheme: light) { html:not([data-theme="dark"]) .pt-btn--accent:hover:not(:disabled) { background: #25406b; } }
 /* the ACTIVE tool/tab must keep an accent fill on hover — the generic grey .pt-btn hover
    out-specified the --on rules and left white labels on pale grey in light mode */
 .pt-btn.pt-tool--on:hover:not(:disabled), .pt-btn.pt-tab--on:hover:not(:disabled) { background: #6f97c2; border-color: #6f97c2; }
@@ -704,9 +709,9 @@ html[data-theme="light"] .pt-ct-preview { color: #1f2430; background: #fff; bord
 
 /* Signature editor */
 .pt-tabs { display: flex; gap: 0.4rem; }
-.pt-tab--on { background: #82a6cc; border-color: #82a6cc; color: #fff; }
-html[data-theme="light"] .pt-tab--on { background: #34568a; border-color: #34568a; }
-@media (prefers-color-scheme: light) { html:not([data-theme="dark"]) .pt-tab--on { background: #34568a; border-color: #34568a; } }
+.pt-tab--on { background: #82a6cc; border-color: #82a6cc; color: #141414; }
+html[data-theme="light"] .pt-tab--on { background: #34568a; border-color: #34568a; color: #fff; }
+@media (prefers-color-scheme: light) { html:not([data-theme="dark"]) .pt-tab--on { background: #34568a; border-color: #34568a; color: #fff; } }
 /* the baseline is a CSS background line, not canvas ink — trimToInk() reads the canvas
    pixels, so anything drawn on it would be exported as part of the signature */
 .pt-sigpad {
@@ -742,9 +747,9 @@ html[data-theme="light"] .pt-ed { background: #eef0f3; }
 /* ‹ › stay a single unit: on a narrow phone the wrapping bar used to leave one of them
    stranded on the row above */
 .pt-ed__nav { display: inline-flex; gap: 0.3rem; flex: 0 0 auto; }
-.pt-tool--on { background: #82a6cc; border-color: #82a6cc; color: #fff; }
-html[data-theme="light"] .pt-tool--on { background: #34568a; border-color: #34568a; }
-@media (prefers-color-scheme: light) { html:not([data-theme="dark"]) .pt-tool--on { background: #34568a; border-color: #34568a; } }
+.pt-tool--on { background: #82a6cc; border-color: #82a6cc; color: #141414; }
+html[data-theme="light"] .pt-tool--on { background: #34568a; border-color: #34568a; color: #fff; }
+@media (prefers-color-scheme: light) { html:not([data-theme="dark"]) .pt-tool--on { background: #34568a; border-color: #34568a; color: #fff; } }
 .pt-ed__opts { display: inline-flex; align-items: center; gap: 0.35rem; }
 .pt-ed__opts[hidden] { display: none; }
 .pt-ed__opts select { font: inherit; padding: 0.35em 0.4em; border-radius: 6px; color: #e8e8e8; background: #20242c; border: 1px solid rgba(255,255,255,0.18); }
@@ -791,10 +796,10 @@ html[data-theme="light"] .pt-ed__textbar select option { color: #1f2430; backgro
 .pt-ico--i { font-style: italic; font-family: Georgia, "Times New Roman", serif; }
 .pt-ico--u { text-decoration: underline; }
 .pt-ico--s { text-decoration: line-through; }
-.pt-ico[aria-pressed="true"], .pt-ico[aria-pressed="true"]:hover:not(:disabled) { background: #82a6cc; border-color: #82a6cc; color: #fff; }
-html[data-theme="light"] .pt-ico[aria-pressed="true"], html[data-theme="light"] .pt-ico[aria-pressed="true"]:hover:not(:disabled) { background: #34568a; border-color: #34568a; }
+.pt-ico[aria-pressed="true"], .pt-ico[aria-pressed="true"]:hover:not(:disabled) { background: #82a6cc; border-color: #82a6cc; color: #141414; }
+html[data-theme="light"] .pt-ico[aria-pressed="true"], html[data-theme="light"] .pt-ico[aria-pressed="true"]:hover:not(:disabled) { background: #34568a; border-color: #34568a; color: #fff; }
 @media (prefers-color-scheme: light) {
-  html:not([data-theme="dark"]) .pt-ico[aria-pressed="true"], html:not([data-theme="dark"]) .pt-ico[aria-pressed="true"]:hover:not(:disabled) { background: #34568a; border-color: #34568a; }
+  html:not([data-theme="dark"]) .pt-ico[aria-pressed="true"], html:not([data-theme="dark"]) .pt-ico[aria-pressed="true"]:hover:not(:disabled) { background: #34568a; border-color: #34568a; color: #fff; }
 }
 .pt-sw { width: 22px; height: 22px; padding: 0; border-radius: 4px; border: 1px solid rgba(127,127,127,0.55); cursor: pointer; }
 .pt-ed__signbar { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; padding: 0.5rem 0.8rem; border-bottom: 1px solid rgba(127,127,127,0.25); }
