@@ -19,6 +19,14 @@ Not peer-reviewed; published on [Anthropic's Frontier Red Team blog](https://www
 <div class="report-list">
 
   <div class="report">
+    <a class="report__fig" aria-hidden="true" tabindex="-1" href="https://www.anthropic.com/research/formal-verification"><img src="{{ base_path }}/images/pub-figures/formal-verification.jpg" alt="" loading="lazy"></a>
+    <div class="report__body">
+      <a href="https://www.anthropic.com/research/formal-verification"><b>LLMs are making formal software verification feasible at a much larger scale</b></a> <span class="report__year">2026</span>
+      <p>Claude formally proved security properties in the compiled code of 123 open-source libraries, and found bugs that had eluded detection for years.</p>
+    </div>
+  </div>
+
+  <div class="report">
     <a class="report__fig" aria-hidden="true" tabindex="-1" href="https://www.anthropic.com/research/n-days"><img src="{{ base_path }}/images/pub-figures/n-days.png" alt="" loading="lazy"></a>
     <div class="report__body">
       <a href="https://www.anthropic.com/research/n-days"><b>Measuring LLMs' Impact on N-day Exploits</b></a> <span class="report__year">2026</span>

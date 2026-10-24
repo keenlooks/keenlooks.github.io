@@ -9,14 +9,13 @@ redirect_from:
   - /about.html
 ---
 
-<div class="callout">
-  <span class="callout__label">Jun 2026</span>
-  <span class="callout__text">Latest post: <a href="https://www.anthropic.com/research/n-days">Measuring LLMs' Impact on N-day Exploits</a></span>
-</div>
-
-<div class="callout">
-  <span class="callout__label">Feb 2026</span>
-  <span class="callout__text"><a href="/talks/2025-08-09-claude-climbing-a-ctf-scoreboard-near-you">Talk</a> featured in <a href="https://media.defcon.org/DEF%20CON%2033/DEF%20CON%2033%20Hackers'%20Almanack.pdf">DEF CON 33 Hackers' Almanack</a></span>
+<div class="callout callout--featured">
+  <a class="callout__fig" aria-hidden="true" tabindex="-1" href="https://www.anthropic.com/research/formal-verification"><img src="/images/pub-figures/formal-verification.jpg" alt="" width="600" height="315" decoding="async"></a>
+  <div class="callout__body">
+    <span class="callout__label">Oct 2026</span>
+    <span class="callout__text">New post: <a href="https://www.anthropic.com/research/formal-verification">LLMs are making formal software verification feasible at a much larger scale</a></span>
+    <span class="callout__sub">Claude formally proved security properties in the compiled code of 123 open-source libraries and found bugs that had eluded detection for years.</span>
+  </div>
 </div>
 
 Hello! I am part of [Anthropic](https://www.anthropic.com/)'s Frontier [Red](https://www.anthropic.com/research/team/frontier-red-team) Team, where I [evaluate](https://www.anthropic.com/research/cyber-toolkits), [improve](https://www.anthropic.com/research/building-ai-cyber-defenders), and [talk about](/talks/2025-08-09-claude-climbing-a-ctf-scoreboard-near-you) large language models' (LLMs') cyber capabilities to help ensure their safe and robust development.
@@ -64,6 +63,7 @@ Originally from [Alaska](https://www.frontiersman.com/trio-of-valley-students-gr
 
 My most recent contributions are on [Anthropic's Frontier Red Team blog](https://www.anthropic.com/research/team/frontier-red-team), where we regularly post about our work measuring, projecting, and improving frontier LLM capabilities:
 
+- **[LLMs are making formal software verification feasible at a much larger scale](https://www.anthropic.com/research/formal-verification)** - Claude formally proved security properties in the compiled code of 123 open-source libraries and found bugs that had eluded detection for years
 - **[Measuring LLMs' Impact on N-day Exploits](https://www.anthropic.com/research/n-days)** - How well frontier models can develop exploits for publicly disclosed but unpatched vulnerabilities (Mythos Preview reproduced a SpiderMonkey/Firefox PoC crash in about 12 minutes)
 - **[Measuring LLMs' Ability to Develop Exploits](https://www.anthropic.com/research/exploit-evals)** - Benchmarks (ExploitBench, ExploitGym, SCONE-bench) for measuring how well frontier models build end-to-end software and smart-contract exploits
 - **[Assessing Claude Mythos Preview's Cybersecurity Capabilities](https://www.anthropic.com/research/mythos-preview)** - Evaluating a frontier model's ability to autonomously discover and exploit zero-day and N-day vulnerabilities across operating systems, browsers, and libraries

@@ -35,3 +35,49 @@
   background: $primary-color;
   color: $background-color;
 }
+
+/* Featured variant: a post thumbnail at the left and a body column (pill on its
+   own line, the text, then a muted one-line summary). Same border, accent edge
+   and tint as .callout so it reads as the same family. The sub-text is a solid
+   colour, not opacity, so it clears WCAG AA in both themes (light override in
+   _color-scheme-light.scss). */
+.callout--featured {
+  align-items: flex-start;
+  gap: 0.85rem;
+  padding: 0.7rem 0.95rem;
+  margin-bottom: 1.4rem;
+}
+
+.callout__fig {
+  flex: 0 0 auto;
+  display: block;
+  line-height: 0;
+}
+
+.callout__fig img {
+  display: block;
+  width: 132px;
+  height: auto;
+  aspect-ratio: 1200 / 630;
+  object-fit: cover;
+  border-radius: 4px;
+}
+
+.callout__body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.callout__sub {
+  font-size: 0.85em;
+  line-height: 1.4;
+  color: #a3a3a3;
+}
+
+@media (max-width: 480px) {
+  .callout--featured { gap: 0.7rem; padding: 0.6rem 0.75rem; }
+  .callout__fig img { width: 96px; }
+}

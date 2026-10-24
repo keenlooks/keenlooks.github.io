@@ -256,6 +256,7 @@ class ContentExtractor:
         # Recent industry writing (not in the repo's _publications collection, so listed
         # directly; keep in sync with the homepage / publications page).
         frontier_red_team_posts = """
+        - "LLMs are making formal software verification feasible at a much larger scale" (2026): https://www.anthropic.com/research/formal-verification - Keane's latest post (October 2026): Claude formally proved security properties in the compiled code of 123 open-source libraries, and along the way found bugs that had eluded detection for years
         - "Measuring LLMs' Impact on N-day Exploits" (2026): https://www.anthropic.com/research/n-days - measuring how well frontier models can develop exploits for publicly disclosed but unpatched (N-day) vulnerabilities; Mythos Preview reproduced a SpiderMonkey/Firefox proof-of-concept crash in about 12 minutes
         - "Measuring LLMs' Ability to Develop Exploits" (2026): https://www.anthropic.com/research/exploit-evals - benchmarks (ExploitBench, ExploitGym, SCONE-bench) for measuring how well frontier models build end-to-end software and smart-contract exploits
         - "Assessing Claude Mythos Preview's Cybersecurity Capabilities" (2026): https://www.anthropic.com/research/mythos-preview - evaluating a frontier model's ability to autonomously discover and exploit zero-day and N-day vulnerabilities
