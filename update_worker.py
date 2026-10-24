@@ -22,8 +22,25 @@ def generate_system_prompt(context_file='claude_context.json'):
 WORKER_TEMPLATE = r"""
 const SYSTEM_PROMPT = __SYSTEM_PROMPT_JSON__;
 
-const MODEL = 'claude-sonnet-4-6';
-const MAX_TOKENS = 1024;          // fixed here; the client cannot raise it
+// Model: always the newest Claude Haiku. Instead of a fixed id, the Worker asks
+// Anthropic's Models API (GET /v1/models) which models this key can use, keeps
+// the ids that start with MODEL_FAMILY (and whose `line` field, when present,
+// says haiku), and picks the one with the latest created_at (on a tie, the
+// longer id, i.e. a dated snapshot over its alias). The answer is cached in the
+// isolate for MODEL_TTL_MS, so a new Haiku is picked up within about 6 hours of
+// its release, per isolate, with no code change or redeploy.
+// If the list call fails (non-2xx, network error or timeout, malformed JSON, no
+// Haiku in the list), the error is logged, the Worker keeps the id it last
+// resolved, or MODEL_FALLBACK if it has none, and tries the list again no
+// sooner than MODEL_RETRY_MS later. Visitors' requests still go through.
+// When a new Haiku generation ships, bump MODEL_FALLBACK to its id so the
+// fallback stays current too.
+const MODEL_FAMILY = 'claude-haiku-';
+const MODEL_FALLBACK = 'claude-haiku-5-5';
+const MODEL_TTL_MS = 6 * 60 * 60 * 1000;   // re-check the list every 6 hours
+const MODEL_RETRY_MS = 10 * 60 * 1000;     // after a failed list call, wait 10 minutes
+const MODEL_LIST_TIMEOUT_MS = 5000;        // a slow list call must not stall the chat
+const MAX_TOKENS = 4096;          // thinking + text together; fixed here, the client cannot raise it
 const PROD_ORIGIN = 'https://keanelucas.com';
 const DEV_ORIGINS = ['http://127.0.0.1:4010'];   // only when env.ENVIRONMENT === 'development'
 const MAX_TURNS = 12;
@@ -43,6 +60,11 @@ const DAILY_SOFT_CAP = 500;              // upstream calls per isolate per UTC d
 const buckets = new Map();               // ip -> { tokens, t }
 let dayKey = '';
 let dayCount = 0;
+
+// Resolved model for this isolate: id (null until the first successful list),
+// t (when it was resolved), next (when the list may be fetched again).
+const modelCache = { id: null, t: 0, next: 0 };
+let modelPending = null;   // one list call at a time per isolate
 
 // Tag characters (U+E0000..U+E007F) and every other Unicode format (Cf)
 // character: invisible, and a known way to smuggle instructions.
@@ -117,6 +139,48 @@ function validate(body) {
   return { messages };
 }
 
+function pickNewestHaiku(list) {
+  let best = null, bestT = -Infinity;
+  for (const m of list) {
+    if (!m || typeof m.id !== 'string' || !m.id.startsWith(MODEL_FAMILY)) continue;
+    if (typeof m.line === 'string' && m.line.toLowerCase() !== 'haiku') continue;
+    const t = Date.parse(m.created_at);
+    if (!Number.isFinite(t)) continue;
+    if (t > bestT || (t === bestT && m.id.length > best.length)) { best = m.id; bestT = t; }
+  }
+  return best;
+}
+
+async function refreshModel(env, now) {
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/models?limit=100', {
+      method: 'GET',
+      headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
+      // Guarded so a runtime without AbortSignal.timeout still resolves (untimed).
+      signal: typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(MODEL_LIST_TIMEOUT_MS) : undefined
+    });
+    if (!res.ok) throw new Error('models list status ' + res.status);
+    let data;
+    try { data = await res.json(); } catch (e) { throw new Error('models list is not JSON'); }
+    const id = pickNewestHaiku(data && Array.isArray(data.data) ? data.data : []);
+    if (!id) throw new Error('no ' + MODEL_FAMILY + '* model in the list');
+    modelCache.id = id;
+    modelCache.t = now;
+    modelCache.next = now + MODEL_TTL_MS;
+  } catch (error) {
+    console.error('model resolve failed, using', modelCache.id || MODEL_FALLBACK, '-', error && error.message);
+    modelCache.next = now + MODEL_RETRY_MS;
+  }
+}
+
+async function resolveModel(env, now) {
+  if (now >= modelCache.next) {
+    if (!modelPending) modelPending = refreshModel(env, now).finally(() => { modelPending = null; });
+    await modelPending;
+  }
+  return modelCache.id || MODEL_FALLBACK;
+}
+
 function upstreamError(status) {
   if (status === 429 || status === 529) return 'The assistant is busy right now. Please try again in a minute.';
   if (status >= 500) return 'The assistant is unavailable right now. Please try again later.';
@@ -161,6 +225,7 @@ export default {
       }
       dayCount++;
 
+      const model = await resolveModel(env, now);
       const systemPrompt = [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
       const upstream = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
@@ -171,8 +236,10 @@ export default {
           'anthropic-beta': 'prompt-caching-2024-07-31'
         },
         body: JSON.stringify({
-          model: MODEL,
+          model,
           max_tokens: MAX_TOKENS,
+          // Haiku 5.5 thinks by default; low effort keeps answers quick and cheap for a site FAQ bot, and the widget only renders text blocks (assets/js/chat-widget.js line 840 filters item.type === 'text').
+          output_config: { effort: 'low' },
           system: systemPrompt,
           messages: checked.messages
         })
@@ -187,7 +254,7 @@ export default {
       }
 
       const data = await upstream.json();
-      return reply(200, { content: Array.isArray(data.content) ? data.content : [], stop_reason: data.stop_reason || null }, origin);
+      return reply(200, { content: Array.isArray(data.content) ? data.content : [], stop_reason: data.stop_reason || null, model }, origin);
     } catch (error) {
       console.error('worker error', error && error.message);
       return reply(500, { error: 'Something went wrong on the server. Please try again later.' }, origin);

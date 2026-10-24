@@ -12,7 +12,7 @@ redirect_from:
 <div class="callout callout--featured">
   <a class="callout__fig" aria-hidden="true" tabindex="-1" href="https://www.anthropic.com/research/formal-verification"><img src="/images/pub-figures/formal-verification.jpg" alt="" width="600" height="315" decoding="async"></a>
   <div class="callout__body">
-    <span class="callout__label">Oct 2026</span>
+    <span class="callout__label">New!</span>
     <span class="callout__text">New post: <a href="https://www.anthropic.com/research/formal-verification">LLMs are making formal software verification feasible at a much larger scale</a></span>
     <span class="callout__sub">Claude formally proved security properties in the compiled code of 123 open-source libraries and found bugs that had eluded detection for years.</span>
   </div>
