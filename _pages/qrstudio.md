@@ -128,7 +128,7 @@ description: "A private, in-browser QR utility by Keane Lucas: generate static Q
         </div>
         <details class="qs-payload">
           <summary>Encoded payload</summary>
-          <pre class="qs-code"><code id="qs-payload"></code></pre>
+          <pre class="qs-code notranslate" translate="no"><code id="qs-payload"></code></pre>
         </details>
       </div>
     </div>
@@ -138,7 +138,7 @@ description: "A private, in-browser QR utility by Keane Lucas: generate static Q
   <section id="qs-scan" class="qs-panel" role="tabpanel" hidden>
     <div class="qs-grid">
       <div class="qs-left">
-        <div id="qs-drop" class="qs-drop" tabindex="0" role="button" aria-label="Choose an image of a QR code">
+        <div id="qs-drop" class="qs-drop" tabindex="0" role="button">
           <input id="qs-file" type="file" accept="image/*" hidden style="display:none!important">
           <div class="qs-drop__hint"><strong>Drop an image of a QR code here</strong><br>or <span id="qs-drop-verb">click</span> to choose one</div>
         </div>
@@ -156,7 +156,7 @@ description: "A private, in-browser QR utility by Keane Lucas: generate static Q
           <div id="qs-items">
             <div class="qs-item">
               <p class="qs-item__label" hidden></p>
-              <pre class="qs-code qs-code--result"><code id="qs-decoded"></code></pre>
+              <pre class="qs-code qs-code--result notranslate" translate="no"><code id="qs-decoded"></code></pre>
               <button id="qs-copy" class="qs-btn qs-copy" type="button">Copy text</button>
             </div>
           </div>
@@ -219,6 +219,9 @@ html[data-theme="light"] .qs-tab--on { background: #34568a; color: #fff; }
 
 .qs-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 1.6rem; align-items: start; }
 @media (max-width: 760px) { .qs-grid { grid-template-columns: 1fr; } }
+/* a long option text (a translated page) truncates inside its select instead of widening the column past a phone screen */
+.qs-grid > * { min-width: 0; }
+.qs-field select { max-width: 100%; min-width: 0; }
 
 .qs-h { font-size: 1.1rem; margin: 0 0 0.6rem; }
 .qs-h--gap { margin-top: 1.4rem; }

@@ -26,7 +26,7 @@ og_image: /images/og/computer.png
       </div>
       <div id="comp-edwrap" class="comp-edwrap">
         <textarea id="comp-src" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" wrap="off" aria-label="KL-8 assembly source"></textarea>
-        <pre id="comp-srcview" class="comp-srcview" hidden tabindex="0" aria-label="Assembly source, read-only while the machine is loaded. Click it to edit and stop the run."></pre>
+        <pre id="comp-srcview" class="comp-srcview notranslate" translate="no" hidden tabindex="0" aria-label="Assembly source, read-only while the machine is loaded. Click it to edit and stop the run."></pre>
       </div>
       <div id="comp-errors" class="comp-errors" hidden></div>
       <p class="comp-blurb">Watch a small computer run: every byte that moves between the chips is drawn on the board, in plain words. When you are curious, open the code and change it. Press the <strong>?</strong> button for the instruction set and memory map.</p>
@@ -65,7 +65,7 @@ og_image: /images/og/computer.png
           <button id="comp-micro" class="comp-btn" type="button">Micro-step</button>
           <button id="comp-reset" class="comp-btn" type="button">Reset</button>
         </div>
-        <label class="comp-slider"><span>Clock: <strong id="comp-speedval">2 kHz</strong></span>
+        <label class="comp-slider"><span>Clock: <strong id="comp-speedval" class="notranslate" translate="no">2 kHz</strong></span>
           <input id="comp-speed" type="range" min="0" max="100" step="1" value="60" aria-label="Clock speed, 2 hertz to 200 kilohertz"></label>
         <p id="comp-count" class="comp-count">0 instructions</p>
         <p id="comp-status" class="comp-status"></p>
@@ -81,7 +81,7 @@ og_image: /images/og/computer.png
           <option value="disp">Display $1000</option>
           <option value="io">I-O $1400</option>
         </select>
-        <label class="comp-pagelab"><span id="comp-mempageval">$0000</span>
+        <label class="comp-pagelab"><span id="comp-mempageval" class="notranslate" translate="no">$0000</span>
           <input id="comp-mempage" type="range" min="0" max="14" step="1" value="0" aria-label="Memory page within the region"></label>
       </div>
       <div id="comp-mem" class="comp-mem">

@@ -116,7 +116,30 @@
   }
   /* KB and MB are 1,000 and 1,000,000 bytes, the unit Finder and most upload
      forms use; the target slider means the same unit (see buildExport) */
-  function fmtBytes(n) { return n < 1000 ? n + ' B' : n < 1e6 ? (n / 1000).toFixed(1) + ' KB' : (n / 1e6).toFixed(2) + ' MB'; }
+  /* Readouts follow the visitor's locale through Intl ("1,234.5 KB" in en-US,
+     "1.234,5 KB" in de-DE); pixel sizes are never grouped ("4000×4000"). */
+  /* Digits stay Latin (0-9) in these English sentences whatever the visitor's numbering
+     system (ar-SA would print Arabic-Indic digits, bn-BD Bengali ones); the visitor's
+     separators stay. Right-to-left languages take en-US outright: their Latin-digit forms
+     still carry hidden direction marks, "US$" and an Arabic percent sign. */
+  var NUM_LOC = (function () {
+    try {
+      var l = new Intl.NumberFormat().resolvedOptions().locale;
+      if (/^(ar|fa|ur|he|iw|yi|ps|sd|ug|ckb|dv|ks|syr)(-|$)/i.test(l)) return 'en-US';
+      return l.replace(/-u-.*$/i, '') + '-u-nu-latn';
+    } catch (e) { return undefined; }
+  })();
+  function nf(o) { try { return new Intl.NumberFormat(NUM_LOC, o); } catch (e) { return null; } }
+  var NF_INT = nf({ maximumFractionDigits: 0 }), NF_PX = nf({ maximumFractionDigits: 0, useGrouping: false });
+  var NF_D1 = nf({ minimumFractionDigits: 1, maximumFractionDigits: 1 }), NF_D2 = nf({ minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  /* Arabic-Indic digits (ar-SA) inside an English sentence get reordered by the
+     bidi algorithm ("1200×800" shows as "800×1200"): wrap them in an isolate */
+  function iso(t) { return /[\u0600-\u06FF\u200F\u061C]/.test(t) ? '\u2066' + t + '\u2069' : t; }
+  /* digits given: rounded by toFixed first (Intl would round "135.95" up where toFixed rounds the binary value) */
+  function fmtN(f, v, digits) { return iso(f ? f.format(digits == null ? v : +v.toFixed(digits)) : (digits == null ? String(v) : v.toFixed(digits))); }
+  function px(v) { return fmtN(NF_PX, v); }
+  function wxh(w, h, sep) { return px(w) + (sep || '×') + px(h); }
+  function fmtBytes(n) { return n < 1000 ? fmtN(NF_INT, n) + ' B' : n < 1e6 ? fmtN(NF_D1, n / 1000, 1) + ' KB' : fmtN(NF_D2, n / 1e6, 2) + ' MB'; }
   /* "Scan of receipt (2).JPG" -> "Scan of receipt (2)", safe as a file name base
      (the same rule PDF Toolbench uses) */
   function baseName(name) {
@@ -254,7 +277,7 @@
         dctx.fillStyle = 'rgba(127,127,127,0.95)'; dctx.font = '12px "Source Sans 3", system-ui, sans-serif';
         var flip = hx > maxW - 46;   /* keep the readout on the canvas */
         dctx.textAlign = flip ? 'right' : 'left'; dctx.textBaseline = 'middle';
-        dctx.fillText(Math.round(fineAngle) + '°', hx + (flip ? -11 : 11), hy);
+        dctx.fillText(px(Math.round(fineAngle)) + '°', hx + (flip ? -11 : 11), hy);
       }
     } else { handlePos = null; }
   }
@@ -394,8 +417,8 @@
     elTargetRow.style.display = target ? '' : 'none';
     elQualRow.style.display = (!target && elFmt.value !== 'png') ? '' : 'none';
   }
-  if (elQual) elQual.addEventListener('input', function () { elQualV.textContent = (+elQual.value).toFixed(2); });
-  if (elTarget) elTarget.addEventListener('input', function () { elTargetV.textContent = (+elTarget.value) + ' KB'; });
+  if (elQual) elQual.addEventListener('input', function () { elQualV.textContent = fmtN(NF_D2, +elQual.value, 2); });
+  if (elTarget) elTarget.addEventListener('input', function () { elTargetV.textContent = fmtN(NF_INT, +elTarget.value) + ' KB'; });
   /* picking a format by hand is the user's own choice, so Undo leaves it alone
      from here on (setFormat sets the value directly and does not fire this) */
   if (elFmt) elFmt.addEventListener('change', function () { fmtSwitch = null; syncModeUI(); });
@@ -456,8 +479,8 @@
   /* PNG cannot trade quality for size, so a photo can stay over the target
      even after the search shrinks it; say that instead of a plain "Saved". */
   function missLine(r, saved) {
-    return 'PNG cannot get this image under ' + (+elTarget.value) + ' KB; ' + (saved ? 'it was saved' : 'it would be saved') +
-      ' at ' + fmtBytes(r.blob.size) + ' and ' + r.w + '×' + r.h + '. Try JPEG or WebP.';
+    return 'PNG cannot get this image under ' + fmtN(NF_INT, +elTarget.value) + ' KB; ' + (saved ? 'it was saved' : 'it would be saved') +
+      ' at ' + fmtBytes(r.blob.size) + ' and ' + wxh(r.w, r.h) + '. Try JPEG or WebP.';
   }
   /* nothing to export until an image loads — start both buttons disabled like
      Undo and Cut out, so they say so instead of silently doing nothing */
@@ -479,13 +502,13 @@
     var ext = elFmt.value === 'png' ? 'png' : elFmt.value === 'webp' ? 'webp' : 'jpg';
     downloadBlob(r.blob, baseName(srcName) + '-' + r.w + 'x' + r.h + '.' + ext);
     st.textContent = r.missed ? missLine(r, true) + ' (Metadata stripped.)'
-      : 'Saved ' + r.w + '×' + r.h + ' · ' + fmtBytes(r.blob.size) + ' (metadata stripped).';
+      : 'Saved ' + wxh(r.w, r.h) + ' · ' + fmtBytes(r.blob.size) + ' (metadata stripped).';
   });
 
   var infoSeq = 0;
   async function updateInfo() {
     if (!loaded) return;
-    id('it-dims').textContent = work.width + ' × ' + work.height + ' px';
+    id('it-dims').textContent = wxh(work.width, work.height, ' × ') + ' px';
     /* live estimate of the export size — guard against overlapping async runs (slider drag) */
     var my = ++infoSeq;
     var r;
@@ -493,10 +516,10 @@
     if (my !== infoSeq) return;   /* a newer request superseded this one */
     /* a failed encode must overwrite the line too — a stale estimate from the
        previous settings reads as if the current target were reachable */
-    if (r && r.blob) id('it-estimate').textContent = r.missed ? missLine(r, false) : 'Output: ' + r.w + '×' + r.h + ' · ~' + fmtBytes(r.blob.size);
+    if (r && r.blob) id('it-estimate').textContent = r.missed ? missLine(r, false) : 'Output: ' + wxh(r.w, r.h) + ' · ~' + fmtBytes(r.blob.size);
     else id('it-estimate').textContent = !r ? 'Your browser could not re-encode this image.'
       : r.encodeFailed ? 'This image is too large for your browser to re-encode.'
-      : 'Cannot reach ' + (+elTarget.value) + ' KB even at lowest quality.';
+      : 'Cannot reach ' + fmtN(NF_INT, +elTarget.value) + ' KB even at lowest quality.';
   }
   /* recompute the estimate when controls change */
   ['it-format', 'it-mode', 'it-qual', 'it-maxdim', 'it-target'].forEach(function (k) {

@@ -26,6 +26,27 @@
 
   function $(id) { return document.getElementById(id); }
 
+  // Counts and sizes follow the visitor's locale through Intl ("1,234 additions",
+  // "2.5 MB" in en-US; "1.234", "2,5 MB" in de-DE). Line numbers stay plain digits.
+  /* Digits stay Latin (0-9) in these English sentences whatever the visitor's numbering
+     system (ar-SA would print Arabic-Indic digits, bn-BD Bengali ones); the visitor's
+     separators stay. Right-to-left languages take en-US outright: their Latin-digit forms
+     still carry hidden direction marks, "US$" and an Arabic percent sign. */
+  var NUM_LOC = (function () {
+    try {
+      var l = new Intl.NumberFormat().resolvedOptions().locale;
+      if (/^(ar|fa|ur|he|iw|yi|ps|sd|ug|ckb|dv|ks|syr)(-|$)/i.test(l)) return 'en-US';
+      return l.replace(/-u-.*$/i, '') + '-u-nu-latn';
+    } catch (e) { return undefined; }
+  })();
+  function nf(o) { try { return new Intl.NumberFormat(NUM_LOC, o); } catch (e) { return null; } }
+  var NF_INT = nf({ maximumFractionDigits: 0 }), NF_D1 = nf({ minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  // Arabic-Indic digits (ar-SA) or a right-to-left mark (he, ar currency) inside an
+  // English sentence get reordered by the bidi algorithm ("1200×800" shows as
+  // "800×1200"): such a number is wrapped in a left-to-right isolate.
+  function iso(t) { return /[\u0600-\u06FF\u200F\u061C]/.test(t) ? '\u2066' + t + '\u2069' : t; }
+  function num(v) { return iso(NF_INT ? NF_INT.format(v) : String(v)); }
+
   var taA, taB, out, statsEl, statusEl, noteEl, pdfNoteEl, compareBtn, copyBtn, wrapEl;
   var viewBtns = {};
   var fileNameA = '', fileNameB = '';
@@ -51,11 +72,21 @@
     };
   }
 
+  /* The comparison key of a line (the shown text stays the original): Unicode NFC, so
+     "Café" typed precomposed and decomposed (macOS file names, some pastes) match; Kangxi
+     and CJK Supplement radicals folded to the ideographs they stand for (Chrome-printed
+     Japanese and Chinese PDFs map 日 大 行 目 to U+2F47 and its kin); with Ignore case on,
+     Turkish dotted capital I and dotless i fold to I and i first, since "İ".toLowerCase()
+     is "i" plus a combining dot. Self-contained: it also runs inside the Worker. */
   function normLine(line, o) {
     var s = line;
+    if (/[^\x00-\x7F]/.test(s)) {
+      if (s.normalize) s = s.normalize('NFC');
+      s = s.replace(/[\u2E80-\u2EFF\u2F00-\u2FDF]/g, function (c) { var k = c.normalize ? c.normalize('NFKC') : c; return k.length === 1 ? k : c; });
+    }
     if (o.allws) s = s.replace(/\s+/g, '');
     else if (o.trim) s = s.trim();
-    if (o.icase) s = s.toLowerCase();
+    if (o.icase) s = s.replace(/\u0130/g, 'I').replace(/\u0131/g, 'i').toLowerCase();
     return s;
   }
 
@@ -251,6 +282,24 @@
     return merged;
   }
 
+  var SPACELESS_RE = /[\u0E00-\u0EFF\u1000-\u109F\u1780-\u17FF\u3040-\u30FF\u31F0-\u31FF\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]/;
+  var wordSeg = null;
+  try { if (window.Intl && Intl.Segmenter) wordSeg = new Intl.Segmenter(undefined, { granularity: 'word' }); } catch (e) { wordSeg = null; }
+  function wordTokens(s) {
+    if (wordSeg) {
+      var out = [];
+      var it = wordSeg.segment(s)[Symbol.iterator](), r;
+      while (!(r = it.next()).done) out.push(r.value.segment);
+      return out;
+    }
+    return Array.from(s);
+  }
+  function foldSameLength(s, o) {
+    s = s.replace(/[\u2E80-\u2EFF\u2F00-\u2FDF]/g, function (c) { var k = c.normalize ? c.normalize('NFKC') : c; return k.length === 1 ? k : c; });
+    if (o.icase) s = s.replace(/\u0130/g, 'I').replace(/\u0131/g, 'i');
+    return s;
+  }
+
   /* Word-level segments for one changed line pair. Returns { left: segs, right: segs }
      where each seg is { text, mark } — or null when skipped (too long / budget spent).
      Segments are sliced back out of the ORIGINAL strings by token length so the line is
@@ -260,8 +309,23 @@
     if (wordBudget <= 0) return null;
     wordBudget--;
     var parts;
+    /* the word pass compares length-preserving folds of the two lines (radicals to
+       ideographs; Turkish I forms when ignoring case), so the segments still slice the
+       original strings */
+    var fa = foldSameLength(oldLine, o), fb = foldSameLength(newLine, o);
     try {
-      parts = window.Diff.diffWordsWithSpace(oldLine, newLine, { ignoreCase: !!o.icase, timeout: WORD_TIMEOUT_MS });
+      if (SPACELESS_RE.test(oldLine + newLine)) {
+        /* Chinese, Japanese and Thai put no spaces between words: diff the words a
+           word segmenter finds (each character where none is available) */
+        var ta = wordTokens(fa), tb = wordTokens(fb);
+        parts = window.Diff.diffArrays(ta, tb, {
+          timeout: WORD_TIMEOUT_MS,
+          comparator: o.icase ? function (l, r) { return l.toLowerCase() === r.toLowerCase(); } : undefined
+        });
+        if (parts) parts = parts.map(function (p) { return { value: p.value.join(''), added: p.added, removed: p.removed }; });
+      } else {
+        parts = window.Diff.diffWordsWithSpace(fa, fb, { ignoreCase: !!o.icase, timeout: WORD_TIMEOUT_MS });
+      }
     } catch (e) { return null; }
     if (!parts) return null;      // gave up: the whole line is marked instead
     var left = [], right = [];
@@ -336,7 +400,7 @@
     r.setAttribute('tabindex', '0');
     var c = document.createElement('span');
     c.className = 'df-code df-fold';
-    c.textContent = '... ' + count + ' unchanged lines (' + clickWord() + ' to expand)';
+    c.textContent = '... ' + num(count) + ' unchanged lines (' + clickWord() + ' to expand)';
     r.appendChild(c);
     return r;
   }
@@ -564,10 +628,15 @@
     }, function () { fa.flush(); fb.flush(); });
   }
 
+  /* a file name inside a sentence: direction controls (U+202A-U+202E, U+2066-U+2069)
+     dropped and the name isolated left to right, so neither an Arabic or Hebrew name nor
+     an override character in it can reorder the words around it */
+  function shownName(n) { return '\u2066' + String(n == null ? '' : n).replace(/[\u202A-\u202E\u2066-\u2069]/g, '') + '\u2069'; }
+
   function colHead(label, fname) {
     var head = document.createElement('div');
     head.className = 'df-colhead';
-    head.textContent = fname ? label + ': ' + fname : label;
+    head.textContent = fname ? label + ': ' + shownName(fname) : label;
     return head;
   }
 
@@ -667,7 +736,7 @@
 
   // ------------------------------------------------------------- comparing
 
-  function fmtMB(n) { return (n / (1024 * 1024)).toFixed(1) + ' MB'; }
+  function fmtMB(n) { var v = n / (1024 * 1024); return iso(NF_D1 ? NF_D1.format(+v.toFixed(1)) : v.toFixed(1)) + ' MB'; }   // toFixed's rounding
 
   function setNote(msg) {
     noteEl.textContent = msg || '';
@@ -692,8 +761,8 @@
       return;
     }
     statsEl.textContent =
-      lastMeta.adds + (lastMeta.adds === 1 ? ' addition' : ' additions') + ', ' +
-      lastMeta.dels + (lastMeta.dels === 1 ? ' deletion' : ' deletions') + '.';
+      num(lastMeta.adds) + (lastMeta.adds === 1 ? ' addition' : ' additions') + ', ' +
+      num(lastMeta.dels) + (lastMeta.dels === 1 ? ' deletion' : ' deletions') + '.';
   }
 
   function runCompare(force) {
@@ -889,12 +958,18 @@
      back left), unless one side already has one. One changed word then marks one line,
      not the whole page. */
   function pageLines(items) {
-    var lines = [], cur = '', prev = null;
+    var lines = [], cur = '', prev = null, seq = [], rtlN = 0, ltrN = 0;
+    /* pdf.js hands a right-to-left line's words over in VISUAL order (left to right on
+       the page), each word itself in logical order and marked dir 'rtl'. A line whose
+       words are mostly rtl is put back in reading order by reversing its items (numbers
+       and Latin words inside it stay single tokens). */
     function endLine() {
+      if (rtlN > ltrN) cur = seq.slice().reverse().join('');
       var t = cur.replace(/[ \t]{2,}/g, ' ').trim();
       if (t) lines.push(t);
       cur = '';
       prev = null;
+      seq = []; rtlN = 0; ltrN = 0;
     }
     for (var i = 0; i < items.length; i++) {
       var it = items[i];
@@ -909,10 +984,12 @@
             endLine();
           } else {
             var gap = x - prev.xEnd;
-            if ((gap > em * 0.2 || gap < -em) && !/\s$/.test(cur) && !/^\s/.test(it.str)) cur += ' ';
+            if ((gap > em * 0.2 || gap < -em) && !/\s$/.test(cur) && !/^\s/.test(it.str)) { cur += ' '; seq.push(' '); }
           }
         }
         cur += it.str;
+        seq.push(it.str);
+        if (/\S/.test(it.str)) { if (it.dir === 'rtl') rtlN++; else ltrN++; }
         prev = { y: y, fh: fh, xEnd: x + (it.width || 0) };
       }
       if (it.hasEOL) endLine();
@@ -967,7 +1044,7 @@
     var ta = which === 'a' ? taA : taB;
     ta.value = text;
     if (which === 'a') fileNameA = name || ''; else fileNameB = name || '';
-    $('df-file-' + which).textContent = (name || '') + (name && note ? ' (' + note + ')' : '');
+    $('df-file-' + which).textContent = (name ? shownName(name) : '') + (name && note ? ' (' + note + ')' : '');
     scheduleAuto();
   }
 
@@ -989,11 +1066,60 @@
       else if (c > 0x7F) good++;
     }
     if (good >= bad) return { text: utf8Text, note: 'some bytes are not valid UTF-8 and show as \uFFFD' };
+    /* first candidate, read strictly: the older encoding of the visitor's first browser
+       language (Shift_JIS for Japanese, Windows-1251 for Russian, ...), or Windows-1252
+       when that language has none (English, German, French and the rest). Later
+       languages are never consulted, so a German visitor who also lists Russian still
+       gets Windows-1252. When a language-specific candidate cannot explain the bytes,
+       Windows-1252 gets one strict try of its own (a Japanese visitor's file saved by an
+       English Windows program); if that fails too, keep the UTF-8 reading. */
+    var enc = legacyEncoding();
     try {
-      return { text: new TextDecoder('windows-1252').decode(buf), note: 'read as Windows-1252' };
-    } catch (e) {
-      return { text: utf8Text };
+      return { text: new TextDecoder(enc[0], { fatal: true }).decode(buf), note: 'read as ' + enc[1] + (enc[2] ? ', the usual older encoding for your browser language' : '') };
+    } catch (e) { /* the language's encoding does not fit: Windows-1252 below */ }
+    if (enc[2]) {
+      try {
+        /* the browser's Windows-1252 never fails: it turns the five bytes Windows leaves
+           undefined (81 8D 8F 90 9D) into invisible control characters, so a reading
+           that contains one counts as failed */
+        var w = new TextDecoder('windows-1252', { fatal: true }).decode(buf);
+        if (!/[\u0081\u008D\u008F\u0090\u009D]/.test(w)) return { text: w, note: 'read as Windows-1252' };
+      } catch (e) { /* fall through to the UTF-8 reading */ }
     }
+    return { text: utf8Text, note: 'some bytes are not valid UTF-8 and show as \uFFFD' };
+  }
+  var LEGACY_ENC = [
+    [/^ja\b/, 'shift_jis', 'Shift_JIS'],
+    [/^zh-(tw|hk|mo|hant)\b/, 'big5', 'Big5'],
+    [/^zh\b/, 'gb18030', 'GBK (GB 18030)'],
+    [/^ko\b/, 'euc-kr', 'EUC-KR'],
+    [/^(ru|uk|bg|sr|mk|be)\b/, 'windows-1251', 'Windows-1251'],
+    [/^(tr|az)\b/, 'windows-1254', 'Windows-1254'],
+    [/^(pl|cs|sk|hu|hr|sl|ro|bs)\b/, 'windows-1250', 'Windows-1250'],
+    [/^el\b/, 'windows-1253', 'Windows-1253'],
+    [/^(he|iw)\b/, 'windows-1255', 'Windows-1255'],
+    [/^(ar|fa|ur)\b/, 'windows-1256', 'Windows-1256'],
+    [/^(lt|lv|et)\b/, 'windows-1257', 'Windows-1257'],
+    [/^vi\b/, 'windows-1258', 'Windows-1258'],
+    [/^th\b/, 'windows-874', 'Windows-874']
+  ];
+  /* [TextDecoder label, shown name, language-specific?] for the FIRST browser language
+     only: its legacy encoding if the table has one (and this browser can decode it),
+     else Windows-1252 */
+  var WIN1252 = ['windows-1252', 'Windows-1252', false];
+  function legacyEncoding() {
+    var l = '';
+    try {
+      l = (navigator.languages && navigator.languages.length) ? navigator.languages[0] : navigator.language;
+    } catch (e) { l = ''; }
+    l = String(l || '').toLowerCase();
+    for (var j = 0; j < LEGACY_ENC.length; j++) {
+      if (LEGACY_ENC[j][0].test(l)) {
+        try { new TextDecoder(LEGACY_ENC[j][1]); } catch (e) { return WIN1252; }
+        return [LEGACY_ENC[j][1], LEGACY_ENC[j][2], true];
+      }
+    }
+    return WIN1252;
   }
 
   // Typing or pasting over a loaded file means the pane no longer shows that file —
@@ -1009,21 +1135,21 @@
     var isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
     if (isPdf) {
       if (file.size > PDF_FILE_MAX) {
-        setStatus(file.name + ' is ' + fmtMB(file.size) + '; PDFs over ' + fmtMB(PDF_FILE_MAX) + ' are not handled here.');
+        setStatus(shownName(file.name) + ' is ' + fmtMB(file.size) + '; PDFs over ' + fmtMB(PDF_FILE_MAX) + ' are not handled here.');
         return;
       }
-      setStatus('Extracting text from ' + file.name + '…');
+      setStatus('Extracting text from ' + shownName(file.name) + '…');
       extractPdfText(file).then(function (res) {
         setPane(which, res.text, file.name);
         pdfNoteEl.hidden = false;
-        setStatus('Extracted text from ' + res.pages + (res.pages === 1 ? ' page' : ' pages') + ' of ' + file.name + '.', true);
+        setStatus('Extracted text from ' + num(res.pages) + (res.pages === 1 ? ' page' : ' pages') + ' of ' + shownName(file.name) + '.', true);
       }).catch(function (err) {
-        setStatus('Could not read ' + file.name + ' as a PDF' + (err && err.message ? ' (' + err.message + ')' : '') + '.');
+        setStatus('Could not read ' + shownName(file.name) + ' as a PDF' + (err && err.message ? ' (' + err.message + ')' : '') + '.');
       });
       return;
     }
     if (file.size > HARD_MAX) {
-      setStatus(file.name + ' is ' + fmtMB(file.size) + '. This tool tops out around 5 MB of text, so the file was not loaded.');
+      setStatus(shownName(file.name) + ' is ' + fmtMB(file.size) + '. This tool tops out around 5 MB of text, so the file was not loaded.');
       return;
     }
     file.text().then(function (text) {
@@ -1031,17 +1157,17 @@
         /* Binary content (NUL bytes) is refused outright: rendering ~1MB of binary
            garbage in a textarea can freeze the tab, and diffing it as text has no
            real use. .docx/.xlsx land here too (they are binary zips). */
-        setStatus(file.name + ' looks like a binary file, so it was not loaded. This tool compares text files and PDFs.');
+        setStatus(shownName(file.name) + ' looks like a binary file, so it was not loaded. This tool compares text files and PDFs.');
         return null;
       }
       if (text.indexOf('\uFFFD') === -1 || typeof TextDecoder === 'undefined') return { text: text };
       return file.arrayBuffer().then(function (buf) { return redecode(buf, text); });
     }).then(function (r) {
       if (!r) return;
-      setStatus('Loaded ' + file.name + (r.note ? ' (' + r.note + ')' : '') + '.', true);
+      setStatus('Loaded ' + shownName(file.name) + (r.note ? ' (' + r.note + ')' : '') + '.', true);
       setPane(which, r.text, file.name, r.note);
     }).catch(function () {
-      setStatus('Could not read ' + file.name + '.');
+      setStatus('Could not read ' + shownName(file.name) + '.');
     });
   }
 

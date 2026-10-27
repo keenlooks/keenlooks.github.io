@@ -17,6 +17,23 @@
   if (!wrap) return;
 
   function $(id) { return document.getElementById(id); }
+  /* counts in the visitor's locale (Intl): "2,953 characters" in en-US, "2.953" in de-DE */
+  /* Digits stay Latin (0-9) in these English sentences whatever the visitor's numbering
+     system (ar-SA would print Arabic-Indic digits, bn-BD Bengali ones); the visitor's
+     separators stay. Right-to-left languages take en-US outright: their Latin-digit forms
+     still carry hidden direction marks, "US$" and an Arabic percent sign. */
+  var NUM_LOC = (function () {
+    try {
+      var l = new Intl.NumberFormat().resolvedOptions().locale;
+      if (/^(ar|fa|ur|he|iw|yi|ps|sd|ug|ckb|dv|ks|syr)(-|$)/i.test(l)) return 'en-US';
+      return l.replace(/-u-.*$/i, '') + '-u-nu-latn';
+    } catch (e) { return undefined; }
+  })();
+  var NF_INT = null;
+  try { NF_INT = new Intl.NumberFormat(NUM_LOC, { maximumFractionDigits: 0 }); } catch (e) {}
+  /* Arabic-Indic digits inside English text: a left-to-right isolate keeps "133×133" in order */
+  function iso(t) { return /[\u0600-\u06FF\u200F\u061C]/.test(t) ? '\u2066' + t + '\u2069' : t; }
+  function num(v) { return iso(NF_INT ? NF_INT.format(v) : String(v)); }
 
   function debounce(fn, ms) {
     var t = 0;
@@ -73,8 +90,20 @@
     return t || 'code';
   }
 
+  /* Phone digits as a dialer reads them (RFC 3966 allows only ASCII digits in tel:):
+     full-width digits, plus and hyphens from a Japanese IME folded by NFKC, Arabic-Indic
+     and Persian digits mapped to 0-9, Unicode dashes and the katakana long mark to "-".
+     The vCard TEL value gets only this fold (vCard allows formatting); tel: and SMSTO:
+     also drop the separators (cleanPhone). */
+  function foldPhone(s) {
+    s = String(s);
+    if (s.normalize) s = s.normalize('NFKC');
+    return s.replace(/[\u0660-\u0669]/g, function (c) { return String(c.charCodeAt(0) - 0x0660); })
+      .replace(/[\u06F0-\u06F9]/g, function (c) { return String(c.charCodeAt(0) - 0x06F0); })
+      .replace(/[\u2010-\u2015\u2212\u30FC\uFF70]/g, '-');
+  }
   function cleanPhone(s) {
-    return String(s).replace(/[\s().-]/g, '');
+    return foldPhone(s).replace(/[\s\u00A0().-]/g, '');
   }
 
   /* Returns { text, name } or { hint } when required fields are empty. */
@@ -109,9 +138,18 @@
     if (type === 'vcard') {
       var name = $('qs-vc-name').value.trim();
       if (!name) return { hint: 'Enter a name to generate the contact card.' };
-      var family = '', given = name;
-      var sp = name.lastIndexOf(' ');
-      if (sp > 0) { family = name.slice(sp + 1); given = name.slice(0, sp); }
+      var family = '', given = name, sp;
+      if (/[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\uAC00-\uD7AF\u1100-\u11FF]/.test(name)) {
+        /* Chinese, Japanese and Korean names are written family name first ("山田 太郎",
+           often with the ideographic space): the first space splits them; with no space
+           the whole name is the family name */
+        sp = name.search(/[ \u3000]/);
+        if (sp > 0) { family = name.slice(0, sp); given = name.slice(sp + 1).trim(); }
+        else { family = name; given = ''; }
+      } else {
+        sp = Math.max(name.lastIndexOf(' '), name.lastIndexOf('\u3000'));
+        if (sp > 0) { family = name.slice(sp + 1); given = name.slice(0, sp); }
+      }
       var lines = ['BEGIN:VCARD', 'VERSION:3.0'];
       lines.push('N:' + escVcard(family) + ';' + escVcard(given) + ';;;');
       lines.push('FN:' + escVcard(name));
@@ -120,7 +158,7 @@
       var title = $('qs-vc-title').value.trim();
       if (title) lines.push('TITLE:' + escVcard(title));
       var tel = $('qs-vc-tel').value.trim();
-      if (tel) lines.push('TEL;TYPE=CELL:' + escVcard(tel));
+      if (tel) lines.push('TEL;TYPE=CELL:' + escVcard(foldPhone(tel)));
       var email = $('qs-vc-email').value.trim();
       if (email) lines.push('EMAIL:' + escVcard(email));
       var vurl = $('qs-vc-url').value.trim();
@@ -208,7 +246,7 @@
       qr = q;
       qrName = p.name;
       var n = qr.getModuleCount();
-      meta.textContent = 'Version ' + ((n - 17) / 4) + ', ' + n + '×' + n + ' modules, ' + p.text.length + ' characters.';
+      meta.textContent = 'Version ' + num((n - 17) / 4) + ', ' + num(n) + '×' + num(n) + ' modules, ' + num(p.text.length) + ' characters.';
       btnPng.disabled = btnSvg.disabled = false;
     } catch (e) {
       qr = null;
@@ -375,7 +413,7 @@
       }
       var lab = blk.querySelector('.qs-item__label');
       lab.hidden = !many;
-      lab.textContent = many ? 'Code ' + (i + 1) + ' of ' + texts.length : '';
+      lab.textContent = many ? 'Code ' + num(i + 1) + ' of ' + num(texts.length) : '';
       blk.querySelector('code').textContent = texts[i];
       blk.querySelector('.qs-copy').textContent = 'Copy text';
       blk.querySelector('.qs-copy').setAttribute('aria-label', many ? 'Copy code ' + (i + 1) : 'Copy text');
@@ -385,8 +423,8 @@
     warn.textContent = many ? LINKWARN_MANY : LINKWARN_ONE;
     warn.hidden = !anyLink;
     res.hidden = false;
-    if (many) scanStatus('Found ' + texts.length + ' QR codes in that image.');
-    else scanStatus('Decoded ' + texts[0].length + ' character' + (texts[0].length === 1 ? '' : 's') + '.');
+    if (many) scanStatus('Found ' + num(texts.length) + ' QR codes in that image.');
+    else scanStatus('Decoded ' + num(texts[0].length) + ' character' + (texts[0].length === 1 ? '' : 's') + '.');
   }
 
   function jsqrOn(source, w, h) {

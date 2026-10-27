@@ -694,8 +694,26 @@
     });
 
     /* ---------- assemble / reset / stop ---------- */
+    /* A Turkish keyboard types the dotted capital İ (Shift+i) and the dotless ı, which the
+       assembler's ASCII mnemonics and labels never match ("İNC $2000"). They are folded to
+       I and i in the code only (not inside a 'c' character literal, not after the ;
+       comment mark), one character for one, so line numbers and columns are unchanged.
+       The editor keeps what was typed; computer-core.js is untouched. */
+    function foldTurkishI(src) {
+      if (!/[\u0130\u0131]/.test(src)) return src;
+      return src.split('\n').map(function (line) {
+        var out = '', i = 0, n = line.length;
+        while (i < n) {
+          var c = line.charAt(i);
+          if (c === "'" && i + 2 < n && line.charAt(i + 2) === "'") { out += line.substr(i, 3); i += 3; continue; }
+          if (c === ';') { out += line.slice(i); break; }
+          out += c === '\u0130' ? 'I' : c === '\u0131' ? 'i' : c; i++;
+        }
+        return out;
+      }).join('\n');
+    }
     function assembleNow() {
-      var r = K.assemble(srcTa.value);
+      var r = K.assemble(foldTurkishI(srcTa.value));
       if (r.errors.length) {
         showErrors(r.errors);
         setStatus(r.errors.length + (r.errors.length === 1 ? ' error.' : ' errors.'));

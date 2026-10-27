@@ -171,7 +171,13 @@
   }
 
   /* ---- scoring ------------------------------------------------------ */
-  function norm(s) { return (s || '').toLowerCase(); }
+  /* search text and query alike: Turkish dotted capital I and dotless i folded first
+     ("İ".toLowerCase() is "i" plus a combining dot, so "DİFF" found nothing), then lower
+     case with accents and other combining marks dropped ("resume" finds "Résumé") */
+  function norm(s) {
+    s = String(s || '').replace(/\u0130/g, 'I').replace(/\u0131/g, 'i').toLowerCase();
+    return s.normalize ? s.normalize('NFD').replace(/[\u0300-\u036f]/g, '') : s;
+  }
 
   function subseq(hay, needle) {
     var i = 0;

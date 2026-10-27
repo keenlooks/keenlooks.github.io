@@ -65,26 +65,26 @@ description: "Your browser estimates where you are from nothing but round-trip t
       <th scope="col" data-key="resid" class="num" aria-sort="none"><button type="button">Residual (ms)</button></th>
       <th scope="col" data-key="role" aria-sort="none"><button type="button">Role</button></th>
     </tr></thead>
-    <tbody id="loc-tbody"></tbody>
+    <tbody id="loc-tbody" class="notranslate" translate="no"></tbody>
   </table>
 </div>
 
 <h2 class="loc-h">The math</h2>
 <div id="loc-math" class="loc-math">
 <p><strong>Light sets a hard limit.</strong> Light in vacuum travels at c = 299,792.458 km/s. A reply that took <var>rtt</var> milliseconds went out and came back, so the server can be at most</p>
-<p class="loc-eq">d<sub>i</sub> &le; c &times; rtt<sub>i</sub> / 2</p>
+<p class="loc-eq notranslate" translate="no">d<sub>i</sub> &le; c &times; rtt<sub>i</sub> / 2</p>
 <p>away. A candidate point that breaks any one of these bounds is impossible. They are the faint dashed circles on the map. <span class="loc-live" id="lm-hard"></span></p>
 
 <p><strong>Glass is slower.</strong> In optical fibre, light is slowed by the glass's refractive index of 1.468 to v<sub>f</sub> = c / 1.468, about 204,218 km/s, roughly two thirds of c. If the first hop of your own connection (router, cable, radio, VPN tunnel) and the servers' own time to answer cost <var>b</var> milliseconds each way, light in glass can have covered at most</p>
-<p class="loc-eq">d<sub>i</sub> &le; v<sub>f</sub> &times; (rtt<sub>i</sub> / 2 &minus; b)</p>
+<p class="loc-eq notranslate" translate="no">d<sub>i</sub> &le; v<sub>f</sub> &times; (rtt<sub>i</sub> / 2 &minus; b)</p>
 <p>These are the solid circles. While the run is going they are drawn with b = 0, a true limit for light in glass. After the fit they are drawn with the fitted b, and then they are estimates, not limits: the page cannot measure b, it fits it (below), and the fitted b also absorbs how much more the short routes near you zigzag. It can even come out longer than half of your fastest round trip; a region that close gets no solid circle, and the table says "under b". Only the dashed circles are hard limits. <span class="loc-live" id="lm-fibre"></span></p>
 
 <p><strong>The model.</strong> Real routes are longer than great circles, so the page fits a route factor <var>k</var> between 1.0 and 2.5 and one shared delay <var>b</var> &ge; 0 (your first hop, plus the servers' own time to answer):</p>
-<p class="loc-eq">rtt<sub>i</sub> = 2 &times; k &times; g<sub>i</sub>(x) / v<sub>f</sub> + 2 &times; b + noise</p>
+<p class="loc-eq notranslate" translate="no">rtt<sub>i</sub> = 2 &times; k &times; g<sub>i</sub>(x) / v<sub>f</sub> + 2 &times; b + noise</p>
 <p>where g<sub>i</sub>(x) is the great-circle distance from a candidate point <var>x</var> to region <var>i</var> (the haversine formula on a sphere of radius 6,371.0088 km). At every candidate point on Earth we ask: what route factor and what first-hop delay would make these timings fit? The place that needs the least excuse wins.</p>
 
 <p><strong>The solver.</strong> A 1 degree grid covers the globe: 64,800 candidate points. At each one the model is a straight line in k and b, so a weighted least-squares fit finds both at once; if k falls outside 1.0 to 2.5 or b below 0, that one is clipped and the other is solved again. Only the 16 fastest regions enter this fit, because one route factor only holds over a limited range: short routes near you zigzag much more than the long undersea cables, and when every region is fitted at once the far ones drag the answer away. Every region that answered still rules out the places its hard bound forbids. The misfit is</p>
-<p class="loc-eq">cost(x) = &Sigma; w<sub>i</sub> (rtt<sub>i</sub> &minus; model<sub>i</sub>)<sup>2</sup> / &Sigma; w<sub>i</sub> &nbsp; (ms<sup>2</sup>)</p>
+<p class="loc-eq notranslate" translate="no">cost(x) = &Sigma; w<sub>i</sub> (rtt<sub>i</sub> &minus; model<sub>i</sub>)<sup>2</sup> / &Sigma; w<sub>i</sub> &nbsp; (ms<sup>2</sup>)</p>
 <p>with weights w<sub>i</sub> = provider &times; 1 / (1 + jitter<sub>i</sub> / 5) &times; (20 / max(rtt<sub>i</sub>, 20))<sup>2</sup>: Amazon counts 1.0 and Google 0.7 (Google's front ends add backbone time), steady regions count more than jittery ones, and near regions count much more than far ones, because they carry the most information and because the error in a route grows with its length. The 20 best points are then searched again on a 0.1 degree grid. <span class="loc-live" id="lm-solve"></span></p>
 
 <p><strong>The region.</strong> Every point whose cost is at most twice the best (and at least 1 ms<sup>2</sup> above it), cost &le; cost<sub>min</sub> + max(1, cost<sub>min</sub>), counts as likely; that is the shaded area. It keeps only land: light alone cannot tell a coast from the open sea, and people rarely browse from a boat, so the best point is the best one on land too (if no land fits at all, the sea is shaded). The radius quoted is the distance from the best point that covers 90 percent of the shaded area. It is never quoted below 50 km, because each cloud region is placed at its city, not its building. <span class="loc-live" id="lm-region"></span></p>
@@ -131,11 +131,11 @@ description: "Your browser estimates where you are from nothing but round-trip t
   <li>A VPN relocates the answer to its exit; a cellular or satellite link widens it; a geostationary satellite defeats it.</li>
   <li>The cloud regions pinged see your IP address, as every website does. This site receives nothing: no cookies, no storage, nothing in the address bar, no events beyond the site's ordinary page view.</li>
   <li>Endpoints come and go; an unanswered region is left out, and with fewer than 8 answers the page says so.</li>
-  <li>A run sends about six small requests to each of the <span id="loc-n-eps">76</span> regions, under 500 requests in all. Setting up each encrypted connection costs about 5 KB, so a run moves about 0.7 MB.</li>
+  <li>A run sends about six small requests to each of the <span id="loc-n-eps" class="notranslate" translate="no">76</span> regions, under 500 requests in all. Setting up each encrypted connection costs about 5 KB, so a run moves about 0.7 MB.</li>
 </ul>
 
 <h3 class="loc-h3">Credits</h3>
-<p class="loc-credit">Map: Natural Earth land polygons (public domain). Endpoints: the public health URLs of Amazon DynamoDB (<code>dynamodb.&lt;region&gt;.amazonaws.com/ping</code>) and the Google Cloud Run ping services listed by gcping.com. The fibre index of 1.468 is the effective group index Corning publishes for its SMF-28 Ultra single-mode fibre (1.4676 at 1310 nm, 1.4682 at 1550 nm). The idea of turning delays into distance constraints comes from Gueye, Ziviani, Crovella and Fdida, "Constraint-Based Geolocation of Internet Hosts", IEEE/ACM Transactions on Networking, 2006; the shared first-hop fit is the same trick GPS uses for a receiver's clock error. The accuracy figures in the notes use the public matrix of round trips between AWS regions published by cloudping.co.</p>
+<p class="loc-credit">Map: Natural Earth land polygons (public domain). Endpoints: the public health URLs of Amazon DynamoDB (<code class="notranslate" translate="no">dynamodb.&lt;region&gt;.amazonaws.com/ping</code>) and the Google Cloud Run ping services listed by gcping.com. The fibre index of 1.468 is the effective group index Corning publishes for its SMF-28 Ultra single-mode fibre (1.4676 at 1310 nm, 1.4682 at 1550 nm). The idea of turning delays into distance constraints comes from Gueye, Ziviani, Crovella and Fdida, "Constraint-Based Geolocation of Internet Hosts", IEEE/ACM Transactions on Networking, 2006; the shared first-hop fit is the same trick GPS uses for a receiver's clock error. The accuracy figures in the notes use the public matrix of round trips between AWS regions published by cloudping.co.</p>
 
 </div>
 

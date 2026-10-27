@@ -24,6 +24,32 @@
   if (!ctx) return;
   function id(x) { return document.getElementById(x); }
 
+  // Numbers follow the visitor's locale through Intl ("$1,000" and "3.0%" in
+  // en-US, "1.000 $" and "3,0 %" in de-DE); the amounts stay in US dollars.
+  /* Digits stay Latin (0-9) in these English sentences whatever the visitor's numbering
+     system (ar-SA would print Arabic-Indic digits, bn-BD Bengali ones); the visitor's
+     separators stay. Right-to-left languages take en-US outright: their Latin-digit forms
+     still carry hidden direction marks, "US$" and an Arabic percent sign. */
+  var NUM_LOC = (function () {
+    try {
+      var l = new Intl.NumberFormat().resolvedOptions().locale;
+      if (/^(ar|fa|ur|he|iw|yi|ps|sd|ug|ckb|dv|ks|syr)(-|$)/i.test(l)) return 'en-US';
+      return l.replace(/-u-.*$/i, '') + '-u-nu-latn';
+    } catch (e) { return undefined; }
+  })();
+  function nf(o) { try { return new Intl.NumberFormat(NUM_LOC, o); } catch (e) { return null; } }
+  var NF_USD0 = nf({ style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  var NF_PCT1 = nf({ style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  var NF_INT = nf({ maximumFractionDigits: 0, useGrouping: false });     // years, counts
+  var NF_DEC1 = nf({ minimumFractionDigits: 1, maximumFractionDigits: 1, useGrouping: false });
+  // Arabic-Indic digits (ar-SA) or a right-to-left mark (he, ar currency) inside an
+  // English sentence get reordered by the bidi algorithm ("1200×800" shows as
+  // "800×1200"): such a number is wrapped in a left-to-right isolate.
+  function iso(t) { return /[\u0600-\u06FF\u200F\u061C]/.test(t) ? '\u2066' + t + '\u2069' : t; }
+  function num(v) { return iso(NF_INT ? NF_INT.format(v) : String(v)); }
+  function dec1(v) { return iso(NF_DEC1 ? NF_DEC1.format(+v.toFixed(1)) : v.toFixed(1)); }   // toFixed's rounding, Intl's marks
+  function pct(p) { var r = +p.toFixed(1); return iso(NF_PCT1 ? NF_PCT1.format(r / 100) : r.toFixed(1) + '%'); }   // p in percent
+
   var rateInput = id('bond-rate'), rateVal = id('bond-rate-val');
   var yearsInput = id('bond-years'), yearsVal = id('bond-years-val');
   var curveToggle = id('bond-mode');
@@ -41,7 +67,7 @@
   var displayRate = s.rate, raf = null, DEFAULT_PAY = 100, drag = null;
   var overlay = window.makeNumberOverlay ? window.makeNumberOverlay(canvas) : null;
   s.startYearCal = null;        // calendar year for year 0 (null = "years from today"); set by clicking an x-axis tick
-  function tickLabel(yr) { return s.startYearCal != null ? String(s.startYearCal + yr) : String(yr); }
+  function tickLabel(yr) { return s.startYearCal != null ? num(s.startYearCal + yr) : num(yr); }
   var reduceMQ = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
   function reduced() { return !!(reduceMQ && reduceMQ.matches); }
 
@@ -80,7 +106,10 @@
   function bondValueAt(t, r) { var v = 0; for (var i = 0; i < s.payouts.length; i++) { var p = s.payouts[i]; if (p.t > t + 1e-9) v += p.amt * df(p.t - t, r); } return v; }
   function couponPrice(r) { return bondValueAt(0, r); }
 
-  function fmtUSD(n) { return '$' + Math.round(n).toLocaleString('en-US'); }
+  function fmtUSD(n) {
+    var v = Math.round(n); if (v === 0) v = 0;                            // no "-$0"
+    return iso(NF_USD0 ? NF_USD0.format(v) : '$' + v.toLocaleString('en-US'));
+  }
 
   // ---- geometry ----------------------------------------------------------
   var W = 0, H = 0, M = { l: 64, r: 74, t: 30, b: 46 }, yMax = 1;
@@ -103,6 +132,11 @@
   }
   function drawGrid(c, yLabelFn) {
     ctx.font = '12px "Source Sans 3", system-ui, sans-serif';
+    // the left margin grows to fit the widest dollar label ("13.884 $", "US$"
+    // after the number in some locales); en-US labels fit the 64 px default
+    var lw = 0;
+    for (var j = 0; j <= 4; j++) lw = Math.max(lw, ctx.measureText(yLabelFn((yMax / 4) * j)).width);
+    M.l = Math.max(64, Math.ceil(lw) + 14);
     ctx.textBaseline = 'middle'; ctx.textAlign = 'right';
     for (var i = 0; i <= 4; i++) {
       var v = (yMax / 4) * i, gy = yPx(v);
@@ -144,7 +178,7 @@
     var midT = s.years * 0.5;
     ctx.fillStyle = c.accent; ctx.font = '600 12px "Source Sans 3", system-ui, sans-serif';
     ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
-    ctx.fillText((displayRate * 100).toFixed(1) + '% / yr', xPx(midT) + 6, yPx(singleValueAt(midT, displayRate)) - 6);
+    ctx.fillText(pct(displayRate * 100) + ' / yr', xPx(midT) + 6, yPx(singleValueAt(midT, displayRate)) - 6);
     var fx = xPx(s.years), fy = yPx(SINGLE_FV);
     dot(fx, fy, c.accent, c.panel);
     ctx.fillStyle = c.text; ctx.font = '600 13px "Source Sans 3", system-ui, sans-serif';
@@ -255,7 +289,7 @@
     // left, the only corner of the plot with room for it (the top left is the
     // price label and the first coupon labels sit right under it).
     var summary = hid > 0
-      ? (hid + (hid === 1 ? ' more payout' : ' more payouts')
+      ? (num(hid) + (hid === 1 ? ' more payout' : ' more payouts')
            + (hidSame && hidAmt != null ? ' of ' + fmtUSD(hidAmt) : ''))
       : '';
     // drag tooltip
@@ -263,7 +297,7 @@
       var dp = s.payouts[drag.idx];
       ctx.fillStyle = c.muted; ctx.font = '600 11px "Source Sans 3", system-ui, sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-      ctx.fillText(s.startYearCal != null ? ('~' + (s.startYearCal + dp.t).toFixed(1)) : ('Year ' + dp.t.toFixed(1)), xPx(dp.t), 26);
+      ctx.fillText(s.startYearCal != null ? ('~' + dec1(s.startYearCal + dp.t)) : ('Year ' + dec1(dp.t)), xPx(dp.t), 26);
     }
     // price label (top-left) + hint (bottom-left)
     ctx.fillStyle = c.text; ctx.font = '700 15px "Source Sans 3", system-ui, sans-serif';
@@ -285,14 +319,14 @@
     if (!caption) return;
     var r = displayRate, approx = s.curve === 'linear', tilde = approx ? '~' : '';
     if (s.view === 'single') {
-      caption.innerHTML = "You'll receive <strong>" + fmtUSD(SINGLE_FV) + "</strong> in <strong>" + s.years
-        + "</strong> years. At an interest rate of <strong>" + (r * 100).toFixed(1) + "%</strong>, that future payout is worth <strong>"
+      caption.innerHTML = "You'll receive <strong>" + fmtUSD(SINGLE_FV) + "</strong> in <strong>" + num(s.years)
+        + "</strong> years. At an interest rate of <strong>" + pct(r * 100) + "</strong>, that future payout is worth <strong>"
         + tilde + fmtUSD(singlePrice(r)) + "</strong> today, the bond's price. <span class=\"bond-note\">(" + curveNote() + ")</span>";
     } else {
       var coupon = s.face * s.coupon, price = couponPrice(r);
-      var lead = "A coupon bond paying a <strong>" + (s.coupon * 100).toFixed(1) + "%</strong> coupon (<strong>"
+      var lead = "A coupon bond paying a <strong>" + pct(s.coupon * 100) + "</strong> coupon (<strong>"
         + fmtUSD(coupon) + "/yr</strong>) plus its <strong>" + fmtUSD(s.face) + "</strong> face value at maturity. At a market rate of <strong>"
-        + (r * 100).toFixed(1) + "%</strong>, ";
+        + pct(r * 100) + "</strong>, ";
       if (approx) {
         caption.innerHTML = lead + "its price today is about <strong>~" + fmtUSD(price)
           + "</strong>. <span class=\"bond-note\">(Simplified: simple interest, toggle &ldquo;more realistic&rdquo; for the exact price and whether it's at a discount or premium.)</span>";
@@ -317,10 +351,10 @@
     updateCaption();
   }
   function syncControls() {
-    if (rateVal) rateVal.textContent = (displayRate * 100).toFixed(1) + '%';
-    if (yearsVal) yearsVal.textContent = s.years;
+    if (rateVal) rateVal.textContent = pct(displayRate * 100);
+    if (yearsVal) yearsVal.textContent = num(s.years);
     if (faceVal) faceVal.textContent = fmtUSD(s.face);
-    if (couponVal) couponVal.textContent = (s.coupon * 100).toFixed(1) + '%';
+    if (couponVal) couponVal.textContent = pct(s.coupon * 100);
     if (rateInput && document.activeElement !== rateInput) rateInput.value = (displayRate * 100).toFixed(1);
   }
 

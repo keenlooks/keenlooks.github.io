@@ -36,7 +36,7 @@ description: "An interactive hash demo by Keane Lucas: a live birthday search fi
       </div>
 
       <p class="hash-stat hash-result-only" id="hash-changed">Edit the message to see the avalanche.</p>
-      <p class="hash-prev hash-result-only" id="hash-prev"></p>
+      <p class="hash-prev hash-result-only notranslate" id="hash-prev" translate="no"></p>
       <p class="hash-hint" id="hash-hint"></p>
 
       <details class="hash-note">

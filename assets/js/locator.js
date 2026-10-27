@@ -456,7 +456,7 @@
     var fired = [];
     var tz = (isFinite(inp.devOffsetHours) && isFinite(inp.estLon)) ? P.tzDisagreement(inp.devOffsetHours, inp.estLon) : NaN;
     if (mn > 450) fired.push({ kind: 'geo', rule: 'the fastest round trip is above 450 ms' });
-    if (tz > 3) fired.push({ kind: 'vpn', rule: 'your device clock is ' + tz.toFixed(1) + ' hours away from the time zone the estimate implies (more than 3)' });
+    if (tz > 3) fired.push({ kind: 'vpn', rule: 'your device clock is ' + P.fmtFixed(tz, 1) + ' hours away from the time zone the estimate implies (more than 3)' });
     else if (b > 25 && j < 3) fired.push({ kind: 'vpn', rule: 'the shared delay is above 25 ms while the jitter is below 3 ms (a tunnel adds a steady delay, a radio adds a jittery one)' });
     if (b >= 20 && b <= 70 && j >= 5 && j <= 25 && mn > 25) fired.push({ kind: 'leo', rule: 'the shared delay is between 20 and 70 ms, the jitter between 5 and 25 ms, and the fastest round trip above 25 ms' });
     if ((b >= 15 && b <= 90) || (j >= 8 && b >= 10)) fired.push({ kind: 'cell', rule: (b >= 15 && b <= 90) ? 'the shared delay is between 15 and 90 ms' : 'the jitter is 8 ms or more with a shared delay of 10 ms or more' });
@@ -616,7 +616,7 @@
     rows.sort(function (u, v) { return Math.abs(v.r) - Math.abs(u.r); });
     var home = P.continentOf(fit.near.ep.country);
     rows.slice(0, nTop || 3).forEach(function (row) {
-      var e = eps[row.i], ms = Math.abs(row.r).toFixed(Math.abs(row.r) < 10 ? 1 : 0), why;
+      var e = eps[row.i], ms = P.fmtFixed(Math.abs(row.r), Math.abs(row.r) < 10 ? 1 : 0), why;
       var name = e.metro + ' (' + P.providerName(e.provider) + ')';
       var q = meas && meas[row.i], noise = Math.max(P.CONST.NOISE_FLOOR_MS, row.r > 0 && q && isFinite(q.jitter) ? 2 * q.jitter : 0);
       if (Math.abs(row.r) < noise) {
@@ -634,11 +634,11 @@
     if (far.length) {
       var faster = far.filter(function (v) { return v.ms < 0; }).length;
       var med = P.median(far.map(function (v) { return v.ms; })), medRel = P.median(far.map(function (v) { return v.rel; }));
-      var medTxt = (med > 0 ? '+' : '') + med.toFixed(Math.abs(med) < 10 ? 1 : 0) + ' ms, ' + Math.round(Math.abs(medRel) * 100) + ' percent of the expected round trip';
-      var lead = 'The ' + far.length + ' farther regions only set hard limits. Against the model fitted near you, ';
+      var medTxt = (med > 0 ? '+' : '') + P.fmtFixed(med, Math.abs(med) < 10 ? 1 : 0) + ' ms, ' + P.fmtInt(Math.abs(medRel) * 100) + ' percent of the expected round trip';
+      var lead = 'The ' + P.fmtInt(far.length) + ' farther regions only set hard limits. Against the model fitted near you, ';
       var tail;
-      if (medRel <= -P.CONST.FAR_REL) tail = faster + ' of them answered faster than expected (median ' + medTxt + '): long-distance cables run straighter than the tangle of short routes near you.';
-      else if (medRel >= P.CONST.FAR_REL) tail = (far.length - faster) + ' of them answered slower than expected (median ' + medTxt + '): long routes to them detour more than the short ones near you.';
+      if (medRel <= -P.CONST.FAR_REL) tail = P.fmtInt(faster) + ' of them answered faster than expected (median ' + medTxt + '): long-distance cables run straighter than the tangle of short routes near you.';
+      else if (medRel >= P.CONST.FAR_REL) tail = P.fmtInt(far.length - faster) + ' of them answered slower than expected (median ' + medTxt + '): long routes to them detour more than the short ones near you.';
       else tail = 'they answered about as expected (median ' + medTxt + '), so one route factor fits near and far alike here.';
       out.push({ i: -1, ms: med, rel: medRel, text: lead + tail });
     }
@@ -653,7 +653,48 @@
   // the best point: a wide region must not make a metro thousands of km away read as "near".
   P.CONST.NEAR_MIN_KM = 100;
   P.CONST.NEAR_CAP_KM = 300;
-  P.fmtInt = function (v) { return Math.round(v).toLocaleString('en-US'); };
+  // Numbers in the visitor's locale through Intl ("1,234 km" and "12.5 ms" in en-US,
+  // "1.234 km" and "12,5 ms" in de-DE); node (the test harness) uses its own locale.
+  /* Digits stay Latin (0-9) in these English sentences whatever the visitor's numbering
+     system (ar-SA would print Arabic-Indic digits, bn-BD Bengali ones); the visitor's
+     separators stay. Right-to-left languages take en-US outright: their Latin-digit forms
+     still carry hidden direction marks, "US$" and an Arabic percent sign. */
+  P.NUM_LOC = (function () {
+    try {
+      var l = new Intl.NumberFormat().resolvedOptions().locale;
+      if (/^(ar|fa|ur|he|iw|yi|ps|sd|ug|ckb|dv|ks|syr)(-|$)/i.test(l)) return 'en-US';
+      return l.replace(/-u-.*$/i, '') + '-u-nu-latn';
+    } catch (e) { return undefined; }
+  })();
+  P.nf = (function () {
+    var cache = {};
+    return function (digits, group) {
+      var key = digits + (group ? 'g' : '');
+      if (!(key in cache)) {
+        try { cache[key] = new Intl.NumberFormat(P.NUM_LOC, { minimumFractionDigits: digits, maximumFractionDigits: digits, useGrouping: !!group }); }
+        catch (e) { cache[key] = null; }
+      }
+      return cache[key];
+    };
+  })();
+  // Arabic-Indic digits (ar-SA) or a right-to-left mark (he, ar currency) inside an
+  // English sentence get reordered by the bidi algorithm ("1200×800" shows as
+  // "800×1200"): such a number is wrapped in a left-to-right isolate.
+  P.iso = function (t) { return /[\u0600-\u06FF\u200F\u061C]/.test(t) ? '\u2066' + t + '\u2069' : t; };
+  // v.toFixed(digits) in the visitor's locale: rounded by toFixed first, because Intl
+  // rounds the shortest decimal ("119.35" -> 119.4) where toFixed rounds the binary
+  // value (119.349999... -> 119.3); no "-0"
+  P.fmtFixed = function (v, digits, group) {
+    if (isFinite(v)) v = +v.toFixed(digits);
+    if (v === 0) v = 0;
+    var f = P.nf(digits, group);
+    return P.iso(f ? f.format(v) : v.toFixed(digits));
+  };
+  P.fmtInt = function (v) {
+    var r = Math.round(v); if (r === 0) r = 0;
+    var f = P.nf(0, true);
+    return P.iso(f ? f.format(r) : r.toLocaleString('en-US'));
+  };
   P.roundKm = function (v) {
     if (v < 100) return Math.max(5, Math.round(v / 5) * 5);
     if (v < 1000) return Math.round(v / 10) * 10;
@@ -662,7 +703,7 @@
   // The radius as quoted: never below MIN_RADIUS_KM (regions are metros, not buildings).
   P.radiusShownKm = function (r) { return P.roundKm(Math.max(P.CONST.MIN_RADIUS_KM, r)); };
   P.latlon = function (lat, lon) {
-    return Math.abs(lat).toFixed(1) + (lat >= 0 ? ' N' : ' S') + ', ' + Math.abs(lon).toFixed(1) + (lon >= 0 ? ' E' : ' W');
+    return P.fmtFixed(Math.abs(lat), 1) + (lat >= 0 ? ' N' : ' S') + ', ' + P.fmtFixed(Math.abs(lon), 1) + (lon >= 0 ? ' E' : ' W');
   };
   // Initial great-circle bearing from point 1 to point 2, degrees clockwise from north.
   P.bearing = function (lat1, lon1, lat2, lon2) {
@@ -745,8 +786,9 @@
   /* ---- formatting ---- */
   function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   var fmtInt = P.fmtInt, roundKm = P.roundKm, latlon = P.latlon;
-  function fmt1(v) { var r = Math.round(v * 10) / 10; if (r === 0) r = 0; return r.toFixed(1); }
-  function fmt2(v) { var r = Math.round(v * 100) / 100; if (r === 0) r = 0; return r.toFixed(2); }
+  function fmt1(v) { var r = Math.round(v * 10) / 10; if (r === 0) r = 0; return P.fmtFixed(r, 1); }
+  function fmt2(v) { var r = Math.round(v * 100) / 100; if (r === 0) r = 0; return P.fmtFixed(r, 2); }
+  var C_TXT = P.fmtFixed(299.792, 3), VF_TXT = P.fmtFixed(204.218, 3);   // km per ms in vacuum and in glass, as printed
   function signed(v) { var s = fmt1(v); return v > 0.05 ? '+' + s : s; }
   function radiusShown(r) { return fmtInt(P.radiusShownKm(r)); }
   var provName = P.providerName;
@@ -761,7 +803,7 @@
   function utc(h) {
     var r = Math.round(h * 10) / 10;
     if (r === 0) return 'UTC';
-    return 'UTC' + (r > 0 ? '+' : '-') + (Math.abs(r) % 1 === 0 ? Math.abs(r).toFixed(0) : Math.abs(r).toFixed(1));
+    return 'UTC' + (r > 0 ? '+' : '-') + P.fmtFixed(Math.abs(r), Math.abs(r) % 1 === 0 ? 0 : 1);
   }
   function live(msg) { if (liveEl) liveEl.textContent = msg; }
 
@@ -1143,7 +1185,13 @@
     };
   }
   var tbody = $('loc-tbody');
-  function cell(tr, text, num) { var td = document.createElement('td'); if (num) td.className = 'num'; td.textContent = text; tr.appendChild(td); }
+  // numbers and region codes are marked translate="no" so a page translator leaves them alone
+  function cell(tr, text, num, keep) {
+    var td = document.createElement('td');
+    if (num) td.className = 'num';
+    if ((num && /[0-9\u0660-\u0669]/.test(text)) || keep) td.setAttribute('translate', 'no');   // "no answer" stays translatable
+    td.textContent = text; tr.appendChild(td);
+  }
   function renderTable() {
     var rows = [];
     for (var i = 0; i < N; i++) rows.push(rowData(i));
@@ -1167,7 +1215,7 @@
       if (r.st === 'none') tr.className = 'loc-row--none';
       if (r.i === S.pinned || r.i === S.hover) tr.className += ' loc-row--hl';
       tr.setAttribute('data-i', r.i);
-      cell(tr, r.metro); cell(tr, r.provider + (S.opaque[r.i] ? ' (no CORS)' : '')); cell(tr, r.code);
+      cell(tr, r.metro); cell(tr, r.provider + (S.opaque[r.i] ? ' (no CORS)' : '')); cell(tr, r.code, false, true);
       var rttText = r.rtt != null ? fmt1(r.rtt) : r.st === 'none' ? 'no answer' : r.st === 'pending' ? 'measuring' : '';
       cell(tr, rttText, true);
       cell(tr, r.jitter != null ? fmt1(r.jitter) : '', true);
@@ -1181,7 +1229,7 @@
     tbody.textContent = '';
     tbody.appendChild(frag);
     var answered = S.status.filter(function (s) { return s === 'ok'; }).length;
-    $('loc-table-cap').textContent = 'Measurements per cloud region. ' + (S.hasRun ? answered + ' of ' + N + ' answered.' : 'Not measured yet.');
+    $('loc-table-cap').textContent = 'Measurements per cloud region. ' + (S.hasRun ? fmtInt(answered) + ' of ' + fmtInt(N) + ' answered.' : 'Not measured yet.');
     Array.prototype.forEach.call(document.querySelectorAll('#loc-table th'), function (th) {
       th.setAttribute('aria-sort', th.getAttribute('data-key') === S.sortKey ? (S.sortDir > 0 ? 'ascending' : 'descending') : 'none');
     });
@@ -1239,14 +1287,14 @@
     var fit = S.fit, near = fit.near, c = classification(), pl = placeOf(fit);
     var h = esc(P.cap(pl.text));
     var body = '<p>The best point is ' + latlon(fit.best.lat, fit.best.lon) + ', about ' + fmtInt(roundKm(near.km)) + ' km from the cloud region at ' +
-      esc(near.ep.metro) + ' (' + provName(near.ep.provider) + ' ' + esc(near.ep.region) + '). ' + fit.answered + ' of ' + N + ' regions answered.' +
+      esc(near.ep.metro) + ' (' + provName(near.ep.provider) + ' ' + esc(near.ep.region) + '). ' + fmtInt(fit.answered) + ' of ' + fmtInt(N) + ' regions answered.' +
       (pl.kind === 'none' ? ' The likely region is too wide to name a place, so the map marks no point.' : '') + '</p>' +
       '<ul><li>' + esc(hopLine(fit)) + '</li>' +
-      '<li>Routes to your ' + fit.fitted + ' nearest regions ran about ' + fmt2(fit.best.k) + ' times longer than straight lines.</li>' +
+      '<li>Routes to your ' + fmtInt(fit.fitted) + ' nearest regions ran about ' + fmt2(fit.best.k) + ' times longer than straight lines.</li>' +
       '<li>' + esc(c.verdict) + ', because ' + esc(c.rule) + '. ' + esc(evidenceLine(c)) +
       (c.alternatives.length ? ' Another pattern also fits: ' + c.alternatives.map(function (k) { return KIND_WORDS[k]; }).join(', ') + '.' : '') + '</li></ul>';
     var ex = P.explainResiduals(EPS, fit, 3, S.meas);
-    if (ex.length) body += '<p class="loc-small">Largest misfits among the ' + fit.fitted + ' fitted regions:</p><ul class="loc-small">' + ex.map(function (x) { return '<li>' + esc(x.text) + '</li>'; }).join('') + '</ul>';
+    if (ex.length) body += '<p class="loc-small">Largest misfits among the ' + fmtInt(fit.fitted) + ' fitted regions:</p><ul class="loc-small">' + ex.map(function (x) { return '<li>' + esc(x.text) + '</li>'; }).join('') + '</ul>';
     return { kicker: 'Result', h: h, body: body };
   }
 
@@ -1257,8 +1305,8 @@
     if (def.kind === 'vpn' || def.kind === 'relay') {
       var g = P.haversine(S.fit.best.lat, S.fit.best.lon, sim.exit.lat, sim.exit.lon);
       model = 'Every round trip became the trip to the exit plus the exit\'s own trip onward. You to ' + esc(sim.exit.name) + ': 2 &times; ' + fmt2(k) +
-        ' &times; ' + fmtInt(g) + ' km / 204.218 km per ms + 2 &times; ' + fmt1(b) + ' ms = ' + fmt1(sim.youToExitMs) + ' ms. Exit to each region: 2 &times; ' +
-        fmt2(k) + ' &times; distance / 204.218 km per ms + 2 &times; 1 ms for the exit\'s own first hop.';
+        ' &times; ' + fmtInt(g) + ' km / ' + VF_TXT + ' km per ms + 2 &times; ' + fmt1(b) + ' ms = ' + fmt1(sim.youToExitMs) + ' ms. Exit to each region: 2 &times; ' +
+        fmt2(k) + ' &times; distance / ' + VF_TXT + ' km per ms + 2 &times; 1 ms for the exit\'s own first hop.';
       if (def.kind === 'relay') {
         model = 'Like a VPN to the egress nearest your estimate (placed here at the ' + esc(sim.exit.name) + ' cloud region, standing in for the egress servers Apple\'s partners run in large cities), plus a second hop of 5 to 15 ms drawn for each sample. ' + model;
         // the lesson states the move instead of promising the answer stays near: far from
@@ -1279,7 +1327,7 @@
       model = 'Each sample gained a delay drawn from a normal distribution with mean 30 ms and standard deviation 10 ms (never below 5 ms): up to a satellite, down to a ground station, and one or two hops behind it.';
       lesson = 'This keeps your position and adds only the delay. A real dish would be placed near its ground station and point of presence, often a few hundred km away, because the user terminal talks to a gateway, not to the nearest cable.';
     } else {
-      model = 'Each sample gained ' + fmtInt(P.GEO_PROPAGATION_MS) + ' ms of propagation (2 &times; 35,786 km / c, up and down twice per round trip) plus about 60 ms of processing, which this page assumes varies by 20 ms from packet to packet (never below 20 ms).';
+      model = 'Each sample gained ' + fmtInt(P.GEO_PROPAGATION_MS) + ' ms of propagation (2 &times; ' + fmtInt(35786) + ' km / c, up and down twice per round trip) plus about 60 ms of processing, which this page assumes varies by 20 ms from packet to packet (never below 20 ms).';
       lesson = 'Location by light is hopeless here by the hard bounds alone: above 500 ms, light in vacuum could have reached any point on Earth, so no circle rules anything out. What is left is the pattern of differences between regions, which the satellite\'s own variation smears out; real links that vary more lose even that.';
       caveat = 'Like the low-orbit model, this keeps your position and adds only the delay. A real geostationary link leaves the satellite network at a ground station (a teleport), which can be thousands of km from the dish, so a real fit would point there, if anywhere.';
     }
@@ -1317,7 +1365,7 @@
       var n = S.fit ? S.fit.answered : 0;
       out = { kicker: 'Result', h: S.fit && S.fit.reason === 'none' ? 'No place on Earth fits these timings' : 'Too few answers to locate',
         body: '<p>' + (S.fit && S.fit.reason === 'none' ? 'Every candidate point broke at least one hard bound, which usually means the clock or the network misbehaved during the run.' :
-          'Only ' + n + ' of ' + N + ' regions answered, and at least ' + P.CONST.MIN_ANSWERS + ' are needed. A firewall, an ad or tracker blocker, or a network that blocks cloud hosts may be stopping the requests.') + ' Press Run again to try again.</p>' };
+          'Only ' + fmtInt(n) + ' of ' + fmtInt(N) + ' regions answered, and at least ' + fmtInt(P.CONST.MIN_ANSWERS) + ' are needed. A firewall, an ad or tracker blocker, or a network that blocks cloud hosts may be stopping the requests.') + ' Press Run again to try again.</p>' };
     } else if (S.sim) {
       out = simCardHtml();
     } else {
@@ -1343,7 +1391,7 @@
       var r0 = fit.residuals[i0];
       fibreTxt = 'With your fitted b = ' + fmt2(b) + ' ms: ' + name + ' answered in ' + fmt1(m.rtt) + ' ms at best, so half its round trip, ' + fmt2(m.rtt / 2) +
         ' ms, is no more than b. Its round trip is no longer than your fitted first hop alone, so the model places it very close to you, within the timing noise, and its glass circle shrinks to nothing' +
-        (r0 ? ' (residual ' + signed(r0.residual) + ' ms)' : '') + '. This can happen because b is fitted over your ' + fit.fitted +
+        (r0 ? ' (residual ' + signed(r0.residual) + ' ms)' : '') + '. This can happen because b is fitted over your ' + fmtInt(fit.fitted) +
         ' nearest regions, not measured: it also absorbs the servers\' time to answer and how much more the short routes near you zigzag.';
     } else {
       fibreTxt = 'With your fitted b = ' + fmt2(b) + ' ms, half of ' + name + '\'s round trip leaves ' + fmt2(m.rtt / 2 - b) + ' ms of travel each way, which light in glass covers in about ' +
@@ -1351,7 +1399,7 @@
     }
     setLive('lm-fibre', fibreTxt);
     if (!fit) { setLive('lm-solve', ''); setLive('lm-region', ''); $('lm-example').hidden = true; return; }
-    setLive('lm-solve', 'This run: ' + fit.answered + ' regions answered, the ' + fit.fitted + ' fastest entered the fit, and ' + fmtInt(fit.evals) + ' candidate points were tried. The least cost was ' + fmt2(fit.best.cost) +
+    setLive('lm-solve', 'This run: ' + fmtInt(fit.answered) + ' regions answered, the ' + fmtInt(fit.fitted) + ' fastest entered the fit, and ' + fmtInt(fit.evals) + ' candidate points were tried. The least cost was ' + fmt2(fit.best.cost) +
       ' ms<sup>2</sup> at ' + latlon(fit.best.lat, fit.best.lon) + ', with k = ' + fmt2(fit.best.k) + ' and b = ' + fmt1(fit.best.b) + ' ms.');
     setLive('lm-region', 'Here that means a cost of at most ' + fmt2(fit.costMin) + ' + ' + fmt2(fit.threshold - fit.costMin) + ' = ' + fmt2(fit.threshold) +
       ' ms<sup>2</sup>' + (fit.region.land ? ', on land' : ' (no land fitted, so the sea is shaded too)') + '. ' +
@@ -1363,10 +1411,10 @@
     e = EPS[ie]; m = S.meas[ie]; name = esc(e.metro) + ' (' + provName(e.provider) + ' ' + esc(e.region) + ')'; hard = P.hardBoundKm(m.rtt, S.slackMs);
     var r = fit.residuals[ie], half = m.rtt / 2;
     var ex = $('lm-example');
-    ex.innerHTML = '<strong>One region worked through.</strong> Light covers 299.792 km per millisecond in vacuum and 204.218 km per millisecond in glass. ' +
+    ex.innerHTML = '<strong>One region worked through.</strong> Light covers ' + C_TXT + ' km per millisecond in vacuum and ' + VF_TXT + ' km per millisecond in glass. ' +
       name + ' answered in ' + fmt1(m.rtt) + ' ms at best, so half the round trip is ' + fmt2(half) + ' ms. Hard bound, allowing half of the timer\'s ' + fmt1(S.slackMs) +
-      ' ms tick: 299.792 &times; (' + fmt2(half) + ' + ' + fmt2(S.slackMs / 2) + ') = ' + hardText(hard) + '. Light in glass at the fitted b: 204.218 &times; (' + fmt2(half) + ' &minus; ' + fmt2(b) + ') = ' + hardText(P.fibreBoundKm(m.rtt, b)) +
-      '. The best point is ' + fmtInt(r.g) + ' km from it, so the model expects 2 &times; ' + fmt2(fit.best.k) + ' &times; ' + fmtInt(r.g) + ' / 204.218 + 2 &times; ' +
+      ' ms tick: ' + C_TXT + ' &times; (' + fmt2(half) + ' + ' + fmt2(S.slackMs / 2) + ') = ' + hardText(hard) + '. Light in glass at the fitted b: ' + VF_TXT + ' &times; (' + fmt2(half) + ' &minus; ' + fmt2(b) + ') = ' + hardText(P.fibreBoundKm(m.rtt, b)) +
+      '. The best point is ' + fmtInt(r.g) + ' km from it, so the model expects 2 &times; ' + fmt2(fit.best.k) + ' &times; ' + fmtInt(r.g) + ' / ' + VF_TXT + ' + 2 &times; ' +
       fmt2(b) + ' = ' + fmt1(r.model) + ' ms. It answered in ' + fmt1(m.rtt) + ' ms: a residual of ' + signed(r.residual) + ' ms.' +
       (skipped ? ' (This skips the ' + (skipped === 1 ? 'one faster region, whose' : skipped + ' faster regions, whose') + ' half round trip is no longer than b.)' : '');
     ex.hidden = false;
@@ -1380,7 +1428,7 @@
       (c.alternatives.length ? ' Another pattern also fits: ' + c.alternatives.map(function (k) { return KIND_WORDS[k]; }).join(', ') + '. The rules cannot tell these apart, so neither is certain.' : '') + '</p>';
     var off = devOffsetHours(), sol = S.fit.best.lon / 15, d = P.tzDisagreement(off, S.fit.best.lon);
     tz.textContent = 'Time zone check: your device says ' + zoneName() + ' (' + utc(off) + '). The estimate\'s longitude, ' +
-      Math.abs(S.fit.best.lon).toFixed(1) + (S.fit.best.lon >= 0 ? ' E' : ' W') + ', implies a solar time of about ' + utc(sol) + '. They are ' + fmt1(d) +
+      P.fmtFixed(Math.abs(S.fit.best.lon), 1) + (S.fit.best.lon >= 0 ? ' E' : ' W') + ', implies a solar time of about ' + utc(sol) + '. They are ' + fmt1(d) +
       ' hours apart' + (d > 3 ? ', more than the 3 hours the rule allows, which points to a VPN or relay.' : ', within the 3 hours the rule allows.');
     fig.hidden = false;
     renderJitter();
@@ -1403,7 +1451,7 @@
     var s = '<svg viewBox="0 0 ' + Wc + ' ' + Hc + '" width="' + Wc + '" height="' + Hc + '" role="img" aria-label="Jitter per region, lower quartile ' + fmt1(med) + ' ms; the Measurements table lists every value." style="font: 12px \'Source Sans 3\', system-ui, sans-serif">';
     [0, ymax / 2, ymax].forEach(function (v) {
       s += '<line x1="' + pl + '" x2="' + (Wc - pr) + '" y1="' + y(v) + '" y2="' + y(v) + '" stroke="' + pal.muted + '" stroke-opacity="0.35" stroke-width="1"/>' +
-        '<text x="' + (pl - 6) + '" y="' + (y(v) + 4) + '" text-anchor="end" fill="' + pal.muted + '">' + (v === 0 ? '0' : (v < 1 ? v.toFixed(2) : String(+v.toFixed(1)))) + ' ms</text>';
+        '<text x="' + (pl - 6) + '" y="' + (y(v) + 4) + '" text-anchor="end" fill="' + pal.muted + '">' + (v === 0 ? P.fmtFixed(0, 0) : (v < 1 ? P.fmtFixed(v, 2) : P.fmtFixed(+v.toFixed(1), (+v.toFixed(1)) % 1 === 0 ? 0 : 1))) + ' ms</text>';
     });
     order.forEach(function (i, n) {
       var v = S.meas[i].jitter, x = pl + n * bw + (bw - barW) / 2, top = y(v), h = Math.max(1, pt + ih - top);
@@ -1537,7 +1585,7 @@
       S.status[i] = 'none';
     }
     run.done++;
-    progEl.textContent = 'Measuring: ' + run.answered + ' of ' + N + ' regions answered.';
+    progEl.textContent = 'Measuring: ' + fmtInt(run.answered) + ' of ' + fmtInt(N) + ' regions answered.';
     if (!S.run || S.run === run) { renderTable(); renderMath(); requestDraw(); if (S.hover === i || S.pinned === i) updateCaption(); }
   }
   function shuffle(a) {
@@ -1591,11 +1639,11 @@
       live('Paused because the tab was hidden.');
       return;
     }
-    progEl.textContent = run.answered + ' of ' + N + ' regions answered' + (run.reason === 'budget' ? ' within the 25 second limit' : '') + '. Fitting...';
+    progEl.textContent = fmtInt(run.answered) + ' of ' + fmtInt(N) + ' regions answered' + (run.reason === 'budget' ? ' within the 25 second limit' : '') + '. Fitting...';
     setTimeout(function () {
       S.fit = P.fit(EPS, S.meas, fitOpts());
       S.runState = 'done';
-      progEl.textContent = run.answered + ' of ' + N + ' regions answered' + (run.reason === 'budget' ? ' within the 25 second limit' : '') + '.';
+      progEl.textContent = fmtInt(run.answered) + ' of ' + fmtInt(N) + ' regions answered' + (run.reason === 'budget' ? ' within the 25 second limit' : '') + '.';
       $('loc-view-region').disabled = !(S.fit && S.fit.ok);
       renderAll();
       live(progEl.textContent + ' ' + $('loc-result-h').textContent + '.');
@@ -1625,7 +1673,7 @@
   function renderAll() {
     renderResult(); renderTable(); renderMath(); renderConn(); renderSimOut(); renderGeo(); updateCaption();
     var fit = S.fit && S.fit.ok ? S.fit : null;
-    mapEl.setAttribute('aria-label', fit ? 'World map of the cloud regions timed. ' + $('loc-result-h').textContent + '. ' + fit.answered + ' of ' + N +
+    mapEl.setAttribute('aria-label', fit ? 'World map of the cloud regions timed. ' + $('loc-result-h').textContent + '. ' + fmtInt(fit.answered) + ' of ' + fmtInt(N) +
       ' regions answered. The Measurements table below lists every region.' : 'World map of the ' + N + ' cloud regions this page can time. No result yet.');
     requestDraw();
   }

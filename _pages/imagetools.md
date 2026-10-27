@@ -40,7 +40,7 @@ description: "Resize an image to an exact file size in your browser, like under 
         <button id="it-undo" class="it-btn" type="button" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
         <button id="it-reset" class="it-btn" type="button">Reset</button>
       </div>
-      <p class="it-dims"><span id="it-dims">–</span> <span class="it-hint" id="it-rot-hint"></span></p>
+      <p class="it-dims"><span id="it-dims" class="notranslate" translate="no">–</span> <span class="it-hint" id="it-rot-hint"></span></p>
     </div>
 
     <div class="it-right">

@@ -20,7 +20,7 @@ description: "A private, in-browser diff checker by Keane Lucas: compare two pie
     <div class="df-pane" id="df-pane-a">
       <div class="df-pane__head">
         <span class="df-pane__label">Original</span>
-        <span class="df-pane__file" id="df-file-a"></span>
+        <span class="df-pane__file notranslate" id="df-file-a" translate="no"></span>
         <button id="df-choose-a" class="df-btn df-btn--sm" type="button">Choose file</button>
       </div>
       <textarea id="df-text-a" class="df-ta" spellcheck="false" autocomplete="off" placeholder="Paste the original text, or drop a text file or PDF here"></textarea>
@@ -29,7 +29,7 @@ description: "A private, in-browser diff checker by Keane Lucas: compare two pie
     <div class="df-pane" id="df-pane-b">
       <div class="df-pane__head">
         <span class="df-pane__label">Changed</span>
-        <span class="df-pane__file" id="df-file-b"></span>
+        <span class="df-pane__file notranslate" id="df-file-b" translate="no"></span>
         <button id="df-choose-b" class="df-btn df-btn--sm" type="button">Choose file</button>
       </div>
       <textarea id="df-text-b" class="df-ta" spellcheck="false" autocomplete="off" placeholder="Paste the changed text, or drop a text file or PDF here"></textarea>
@@ -60,7 +60,7 @@ description: "A private, in-browser diff checker by Keane Lucas: compare two pie
   <p class="df-status" id="df-status" aria-live="polite"></p>
 
   <p class="df-stats" id="df-stats" aria-live="polite"></p>
-  <div id="df-out" class="df-out"></div>
+  <div id="df-out" class="df-out notranslate" translate="no"></div>
 
   <p class="df-privacy">100% in-browser. Your text and files are never uploaded. (I use Google Analytics to see whether anyone visits this page, but it cannot see your content.)</p>
   <p class="df-privacy" style="margin-top:0.35rem">A caveat: this is a personal side project and I have not tested it exhaustively; for anything important, double-check the result rather than trusting it blindly. Found a problem? <a class="df-report" href="mailto:{{ site.author.email }}?subject=Diff%20Checker%20problem">Tell me</a>.</p>
@@ -184,7 +184,7 @@ html[data-theme="light"] .df-out {
   opacity: 0.5; user-select: none; font-variant-numeric: tabular-nums;
 }
 .df-pre { flex: none; width: 1.4ch; opacity: 0.7; user-select: none; white-space: pre; }
-.df-code { white-space: pre; padding-right: 1ch; }
+.df-code { white-space: pre; padding-right: 1ch; unicode-bidi: plaintext; }  /* each line takes its own direction: Arabic and Hebrew lines read right to left */
 .df-code:empty::after { content: "\00a0"; }
 
 /* Wrap long lines: rows grow downward instead of scrolling sideways. Side by side puts

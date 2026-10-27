@@ -2,7 +2,7 @@
 permalink: /terms/
 title: "Terms and Privacy Policy"
 description: "What this site collects and where your data goes: analytics, the research chat, the Observatory's data relay, and tools that never upload your files."
-modified: 2026-10-20
+modified: 2026-10-27
 ---
 
 {% include base_path %}
@@ -11,7 +11,7 @@ This page says what happens to your data when you visit this site. It is a perso
 
 ## Hosting
 
-The site is hosted on GitHub Pages. Like any web host, GitHub receives your IP address and browser details when you load a page; see the [GitHub General Privacy Statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement). The site's font (Source Sans 3) loads from Google Fonts, so Google also sees that request.
+The site is hosted on GitHub Pages. Like any web host, GitHub receives your IP address and browser details when you load a page; see the [GitHub General Privacy Statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement). The site's font (<span translate="no" class="notranslate">Source Sans 3</span>) loads from Google Fonts, so Google also sees that request.
 
 ## Google Analytics
 
@@ -21,11 +21,11 @@ I use Google Analytics (GA4) to see which pages people visit and roughly where v
 
 The "Ask About My Research" box at the bottom of most pages is an AI assistant. When you send a message:
 
-* The text of that message goes to a small Cloudflare Worker that I run, which passes it to Anthropic's API (Claude) together with a fixed description of my work, and returns the reply. The Worker does not store your messages. Cloudflare and Anthropic process the request as described in the [Cloudflare Privacy Policy](https://www.cloudflare.com/privacypolicy/) and the [Anthropic Privacy Policy](https://www.anthropic.com/legal/privacy).
+* The text of that message goes to a small Cloudflare Worker that I run, which passes it to Anthropic's API (Claude) together with a fixed description of my work, and returns the reply. Your browser's language setting (a short code such as <span translate="no" class="notranslate">en-US</span>) goes with it, so the assistant can answer in your language. The Worker does not store your messages. Cloudflare and Anthropic process the request as described in the [Cloudflare Privacy Policy](https://www.cloudflare.com/privacypolicy/) and the [Anthropic Privacy Policy](https://www.anthropic.com/legal/privacy).
 * The conversation is saved in your own browser's local storage, so it follows you from page to page on this site. It stays there until you press the reset button in the chat header (or clear this site's data in your browser). It is not sent anywhere else.
 * Please do not type anything private into the chat.
 
-Replies are formatted with [marked](https://github.com/markedjs/marked) (MIT licence), served from this site.
+Replies are formatted with <span translate="no" class="notranslate">[marked](https://github.com/markedjs/marked)</span> (MIT licence), served from this site.
 
 ## The tools run in your browser
 

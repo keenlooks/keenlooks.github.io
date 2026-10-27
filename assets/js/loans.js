@@ -53,7 +53,7 @@
     noticeT = setTimeout(function () { notice = null; update(); }, 2450);
   }
   s.startYearCal = null;        // calendar year for year 0 (null = show "years from today")
-  function tickLabel(yr) { return s.startYearCal != null ? String(s.startYearCal + yr) : String(yr); }
+  function tickLabel(yr) { return s.startYearCal != null ? num(s.startYearCal + yr) : num(yr); }
 
   function effectiveTheme() {
     var f = document.documentElement.getAttribute('data-theme');
@@ -101,16 +101,54 @@
   }
 
   // ---- formatting --------------------------------------------------------
-  function usd(n) { return '$' + Math.round(n).toLocaleString('en-US'); }
+  // Numbers follow the visitor's locale through Intl ("$30,000" and "6.0%" in
+  // en-US, "30.000 $" and "6,0 %" in de-DE); the amounts stay in US dollars.
+  /* Digits stay Latin (0-9) in these English sentences whatever the visitor's numbering
+     system (ar-SA would print Arabic-Indic digits, bn-BD Bengali ones); the visitor's
+     separators stay. Right-to-left languages take en-US outright: their Latin-digit forms
+     still carry hidden direction marks, "US$" and an Arabic percent sign. */
+  var NUM_LOC = (function () {
+    try {
+      var l = new Intl.NumberFormat().resolvedOptions().locale;
+      if (/^(ar|fa|ur|he|iw|yi|ps|sd|ug|ckb|dv|ks|syr)(-|$)/i.test(l)) return 'en-US';
+      return l.replace(/-u-.*$/i, '') + '-u-nu-latn';
+    } catch (e) { return undefined; }
+  })();
+  function nf(o) { try { return new Intl.NumberFormat(NUM_LOC, o); } catch (e) { return null; } }
+  var NF_USD0 = nf({ style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  var NF_USD1 = nf({ style: 'currency', currency: 'USD', minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  var NF_PCT1 = nf({ style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  var NF_INT = nf({ maximumFractionDigits: 0, useGrouping: false });     // years, counts
+  var NF_DEC1 = nf({ minimumFractionDigits: 1, maximumFractionDigits: 1, useGrouping: false });
+  // Arabic-Indic digits (ar-SA) or a right-to-left mark (he, ar currency) inside an
+  // English sentence get reordered by the bidi algorithm ("1200×800" shows as
+  // "800×1200"): such a number is wrapped in a left-to-right isolate.
+  function iso(t) { return /[\u0600-\u06FF\u200F\u061C]/.test(t) ? '\u2066' + t + '\u2069' : t; }
+  function num(v) { return iso(NF_INT ? NF_INT.format(v) : String(v)); }
+  function dec1(v) { return iso(NF_DEC1 ? NF_DEC1.format(+v.toFixed(1)) : v.toFixed(1)); }   // toFixed's rounding, Intl's marks
+  function pct(p) { var r = +p.toFixed(1); return iso(NF_PCT1 ? NF_PCT1.format(r / 100) : r.toFixed(1) + '%'); }   // p in percent
+  function usd(n) {
+    var v = Math.round(n); if (v === 0) v = 0;                            // no "-$0"
+    return iso(NF_USD0 ? NF_USD0.format(v) : '$' + v.toLocaleString('en-US'));
+  }
   function usdK(n) {
-    if (n >= 1000) { var k = n / 1000; return '$' + (k % 1 === 0 ? k : k.toFixed(1)) + 'k'; }
-    return '$' + Math.round(n);
+    if (n >= 1000) {
+      var k = n / 1000, f = k % 1 === 0 ? NF_USD0 : NF_USD1;
+      if (k % 1 !== 0) k = +k.toFixed(1);                                 // toFixed's rounding, as before
+      if (!f || !f.formatToParts) return '$' + (k % 1 === 0 ? k : k.toFixed(1)) + 'k';
+      // "$7.5k" / "7,5k $": the k goes right after the number, wherever the locale puts the $
+      var parts = f.formatToParts(k), out = '', last = -1, i;
+      for (i = 0; i < parts.length; i++) if (/^(integer|group|decimal|fraction)$/.test(parts[i].type)) last = i;
+      for (i = 0; i < parts.length; i++) out += parts[i].value + (i === last ? 'k' : '');
+      return iso(out);
+    }
+    return usd(n);
   }
   function dur(months) {
     var y = Math.floor(months / 12), mo = months % 12;
-    if (y && mo) return y + ' yr ' + mo + ' mo';
-    if (y) return y + ' yr';
-    return mo + ' mo';
+    if (y && mo) return num(y) + ' yr ' + num(mo) + ' mo';
+    if (y) return num(y) + ' yr';
+    return num(mo) + ' mo';
   }
 
   // ---- geometry / chart --------------------------------------------------
@@ -165,6 +203,11 @@
     ctx.clearRect(0, 0, W, H);
     ctx.font = '12px "Source Sans 3", system-ui, sans-serif';
 
+    // the left margin grows to fit the widest dollar label ("33,8k US$" in some
+    // locales); en-US labels fit the 58 px default
+    var lw = 0;
+    for (var j = 0; j <= 4; j++) lw = Math.max(lw, ctx.measureText(usdK((s.principal / 4) * j)).width);
+    M.l = Math.max(58, Math.ceil(lw) + 14);
     // horizontal $ gridlines
     ctx.textBaseline = 'middle'; ctx.textAlign = 'right';
     for (var i = 0; i <= 4; i++) {
@@ -216,7 +259,7 @@
       var dm = s.lumps[drag.idx].month, dlx = xPx(dm / 12);
       ctx.fillStyle = c.text; ctx.font = '600 11px "Source Sans 3", system-ui, sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-      ctx.fillText(s.startYearCal != null ? ('~' + (s.startYearCal + dm / 12).toFixed(1)) : ('Year ' + (dm / 12).toFixed(1)), dlx, 26);
+      ctx.fillText(s.startYearCal != null ? ('~' + dec1(s.startYearCal + dm / 12)) : ('Year ' + dec1(dm / 12)), dlx, 26);
     }
 
     // payoff marker for the scenario
@@ -290,7 +333,7 @@
     if (roPayment) roPayment.textContent = usd(base.payment) + '/mo';
     var savedInt = base.totalInterest - scn.totalInterest;
     var savedMonths = base.payoffMonths - scn.payoffMonths;
-    if (roSavedInt) roSavedInt.textContent = hasExtra() ? usd(savedInt) : '$0';
+    if (roSavedInt) roSavedInt.textContent = usd(hasExtra() ? savedInt : 0);
     if (roSavedTime) roSavedTime.textContent = hasExtra() && savedMonths > 0 ? '(' + dur(savedMonths) + ' sooner)' : '';
 
     if (roTiming) {
@@ -299,7 +342,7 @@
       } else if (s.extra > 0 && startMonth > 0) {
         var deltaInt = scn.totalInterest - now.totalInterest;   // extra interest from delaying the recurring payments
         var deltaMonths = scn.payoffMonths - now.payoffMonths;
-        roTiming.textContent = 'Waiting until year ' + s.startYear + ' to start the recurring extra payments costs about '
+        roTiming.textContent = 'Waiting until year ' + num(s.startYear) + ' to start the recurring extra payments costs about '
           + usd(deltaInt) + ' more interest and finishes ' + dur(Math.max(0, deltaMonths)) + ' later than starting now.';
       } else {
         roTiming.textContent = 'Earlier payments save more: the same dollars erase more interest the sooner they land, so try placing a one-time payment earlier on the timeline.';
@@ -428,10 +471,10 @@
   }
   function labels() {
     if (elPv) elPv.textContent = usd(s.principal);
-    if (elRv) elRv.textContent = (s.apr * 100).toFixed(1) + '%';
-    if (elYv) elYv.textContent = s.years;
+    if (elRv) elRv.textContent = pct(s.apr * 100);
+    if (elYv) elYv.textContent = num(s.years);
     if (elEv) elEv.textContent = usd(s.extra) + '/mo';
-    if (elSv) elSv.textContent = s.startYear === 0 ? 'now' : 'year ' + s.startYear;
+    if (elSv) elSv.textContent = s.startYear === 0 ? 'now' : 'year ' + num(s.startYear);
     if (elLv) elLv.textContent = usd(s.lumpAmount);
   }
   function refresh() { labels(); update(); }
