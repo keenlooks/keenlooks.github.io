@@ -5,7 +5,7 @@ permalink: /pdftools/
 og_image: /images/og/pdftools.png
 author_profile: false
 excerpt: "Merge, split, reorder, redact, sign, add and format text, fill, OCR, copy clean text, watermark, compress, and password-protect PDFs privately, in your browser."
-description: "Free private PDF tools that run entirely in your browser: merge and split PDFs, reorder and rotate pages, fill forms, add signatures, add text and format it with bold, italic, underline, highlight and alignment, redact so hidden text is truly removed, make scanned PDFs searchable with OCR, add watermarks and page numbers, export pages as images, compress, and password-protect with AES-256. Your files are never uploaded."
+description: "Free private PDF tools that run entirely in your browser: merge and split PDFs, reorder and rotate pages, fill forms, add signatures, add text and format it with bold, italic, underline, highlight and alignment, redact so hidden text is truly removed, make scanned PDFs searchable with OCR in 22 languages, add watermarks and page numbers, export pages as images, compress, and password-protect with AES-256. Your files are never uploaded."
 ---
 
 <div class="pt-wrap">
@@ -80,7 +80,9 @@ description: "Free private PDF tools that run entirely in your browser: merge an
     <a href="https://github.com/Hopding/pdf-lib" target="_blank" rel="noopener">pdf-lib</a>
     (MIT) for editing,
     <a href="https://github.com/naptha/tesseract.js" target="_blank" rel="noopener">tesseract.js</a>
-    (Apache&nbsp;2.0) for OCR, and
+    with the
+    <a href="https://github.com/tesseract-ocr/tessdata_fast" target="_blank" rel="noopener">tessdata_fast</a>
+    language models (both Apache&nbsp;2.0) for OCR, and
     <a href="https://github.com/qpdf/qpdf" target="_blank" rel="noopener">qpdf</a>
     (Apache&nbsp;2.0, compiled to WebAssembly) for encryption. All are served from this site,
     never from a third-party CDN. Thank you to their authors.</p>
@@ -109,10 +111,13 @@ description: "Free private PDF tools that run entirely in your browser: merge an
     </details>
     <details>
       <summary>How do I make a scanned PDF searchable?</summary>
-      <p>Add the scan, click "Make searchable (OCR)", and download. An OCR engine running in your
-      browser reads each page and adds an invisible text layer on top, so the file looks identical but
-      you can select, copy, and search the text. It reads printed English and works best on clean
-      scans. Handwriting usually does not work.</p>
+      <p>Add the scan, click "Make searchable (OCR)", pick the language, and download. An OCR engine
+      running in your browser reads each page and adds an invisible text layer on top, so the file looks
+      identical but you can select, copy, and search the text. It reads printed text in 22 languages
+      (Arabic, Chinese, Dutch, English, French, German, Greek, Hebrew, Hindi, Indonesian, Italian,
+      Japanese, Korean, Polish, Portuguese, Russian, Spanish, Thai, Turkish, Ukrainian, and Vietnamese,
+      with Chinese in both simplified and traditional characters), and the text layer is searchable in
+      any of them. It works best on clean scans. Handwriting usually does not work.</p>
     </details>
     <details>
       <summary>What does "Copy clean text" do?</summary>
@@ -352,10 +357,15 @@ description: "Free private PDF tools that run entirely in your browser: merge an
       <p>This reads the text on your pages with an OCR engine that runs <strong>in your browser</strong>
         (tesseract.js) and adds an invisible text layer on top. The pages look exactly the same, but the
         text becomes selectable, copyable, and searchable. Download afterwards to save the result.</p>
-      <p class="pt-dialog__tradeoff">It reads <strong>printed English</strong> and works best on clean,
-        straight scans. Handwriting usually does not work. The first use downloads about
-        <strong>6&nbsp;MB</strong> of OCR engine code from this site (no third-party servers); your
-        browser keeps a copy for next time. Your pages are processed locally and never uploaded.</p>
+      <p class="pt-dialog__tradeoff">It reads <strong>printed text in 22 languages</strong> and works
+        best on clean, straight scans. Handwriting usually does not work. The first use downloads about
+        <strong>6&nbsp;MB</strong> of OCR engine code from this site (no third-party servers), and each
+        language you pick downloads its model once, when OCR starts; your browser keeps a copy for next
+        time. Your pages are processed locally and never uploaded.</p>
+      <label class="pt-field"><span>Language</span>
+        <select id="pt-ocr-lang"></select></label>
+      <label class="pt-check pt-field--row" id="pt-ocr-eng-row"><input type="checkbox" id="pt-ocr-eng" checked> Also recognize English</label>
+      <p class="pt-modal__hint" id="pt-ocr-size"></p>
       <label class="pt-field"><span>Pages</span>
         <select id="pt-ocr-scope"></select></label>
     </div>
@@ -421,7 +431,7 @@ description: "Free private PDF tools that run entirely in your browser: merge an
   <div class="pt-ed__bar">
     <button id="pt-ed-done" class="pt-btn pt-btn--accent" type="button">Done</button>
     <button id="pt-ed-undo" class="pt-btn" type="button" disabled title="Undo (Ctrl+Z)">↶ Undo</button>
-    <span class="pt-ed__page" id="pt-ed-page"></span>
+    <span class="pt-ed__page notranslate" id="pt-ed-page" translate="no"></span>
     <span class="pt-ed__tools">
       <button id="pt-tool-move" class="pt-btn pt-tool pt-tool--on" type="button" title="Move / select" aria-pressed="true">↖ Move</button>
       <button id="pt-tool-text" class="pt-btn pt-tool" type="button" title="Add text" aria-pressed="false">T Text</button>
@@ -480,7 +490,7 @@ description: "Free private PDF tools that run entirely in your browser: merge an
       <button class="pt-sw" type="button" data-hl="#ffc48a" title="Highlight orange" aria-label="Highlight orange"></button>
       <input id="pt-text-hlcolor" type="color" value="#ffe14d" title="Highlight color" aria-label="Highlight color">
     </span>
-    <label class="pt-check" title="Let the box hug its text instead of wrapping at a fixed width"><input type="checkbox" id="pt-text-auto" aria-label="Auto width" checked> Auto width</label>
+    <label class="pt-check" title="Let the box hug its text instead of wrapping at a fixed width"><input type="checkbox" id="pt-text-auto" checked> Auto width</label>
   </div>
 
   <div class="pt-ed__signbar" id="pt-ed-signbar" hidden>
@@ -969,6 +979,13 @@ html[data-theme="light"] .pt-anno--whiteout-tmp { border-color: #34568a; }
   .pt-thumb__acts { gap: 0.55rem; }
   .pt-thumb__bar { padding: 0.3rem 0.4rem; }
 }
+/* the OCR dialog's English checkbox row is hidden while English itself is picked (the
+   hidden attr loses to .pt-check's inline-flex otherwise); on a touch screen its language
+   picker, checkbox row and buttons are 44 px tall */
+#pt-ocr-eng-row[hidden] { display: none !important; }
+@media (pointer: coarse) {
+  #pt-ocr-dialog .pt-field select, #pt-ocr-dialog .pt-check, #pt-ocr-dialog .pt-modal__foot .pt-btn { min-height: 44px; box-sizing: border-box; }
+}
 </style>
 
 <script type="application/ld+json">
@@ -983,8 +1000,8 @@ html[data-theme="light"] .pt-anno--whiteout-tmp { border-color: #34568a; }
   "isAccessibleForFree": true,
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
   "author": { "@type": "Person", "name": "Keane Lucas", "url": "https://keanelucas.com" },
-  "description": "Free private PDF tools that run entirely in the browser: merge and split PDFs, reorder and rotate pages, fill forms, add signatures, add text and format it with bold, italic, underline, highlight and alignment, true redaction, OCR to make scanned PDFs searchable, watermarks, page numbers, export pages as images, compression, and AES-256 password protection. Files are never uploaded.",
-  "featureList": "Merge PDFs, split PDFs, reorder pages, rotate pages, delete pages, duplicate pages, insert blank pages, extract page ranges, fill PDF forms, sign PDFs, add text to a PDF, format text with bold, italic, underline, strikethrough, highlight, color, line spacing and alignment, redact PDFs, OCR scanned PDFs, copy clean text from a PDF, add watermarks, add page numbers, export pages as images, compress PDFs, password-protect PDFs, strip metadata, undo"
+  "description": "Free private PDF tools that run entirely in the browser: merge and split PDFs, reorder and rotate pages, fill forms, add signatures, add text and format it with bold, italic, underline, highlight and alignment, true redaction, OCR in 22 languages to make scanned PDFs searchable, watermarks, page numbers, export pages as images, compression, and AES-256 password protection. Files are never uploaded.",
+  "featureList": "Merge PDFs, split PDFs, reorder pages, rotate pages, delete pages, duplicate pages, insert blank pages, extract page ranges, fill PDF forms, sign PDFs, add text to a PDF, format text with bold, italic, underline, strikethrough, highlight, color, line spacing and alignment, redact PDFs, OCR scanned PDFs in 22 languages, copy clean text from a PDF, add watermarks, add page numbers, export pages as images, compress PDFs, password-protect PDFs, strip metadata, undo"
 }
 </script>
 

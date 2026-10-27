@@ -4,8 +4,10 @@
    drives the long operations with the shared progress + undo machinery.
 
    OCR is tesseract.js v5 (Apache-2.0), vendored under assets/js/tesseractlib/ and
-   lazy-loaded on first use. Encryption is qpdf compiled to WebAssembly (Apache-2.0),
-   vendored under assets/js/qpdflib/, also lazy-loaded. Neither ever sees the network:
+   lazy-loaded on first use, with 22 tessdata_fast language models (Apache-2.0) under
+   tesseractlib/lang/; only the picked model(s) are fetched, when OCR starts.
+   Encryption is qpdf compiled to WebAssembly (Apache-2.0), vendored under
+   assets/js/qpdflib/, also lazy-loaded. Neither ever sees the network:
    the engines are served from this site and the PDF stays in the page.
 
    External file (never HTML-compressed) so // comments are fine here. */
@@ -262,12 +264,12 @@
         var kind = dpiCapped ? 'warn' : undefined;
         if (files.length === 1) {
           PT.downloadBytes(files[0].data, files[0].name, 'image/' + fmt);
-          PT.setStatus('Saved ' + files[0].name + ' (' + PT.fmtSize(files[0].data.length) + ').' + note, kind);
+          PT.setStatus('Saved ' + files[0].name + ' (' + PT.fmtSize(files[0].data.length) + ').' + note, kind, [files[0].name, PT.fmtSize(files[0].data.length)]);
         } else {
           var zip = PT.storeZip(files);
           var name = PT.exportName('images', list);
           PT.downloadBytes(zip, name, 'application/zip');
-          PT.setStatus('Saved ' + name + ' (' + files.length + ' images, ' + PT.fmtSize(zip.length) + ').' + note, kind);
+          PT.setStatus('Saved ' + name + ' (' + files.length + ' images, ' + PT.fmtSize(zip.length) + ').' + note, kind, [name, PT.fmtSize(zip.length)]);
         }
       }).catch(function (e) { PT.setStatus('Image export failed: ' + (e && e.message || e), 'err'); })
         .then(function () { PT.setBusy(false); });
@@ -280,6 +282,73 @@
   var ocrDialog = $('pt-ocr-dialog');
   var tessPromise = null;
   var ocrCurPage = -1, ocrTotal = 0;
+
+  // The 22 OCR languages (tessdata_fast models under tesseractlib/lang/, gzipped; `gz` is
+  // the file size in bytes, shown in the dialog). Sorted by English name; each option reads
+  // "<its own name> (<English name>)".
+  var OCR_LANGS = [
+    { code: 'ara', own: 'العربية', en: 'Arabic', gz: 716700 },
+    { code: 'chi_sim', own: '中文（简体）', en: 'Chinese, Simplified', gz: 1723376 },
+    { code: 'chi_tra', own: '中文（繁體）', en: 'Chinese, Traditional', gz: 1663276 },
+    { code: 'nld', own: 'Nederlands', en: 'Dutch', gz: 2976725 },
+    { code: 'eng', own: 'English', en: 'English', gz: 1984273 },
+    { code: 'fra', own: 'Français', en: 'French', gz: 606702 },
+    { code: 'deu', own: 'Deutsch', en: 'German', gz: 850737 },
+    { code: 'ell', own: 'Ελληνικά', en: 'Greek', gz: 702056 },
+    { code: 'heb', own: 'עברית', en: 'Hebrew', gz: 476527 },
+    { code: 'hin', own: 'हिन्दी', en: 'Hindi', gz: 923147 },
+    { code: 'ind', own: 'Bahasa Indonesia', en: 'Indonesian', gz: 607760 },
+    { code: 'ita', own: 'Italiano', en: 'Italian', gz: 1271630 },
+    { code: 'jpn', own: '日本語', en: 'Japanese', gz: 1519725 },
+    { code: 'kor', own: '한국어', en: 'Korean', gz: 1106990 },
+    { code: 'pol', own: 'Polski', en: 'Polish', gz: 2026921 },
+    { code: 'por', own: 'Português', en: 'Portuguese', gz: 1000041 },
+    { code: 'rus', own: 'Русский', en: 'Russian', gz: 1599713 },
+    { code: 'spa', own: 'Español', en: 'Spanish', gz: 1127456 },
+    { code: 'tha', own: 'ไทย', en: 'Thai', gz: 905989 },
+    { code: 'tur', own: 'Türkçe', en: 'Turkish', gz: 2004899 },
+    { code: 'ukr', own: 'Українська', en: 'Ukrainian', gz: 1611871 },
+    { code: 'vie', own: 'Tiếng Việt', en: 'Vietnamese', gz: 421978 }
+  ];
+  var OCR_KEY = 'pt-ocr-lang';
+  function ocrLang(code) {
+    for (var i = 0; i < OCR_LANGS.length; i++) if (OCR_LANGS[i].code === code) return OCR_LANGS[i];
+    return null;
+  }
+  // a BCP 47 tag (navigator.languages entry) to a model, or null
+  PURE.ocrLangFor = function (tag) {
+    var t = String(tag || '').toLowerCase().replace(/_/g, '-');
+    var p = t.split('-'), base = p[0];
+    if (base === 'zh') {
+      if (p.indexOf('hant') >= 0) return 'chi_tra';
+      if (p.indexOf('hans') >= 0) return 'chi_sim';
+      return (p.indexOf('tw') >= 0 || p.indexOf('hk') >= 0 || p.indexOf('mo') >= 0) ? 'chi_tra' : 'chi_sim';
+    }
+    var map = { en: 'eng', es: 'spa', fr: 'fra', de: 'deu', pt: 'por', it: 'ita', nl: 'nld', ru: 'rus', uk: 'ukr',
+      pl: 'pol', tr: 'tur', ja: 'jpn', ko: 'kor', ar: 'ara', hi: 'hin', vi: 'vie', id: 'ind', 'in': 'ind',
+      th: 'tha', he: 'heb', iw: 'heb', el: 'ell' };
+    return Object.prototype.hasOwnProperty.call(map, base) ? map[base] : null;
+  };
+  // the first browser language that has a model, else English
+  PURE.ocrDefaultLang = function (langs) {
+    for (var i = 0; i < (langs || []).length; i++) { var c = PURE.ocrLangFor(langs[i]); if (c) return c; }
+    return 'eng';
+  };
+  // a tesseract language string ('jpn+eng', 'jpn', 'eng') to {code, eng}, or null
+  PURE.ocrParsePick = function (v) {
+    var parts = String(v || '').split('+'), code = parts[0];
+    if (!ocrLang(code)) return null;
+    if (code === 'eng') return parts.length === 1 ? { code: 'eng', eng: false } : null;
+    if (parts.length === 1) return { code: code, eng: false };
+    return (parts.length === 2 && parts[1] === 'eng') ? { code: code, eng: true } : null;
+  };
+  function ocrStored() {
+    try { return window.localStorage ? window.localStorage.getItem(OCR_KEY) : null; } catch (e) { return null; }
+  }
+  function ocrStore(v) {
+    try { if (window.localStorage) window.localStorage.setItem(OCR_KEY, v); } catch (e) { /* private mode */ }
+  }
+  function mb(n) { return (n / 1e6).toFixed(1) + '\u00a0MB'; }
 
   function loadTesseract() {
     if (window.Tesseract) return Promise.resolve(window.Tesseract);
@@ -312,15 +381,19 @@
     return out;
   }
 
-  function runOcr(idxs) {
+  function runOcr(idxs, langs) {
     if (!idxs.length || PT.isBusy()) return;
     if (typeof WebAssembly !== 'object') { PT.setStatus('OCR needs WebAssembly, which this browser does not support.', 'err'); return; }
+    langs = langs || 'eng';
+    var pick = PURE.ocrParsePick(langs) || { code: 'eng', eng: false };
+    var lang = ocrLang(pick.code);
     PT.setBusy(true);
     ocrCurPage = -1; ocrTotal = idxs.length;
-    PT.progress(0, idxs.length, 'Loading the OCR engine (about 6 MB on first use, then cached)…');
+    PT.progress(0, idxs.length, pick.code === 'eng' ? 'Loading the OCR engine (about 6 MB on first use, then cached)…'
+      : 'Loading the OCR engine and the ' + lang.en + ' model (about ' + mb(6e6 + lang.gz + (pick.eng ? ocrLang('eng').gz : 0)) + ' on first use, then cached)…');
     var worker = null, totalWords = 0, okPages = 0, failedPages = 0, ocrFlat = 0, dpiCapped = 0, dpiFloor = 300;
     loadTesseract().then(function (T) {
-      return T.createWorker('eng', 1, {
+      return T.createWorker(langs, 1, {
         workerPath: PT.jsBase + 'tesseractlib/worker.min.js',
         corePath: PT.jsBase + 'tesseractlib',
         langPath: PT.jsBase + 'tesseractlib/lang',
@@ -366,6 +439,9 @@
                 if (!w || !w.text || !w.bbox) return;
                 if ((w.confidence || 0) < 35) return;
                 var t = String(w.text).trim();
+                // English alone keeps tesseract's text exactly; other picks get the
+                // per-script clean-up (NFC, Thai SARA AM, Greek mu)
+                if (pick.code !== 'eng') t = PURE.ocrNormalize(t).trim();
                 if (!t) return;
                 out.push({
                   text: t,
@@ -394,7 +470,8 @@
       if (totalWords) {
         msg = 'Added a searchable text layer: ' + totalWords + ' words across ' + okPages + ' page' + (okPages === 1 ? '' : 's') + '. Download to save the result.';
       } else {
-        msg = 'No text was recognized. OCR reads printed English and works best on clean scans; handwriting usually does not work.';
+        msg = 'No text was recognized. OCR read the pages as ' + (pick.code === 'eng' ? 'English' : lang.en + (pick.eng ? ' and English' : '')) +
+          ' (the language is picked in the Make searchable dialog) and works best on clean printed scans; handwriting usually does not work.';
       }
       if (ocrFlat) msg += ' ' + ocrFlat + ' rotated page' + (ocrFlat > 1 ? 's were' : ' was') + ' flattened upright first (Ctrl+Z undoes it).';
       if (dpiCapped) msg += ' ' + dpiCapped + ' page' + (dpiCapped > 1 ? 's were' : ' was') + ' too large for 300 DPI and read at about ' + Math.round(dpiFloor) + ' DPI instead.';
@@ -410,6 +487,47 @@
 
   if (ocrDialog) {
     var ocrScope = $('pt-ocr-scope');
+    var ocrSel = $('pt-ocr-lang'), ocrEng = $('pt-ocr-eng'), ocrEngRow = $('pt-ocr-eng-row'), ocrSize = $('pt-ocr-size');
+    // the picked language string: 'eng', 'jpn' or 'jpn+eng'
+    var ocrPicked = function () {
+      if (!ocrSel) return 'eng';
+      var c = ocrSel.value;
+      return c === 'eng' ? 'eng' : (ocrEng && ocrEng.checked ? c + '+eng' : c);
+    };
+    var ocrSync = function () {
+      if (!ocrSel) return;
+      var c = ocrSel.value, l = ocrLang(c) || ocrLang('eng'), withEng = c !== 'eng' && !!(ocrEng && ocrEng.checked);
+      if (ocrEngRow) ocrEngRow.hidden = c === 'eng';
+      if (ocrSize) {
+        var sz = mb(l.gz), szE = mb(ocrLang('eng').gz);
+        var txt = 'The ' + l.en + ' model downloads about ' + sz + ' once' + (withEng ? ', plus ' + szE + ' for English' : '') +
+          ', when OCR starts. The text layer is searchable in any of the 22 languages.';
+        PURE.keepUntranslated(ocrSize, txt, withEng ? [sz, szE] : [sz]);
+      }
+    };
+    if (ocrSel) {
+      OCR_LANGS.forEach(function (l) {
+        var o = document.createElement('option');
+        o.value = l.code;
+        o.textContent = l.code === 'eng' ? 'English' : l.own + ' (' + l.en + ')';
+        o.lang = { ara: 'ar', chi_sim: 'zh-Hans', chi_tra: 'zh-Hant', nld: 'nl', eng: 'en', fra: 'fr', deu: 'de', ell: 'el', heb: 'he', hin: 'hi',
+          ind: 'id', ita: 'it', jpn: 'ja', kor: 'ko', pol: 'pl', por: 'pt', rus: 'ru', spa: 'es', tha: 'th', tur: 'tr', ukr: 'uk', vie: 'vi' }[l.code];
+        ocrSel.appendChild(o);
+      });
+      // a remembered pick wins; else the first browser language with a model; else English
+      var saved = PURE.ocrParsePick(ocrStored());
+      var nav = [];
+      try { nav = (navigator.languages && navigator.languages.length) ? navigator.languages : [navigator.language]; } catch (e) { nav = []; }
+      ocrSel.value = saved ? saved.code : PURE.ocrDefaultLang(nav);
+      if (ocrEng) ocrEng.checked = saved ? saved.eng : ocrSel.value !== 'eng';
+      ocrSel.addEventListener('change', function () {
+        // English alongside is the default for every language but English itself
+        if (ocrEng) ocrEng.checked = ocrSel.value !== 'eng';
+        ocrSync(); ocrStore(ocrPicked());
+      });
+      if (ocrEng) ocrEng.addEventListener('change', function () { ocrSync(); ocrStore(ocrPicked()); });
+      ocrSync();
+    }
     $('pt-ocr').addEventListener('click', function () {
       if (!PT.pages().length) return;
       fillScope(ocrScope);
@@ -417,9 +535,10 @@
     });
     wireCancel(ocrDialog, 'pt-ocr-cancel');
     $('pt-ocr-go').addEventListener('click', function () {
-      var idxs = scopeIdx(ocrScope);
+      var idxs = scopeIdx(ocrScope), langs = ocrPicked();
+      ocrStore(langs);
       PT.closeDialog(ocrDialog);
-      runOcr(idxs);
+      runOcr(idxs, langs);
     });
   }
 
@@ -542,7 +661,7 @@
       }).then(function (enc) {
         var name = PT.exportName('protected');
         PT.downloadBytes(enc, name);
-        PT.setStatus('Saved ' + name + ' (' + PT.fmtSize(enc.length) + '). Opening it now requires the password. There is no way to recover it if you forget it.');
+        PT.setStatus('Saved ' + name + ' (' + PT.fmtSize(enc.length) + '). Opening it now requires the password. There is no way to recover it if you forget it.', undefined, [name, PT.fmtSize(enc.length)]);
       }).catch(function (e) { PT.setStatus('Error: ' + (e && e.message || e), 'err'); })
         .then(function () { PT.setBusy(false); });
     }
@@ -602,8 +721,13 @@
       return (words || []).map(function (w) {
         var fs = Math.max(1e-4, w.y1 - w.y0);
         // word: an OCR word is a whole word, so PURE.groupLines spaces it from the next
-        // one even when the tight boxes leave a gap under its threshold ("ofNovember")
-        return { text: w.text, x0: w.x0, y0: w.y0, x1: w.x1, y1: w.y1, fontSize: fs, fontSizeX: fs * aspect, word: true };
+        // one even when the tight boxes leave a gap under its threshold ("ofNovember").
+        // ocr: the fragments tesseract splits a Han, kana, Thai or Korean word into are
+        // joined back after the redaction and white-out filters (finish, below)
+        var tok = { text: w.text, x0: w.x0, y0: w.y0, x1: w.x1, y1: w.y1, fontSize: fs, fontSizeX: fs * aspect, word: true, ocr: true };
+        // an Arabic or Hebrew word is drawn right to left: PURE.cutCovered needs its dir
+        if (PURE.ocrIsRtl && PURE.ocrIsRtl(w.text)) tok.dir = 'rtl';
+        return tok;
       });
     }
 
@@ -666,6 +790,9 @@
         // the words before and after it stay), so what is copied matches what is seen;
         // text the user typed over a white-out sits on top of it and stays
         if (whiteouts.length) toks = PURE.filterRedactedTokens(PURE.cutCovered(pageToks, whiteouts, PT.metrics ? PT.metrics() : null).concat(annoToks), redacts);
+        // OCR fragments of one word back into one token (PURE.ocrJoinWords; only tokens
+        // made from pg.ocrWords carry .ocr, and only Han, kana, Thai and Korean ever join)
+        toks = PURE.ocrJoinWords(toks, function (t) { return t.fontSizeX || 0; }, true);
         return {
           tokens: toks, blank: false,
           scan: pageToks.length === 0,

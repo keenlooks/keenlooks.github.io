@@ -43,7 +43,8 @@
   PURE.sanitizeBaseName = function (name) {
     var b = String(name || '').replace(/\.[^.]*$/, '');
     b = b.replace(/[\/\\:*?"<>|\x00-\x1f]+/g, ' ').replace(/\s+/g, ' ').trim();
-    if (b.length > 60) b = b.slice(0, 60).trim();
+    var cps = Array.from(b);   // cut by code points: a 60-unit slice could split a surrogate pair
+    if (cps.length > 60) b = cps.slice(0, 60).join('').trim();
     return b || 'document';
   };
 
@@ -735,6 +736,13 @@
     if (!s) return '';
     return PURE.sanitizeRun(s).trim();
   };
+  // true when every character of s is in WinAnsiEncoding (what pdf-lib's standard fonts,
+  // and so its form-field appearances, can draw); line breaks and tabs pass. A filled
+  // form value that fails this cannot be flattened by pdf-lib (form.flatten() throws for
+  // the whole document), so its page is baked through paintFormValues instead.
+  PURE.winAnsiOk = function (s) {
+    return !/[^\t\n\r\x20-\x7E\u00A0-\u00FF\u20AC\u201A\u0192\u201E\u2026\u2020\u2021\u02C6\u2030\u0160\u2039\u0152\u017D\u2018\u2019\u201C\u201D\u2022\u2013\u2014\u02DC\u2122\u0161\u203A\u0153\u017E\u0178]/.test(String(s == null ? '' : s));
+  };
 
   // watermark text placement + draw (P = the PDFLib namespace). Rotation-0 math: pages
   // are flattened upright before a watermark is applied. The standard fonts are WinAnsi,
@@ -797,6 +805,28 @@
   // text on a reopened searchable PDF can tell this layer's words apart (each is a whole
   // word) from a native text layer, where pdf.js's tiny whitespace items are no spaces.
   PURE.OCR_TAG = 'OCRText';
+  /* fills el with text where every occurrence of a string in `keep` sits in a
+     <span translate="no" class="notranslate"> (Google's documented attribute plus its older
+     class); the element's textContent is exactly `text` */
+  PURE.stripBidiControls = function (s) { return s == null ? s : String(s).replace(/[\u202A-\u202E\u2066-\u2069]/g, ''); };
+  PURE.keepUntranslated = function (el, text, keep) {
+    var list = (keep || []).filter(function (k) { return k && text.indexOf(k) >= 0; });
+    el.textContent = '';
+    var i = 0, doc = el.ownerDocument;
+    while (i < text.length) {
+      var best = -1, hit = '';
+      list.forEach(function (k) { var j = text.indexOf(k, i); if (j >= 0 && (best < 0 || j < best || (j === best && k.length > hit.length))) { best = j; hit = k; } });
+      if (best < 0) { el.appendChild(doc.createTextNode(text.slice(i))); break; }
+      if (best > i) el.appendChild(doc.createTextNode(text.slice(i, best)));
+      var sp = doc.createElement('span');
+      sp.setAttribute('translate', 'no'); sp.className = 'notranslate';
+      // isolated left to right: an Arabic or Hebrew file name cannot pull the
+      // sentence's own parentheses and full stop into its run
+      sp.setAttribute('dir', 'ltr'); sp.style.unicodeBidi = 'isolate';
+      sp.textContent = hit; el.appendChild(sp);
+      i = best + hit.length;
+    }
+  };
   PURE.drawOcrWords = function (P, page, font, words, W, H, ox, oy) {
     var drawn = 0, opened = false;
     ox = ox || 0; oy = oy || 0;   // the visible box's origin (CropBox pages); 0, 0 otherwise
@@ -817,6 +847,260 @@
     });
     if (opened) page.pushOperators(P.endMarkedContent());
     return drawn;
+  };
+
+  /* ==================================================================================
+     The OCR text layer for words the WinAnsi writer above cannot carry (Cyrillic, Greek,
+     Arabic, Hebrew, CJK, Thai, Devanagari, and Latin letters outside WinAnsi such as
+     Polish, Turkish or Vietnamese ones). A page whose words are ALL WinAnsi keeps
+     PURE.drawOcrWords byte for byte (PURE.ocrNeedsUnicode decides, per page).
+
+     The technique tesseract and OCRmyPDF use: a Type0 font (Identity-H, two-byte codes)
+     over a CIDFontType2 whose program (PURE.GLYPHLESS_TTF, 740 bytes, built from scratch
+     by _tests/pdftools/ocr-lang/make-glyphless.py) has ONE glyph that every CID maps to.
+     That glyph's outline is two one-point contours at opposite corners of the em box: there
+     is nothing to fill, so it paints nothing even where a viewer ignored render mode 3
+     (measured in forced fill mode: CoreGraphics and PDFium 0 pixels), and the text is drawn
+     in mode 3 (invisible) anyway; the two points only give the glyph a full-cell box, which
+     PDFium (Chrome) uses for find highlights. A ToUnicode
+     CMap per page maps each CID (1..n, one per distinct code point of the page) to its
+     code point, as a surrogate pair above U+FFFF. One Tj per word at the word's box, its
+     horizontal scaling (Tz) stretching the glyphs to the box width, inside the same
+     PURE.OCR_TAG marked-content pair, each run ending with a space (the m8 rule).
+     Two deliberate departures from one-Tj-per-word, both measured
+     (_tests/pdftools/ocr-lang/probe/):
+       - fragments tesseract splits a word into (Han and kana, Thai letters and marks,
+         Korean syllables) are joined back into ONE run with no space inside
+         (PURE.ocrJoinWords): PDFium reads a space between separate text objects, which
+         broke Chrome's find for any phrase, and a space after every fragment
+       - right-to-left words are written in VISUAL order (pdf.js's own bidi of the logical
+         word, kept only when pdf.js turns it back exactly, else the plain reversal):
+         pdf.js, PDFium and Apple PDFKit all reorder a drawn RTL run into logical order,
+         so a word written in logical order came back reversed in all three
+     ================================================================================== */
+  PURE.GLYPHLESS_TTF = 'AAEAAAAKAIAAAwAgT1MvMl4SXC4AAACsAAAAYGNtYXAADABTAAABDAAAACxnbHlmCy0DIAAAATgAAAAaaGVhZC1dPzgAAAFUAAAANmhoZWEHCgMjAAABjAAAACRobXR4B9AAAAAAAbAAAAAIbG9jYQANAAAAAAG4AAAABm1heHAABQAEAAABwAAAACBuYW1lD7Em4gAAAeAAAADicG9zdP+fADMAAALEAAAAIAAEA+gBkAAFAAACigJYAAAASwKKAlgAAAFeADIA+gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABOT05FAEAAIAAgAyD/OAAAAyAAyAAAAAEAAAAAAfQCvAAAACAAAAAAAAEAAwABAAAADAAEACAAAAAEAAQAAQAAACD//wAAACD////hAAEAAAAAAAIAAP84A+gDIAAAAAEAAAEBAAAD6P84A+gAAAABAAAAAQAAO88JNV8PPPUACwPoAAAAAOUq/gAAAAAA5Sr+AAAA/zgD6AMgAAAAAwACAAAAAAAAAAEAAAMg/zgAAAPoAAAAAAPoAAEAAAAAAAAAAAAAAAAAAAACA+gAAAPoAAAAAAAAAA0AAAABAAAAAgACAAIAAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAABgBOAAMAAQQJAAEAGgAAAAMAAQQJAAIADgAaAAMAAQQJAAMAIgAoAAMAAQQJAAQAGgBKAAMAAQQJAAUAFgBkAAMAAQQJAAYAGgB6AEcAbAB5AHAAaABMAGUAcwBzAEYAbwBuAHQAUgBlAGcAdQBsAGEAcgBHAGwAeQBwAGgATABlAHMAcwBGAG8AbgB0ACAAMQAuADAARwBsAHkAcABoAEwAZQBzAHMARgBvAG4AdABWAGUAcgBzAGkAbwBuACAAMQAuADAARwBsAHkAcABoAEwAZQBzAHMARgBvAG4AdAAAAAMAAAAAAAD/nAAyAAAAAQAAAAAAAAAAAAAAAAAAAAA=';
+  /* a word's code points: C0/C1 controls, lone surrogates and U+FFFE/U+FFFF dropped,
+     leading and trailing spaces trimmed */
+  PURE.ocrCodePoints = function (s) {
+    var out = [], str = String(s == null ? '' : s), i, c, d;
+    for (i = 0; i < str.length; i++) {
+      c = str.charCodeAt(i);
+      if (c >= 0xD800 && c <= 0xDBFF && i + 1 < str.length) {
+        d = str.charCodeAt(i + 1);
+        if (d >= 0xDC00 && d <= 0xDFFF) { out.push((c - 0xD800) * 0x400 + (d - 0xDC00) + 0x10000); i++; continue; }
+      }
+      if (c >= 0xD800 && c <= 0xDFFF) continue;
+      if (c < 0x20 || (c >= 0x7F && c < 0xA0) || c === 0xFFFE || c === 0xFFFF) continue;
+      out.push(c);
+    }
+    function sp(x) { return x === 0x20 || x === 0xA0 || x === 0x3000; }
+    while (out.length && sp(out[0])) out.shift();
+    while (out.length && sp(out[out.length - 1])) out.pop();
+    return out;
+  };
+  /* true when some word holds a character the WinAnsi writer would strip */
+  PURE.ocrNeedsUnicode = function (words) {
+    return (words || []).some(function (w) {
+      var s = String(w && w.text != null ? w.text : '');
+      return PURE.sanitizeRun(s) !== s;
+    });
+  };
+  /* scripts written without spaces between words: Thai, Lao, Myanmar, Khmer, CJK
+     radicals, CJK punctuation, kana, Han (BMP and the supplementary planes), full-width
+     forms */
+  PURE.ocrNoSpaceCp = function (cp) {
+    return (cp >= 0x0E00 && cp <= 0x0EFF) || (cp >= 0x1000 && cp <= 0x109F) || (cp >= 0x1780 && cp <= 0x17FF) ||
+      (cp >= 0x2E80 && cp <= 0x2FDF) || (cp >= 0x3000 && cp <= 0x30FF) || (cp >= 0x31F0 && cp <= 0x31FF) ||
+      (cp >= 0x3400 && cp <= 0x4DBF) || (cp >= 0x4E00 && cp <= 0x9FFF) || (cp >= 0xF900 && cp <= 0xFAFF) ||
+      (cp >= 0xFF00 && cp <= 0xFFEF) || (cp >= 0x20000 && cp <= 0x3FFFF);
+  };
+  var OCR_RTL = /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/;
+  /* an OCR word holding a right-to-left character (Arabic, Hebrew, Syriac, Thaana, N'Ko and
+     their presentation forms). tesseract gives such a word in LOGICAL order while the page
+     draws it right to left, so PURE.cutCovered must treat it as an rtl run (dir 'rtl'), or a
+     white-out over part of it keeps the covered letters and drops the visible ones */
+  PURE.ocrIsRtl = function (s) { return OCR_RTL.test(String(s == null ? '' : s)); };
+  /* the words with dir 'rtl' on each rtl word (a copy); every other word is the same object */
+  PURE.ocrTagRtl = function (words) {
+    return (words || []).map(function (w) {
+      return (w && !w.dir && PURE.ocrIsRtl(w.text)) ? Object.assign({}, w, { dir: 'rtl' }) : w;
+    });
+  };
+  function hex4(n) { var s = n.toString(16).toUpperCase(); return '0000'.slice(s.length) + s; }
+  function utf16hex(cp) {
+    if (cp < 0x10000) return hex4(cp);
+    cp -= 0x10000;
+    return hex4(0xD800 + (cp >> 10)) + hex4(0xDC00 + (cp & 0x3FF));
+  }
+  /* the ToUnicode CMap: CID k (1..n) maps to list[k - 1] */
+  PURE.ocrToUnicodeCMap = function (list) {
+    var lines = ['/CIDInit /ProcSet findresource begin', '12 dict begin', 'begincmap',
+      '/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def',
+      '/CMapName /Adobe-Identity-UCS def', '/CMapType 2 def',
+      '1 begincodespacerange', '<0000> <FFFF>', 'endcodespacerange'];
+    for (var i = 0; i < list.length; i += 100) {
+      var chunk = list.slice(i, i + 100);
+      lines.push(chunk.length + ' beginbfchar');
+      for (var k = 0; k < chunk.length; k++) lines.push('<' + hex4(i + k + 1) + '> <' + utf16hex(chunk[k]) + '>');
+      lines.push('endbfchar');
+    }
+    lines.push('endcmap', 'CMapName currentdict /CMap defineresource pop', 'end', 'end');
+    return lines.join('\n');
+  };
+  /* the order a word is DRAWN in: logical for left-to-right text, visual for a word with a
+     right-to-left character (see the block comment) */
+  PURE.ocrDrawOrder = function (cps) {
+    var s = String.fromCodePoint.apply(null, cps);
+    if (!OCR_RTL.test(s)) return cps;
+    var v = PURE.pdfjsBidi(s).str;
+    if (PURE.pdfjsBidi(v).str === s) return Array.from(v).map(function (ch) { return ch.codePointAt(0); });
+    return cps.slice().reverse();
+  };
+  /* tesseract splits some words into fragments: Han and kana text into single characters
+     or short groups, Thai into letters and separate marks, Korean words into syllables.
+     Fragments that follow each other on one line are joined back into one word:
+       - a Han, kana or full-width side next to another such side, a digit or punctuation,
+         gap under 1.5 line heights: Chinese and Japanese put no space between words or
+         around numbers, and the fast models' boxes for them are loose (measured on the
+         jpn fixture: gaps up to 1.3 heights inside one sentence); a wider gap is a column
+       - Thai (and the other scripts of PURE.ocrNoSpaceCp) on both sides, gap under half
+         the line height: Thai spaces phrases, not words
+       - a Hangul side next to a Hangul, digit or punctuation side, gap under 0.3 of the
+         SMALLER of the two heights (Korean spaces its words; measured on the kor fixture:
+         syllable gaps 0.06 to 0.23 of a 53 px line, word gaps 0.36 to 0.58; tesseract
+         gives some syllables a box half as tall again, so the larger height would join
+         real words)
+     Latin, Cyrillic, Greek, Arabic, Hebrew and Devanagari words are never joined.
+     `hx(w)` is a word's height in its x unit. `flagged`: join only words carrying .ocr
+     (Copy clean text's OCR tokens among pdf.js and typed ones). Returns a new list; a
+     word that joins nothing is the same object. */
+  function firstCp(s) { s = String(s || '').trim(); return s ? s.codePointAt(0) : -1; }
+  function lastCp(s) {
+    s = String(s || '').trim(); if (!s) return -1;
+    var c = s.charCodeAt(s.length - 1);
+    return (c >= 0xDC00 && c <= 0xDFFF && s.length > 1) ? s.codePointAt(s.length - 2) : c;
+  }
+  function isCjk(cp) {
+    return (cp >= 0x2E80 && cp <= 0x2FDF) || (cp >= 0x3000 && cp <= 0x30FF) || (cp >= 0x31F0 && cp <= 0x31FF) ||
+      (cp >= 0x3400 && cp <= 0x4DBF) || (cp >= 0x4E00 && cp <= 0x9FFF) || (cp >= 0xF900 && cp <= 0xFAFF) ||
+      (cp >= 0xFF00 && cp <= 0xFFEF) || (cp >= 0x20000 && cp <= 0x3FFFF);
+  }
+  function isHangul(cp) { return (cp >= 0xAC00 && cp <= 0xD7AF) || (cp >= 0x1100 && cp <= 0x11FF) || (cp >= 0x3130 && cp <= 0x318F); }
+  function isDigit(cp) { return cp >= 0x30 && cp <= 0x39; }
+  function isPunct(cp) { return (cp >= 0x21 && cp <= 0x2F) || (cp >= 0x3A && cp <= 0x40) || (cp >= 0x5B && cp <= 0x60) || (cp >= 0x7B && cp <= 0x7E) || (cp >= 0x2010 && cp <= 0x2027); }
+  PURE.ocrJoinable = function (a, b, hx) {
+    if (!a || !b) return false;
+    var ma = (a.y0 + a.y1) / 2, mb = (b.y0 + b.y1) / 2;
+    if (!((mb >= a.y0 && mb <= a.y1) || (ma >= b.y0 && ma <= b.y1))) return false;
+    var h = Math.max(hx(a), hx(b)), hMin = Math.min(hx(a), hx(b));
+    if (!(h > 0) || b.x0 < a.x0 - 0.5 * h) return false;
+    var gap = b.x0 - a.x1, al = lastCp(a.text), bf = firstCp(b.text);
+    /* a digit or punctuation fragment joins the Han or kana after it only when it holds no
+       Latin, Greek or Cyrillic letter ("Atlas," keeps its space before a Japanese word) */
+    if ((isCjk(al) && (isCjk(bf) || isDigit(bf) || isPunct(bf))) ||
+        ((isDigit(al) || isPunct(al)) && isCjk(bf) && !/[A-Za-z\u00C0-\u02AF\u0370-\u04FF]/.test(String(a.text)))) return gap < 1.5 * h;
+    if (PURE.ocrNoSpaceCp(al) && PURE.ocrNoSpaceCp(bf)) return gap < 0.5 * h;
+    if ((isHangul(al) && (isHangul(bf) || isDigit(bf) || isPunct(bf))) || (isDigit(al) && isHangul(bf))) return gap < 0.3 * hMin;
+    return false;
+  };
+  PURE.ocrJoinWords = function (words, hx, flagged) {
+    var out = [];
+    (words || []).forEach(function (w) {
+      var prev = out.length ? out[out.length - 1] : null;
+      if (prev && w && (!flagged || (prev.ocr && w.ocr)) && PURE.ocrJoinable(prev, w, hx)) {
+        var m = Object.assign({}, prev, {
+          // normalized again: a Thai SARA AM tesseract wrote as two fragments only meets
+          // itself here
+          text: PURE.ocrNormalize(String(prev.text).trim() + String(w.text).trim()),
+          x0: Math.min(prev.x0, w.x0), y0: Math.min(prev.y0, w.y0), x1: Math.max(prev.x1, w.x1), y1: Math.max(prev.y1, w.y1)
+        });
+        if (prev.fontSize != null || w.fontSize != null) m.fontSize = Math.max(prev.fontSize || 0, w.fontSize || 0);
+        if (prev.fontSizeX != null || w.fontSizeX != null) m.fontSizeX = Math.max(prev.fontSizeX || 0, w.fontSizeX || 0);
+        out[out.length - 1] = m;
+      } else out.push(w);
+    });
+    return out;
+  };
+  /* recognition-time clean-up of a word read with a language other than English alone
+     (the English path keeps tesseract's text as it is): NFC; Thai NIKHAHIT + SARA AA back
+     to SARA AM (tha writes U+0E4D U+0E32 for U+0E33, so a search for the word missed it);
+     in a Greek word the micro sign the ell model writes for mu becomes mu */
+  PURE.ocrNormalize = function (s) {
+    s = String(s == null ? '' : s);
+    if (s.normalize) s = s.normalize('NFC');
+    s = s.replace(/\u0E4D\u0E32/g, '\u0E33');
+    if (/[\u0370-\u03FF\u1F00-\u1FFF]/.test(s)) s = s.replace(/\u00B5/g, '\u03BC');
+    return s;
+  };
+  /* the runs of a page in fractions: one per (joined) word, its code points in drawn order */
+  PURE.ocrRuns = function (words, W, H) {
+    var ok = (words || []).filter(function (w) {
+      return w && PURE.ocrCodePoints(w.text).length && w.x1 > w.x0 && w.y1 > w.y0;
+    });
+    var hx = function (w) { return (w.y1 - w.y0) * (H || 1) / (W || 1); };
+    return PURE.ocrJoinWords(ok, hx).map(function (w) {
+      return { cps: PURE.ocrDrawOrder(PURE.ocrCodePoints(w.text)), x0: w.x0, y0: w.y0, x1: w.x1, y1: w.y1 };
+    });
+  };
+  function b64Bytes(b64) {
+    var bin = atob(b64), u = new Uint8Array(bin.length), i;
+    for (i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+    return u;
+  }
+  /* the objects every Unicode OCR page shares, made once per export (cache = the export's
+     font cache): the font program, its descriptor, the CIDFont and its CIDToGIDMap (every
+     CID but 0 to glyph 1) */
+  function glyphlessFont(P, doc, cache) {
+    if (cache.__glyphless) return cache.__glyphless;
+    var ctx = doc.context, ttf = b64Bytes(PURE.GLYPHLESS_TTF), map = new Uint8Array(131072), i;
+    for (i = 3; i < map.length; i += 2) map[i] = 1;
+    var ff = ctx.register(ctx.flateStream(ttf, { Length1: ttf.length }));
+    var fd = ctx.register(ctx.obj({
+      Type: 'FontDescriptor', FontName: 'GlyphLessFont', Flags: 5, FontBBox: [0, -200, 1000, 800],
+      ItalicAngle: 0, Ascent: 800, Descent: -200, CapHeight: 700, StemV: 80, FontFile2: ff
+    }));
+    var cid = ctx.register(ctx.obj({
+      Type: 'Font', Subtype: 'CIDFontType2', BaseFont: 'GlyphLessFont',
+      CIDSystemInfo: { Registry: P.PDFString.of('Adobe'), Ordering: P.PDFString.of('Identity'), Supplement: 0 },
+      FontDescriptor: fd, DW: 1000, CIDToGIDMap: ctx.register(ctx.flateStream(map))
+    }));
+    return (cache.__glyphless = { cid: cid });
+  }
+  /* draws the page's Unicode OCR layer; returns the number of runs drawn */
+  PURE.drawOcrWordsUnicode = function (P, doc, page, cache, words, W, H, ox, oy) {
+    ox = ox || 0; oy = oy || 0;   // the visible box's origin (CropBox pages)
+    var runs = PURE.ocrRuns(words, W, H);
+    if (!runs.length) return 0;
+    var cids = new Map(), list = [];
+    function cidOf(cp) {
+      var c = cids.get(cp);
+      if (c == null) { if (list.length >= 65534) return 0; c = list.length + 1; cids.set(cp, c); list.push(cp); }
+      return c;
+    }
+    var drawn = runs.map(function (r) {
+      var hex = '';
+      r.cps.forEach(function (cp) { hex += hex4(cidOf(cp)); });
+      hex += hex4(cidOf(0x20));
+      var bw = (r.x1 - r.x0) * W, bh = (r.y1 - r.y0) * H;
+      var size = Math.max(1, Math.min(bh, 400));
+      /* DW 1000: every glyph advances one em, so Tz stretches the word to its box; the
+         em box (ascent 800, descent 200) spans the word's box when the baseline sits 0.2
+         of its height above the bottom */
+      return { hex: hex, size: size, tz: 100 * bw / (r.cps.length * size), x: ox + r.x0 * W, y: oy + (H - r.y1 * H) + 0.2 * bh };
+    });
+    var g = glyphlessFont(P, doc, cache), ctx = doc.context;
+    var font = ctx.register(ctx.obj({
+      Type: 'Font', Subtype: 'Type0', BaseFont: 'GlyphLessFont', Encoding: 'Identity-H',
+      DescendantFonts: [g.cid], ToUnicode: ctx.register(ctx.flateStream(PURE.ocrToUnicodeCMap(list)))
+    }));
+    var key = page.node.newFontDictionary('GlyphLessFont', font);
+    var ops = [P.pushGraphicsState(), P.beginMarkedContent(PURE.OCR_TAG), P.beginText(), P.setTextRenderingMode(P.TextRenderingMode.Invisible)];
+    drawn.forEach(function (d) {
+      ops.push(P.setFontAndSize(key, d.size), P.setCharacterSqueeze(d.tz), P.setTextMatrix(1, 0, 0, 1, d.x, d.y), P.showText(P.PDFHexString.of(d.hex)));
+    });
+    ops.push(P.endText(), P.endMarkedContent(), P.popGraphicsState());
+    page.pushOperators.apply(page, ops);
+    return drawn.length;
   };
 
   /* ==================================================================================
@@ -1400,7 +1684,10 @@
     var x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
     var y0 = Math.min.apply(null, ys), y1 = Math.max.apply(null, ys);
     var tok = {
-      text: String(item.str),
+      // Kangxi and CJK Supplement radicals (Chrome-printed Japanese and Chinese PDFs map
+      // 日 大 行 目 to U+2F47 and its kin) folded to the ideographs they stand for, one
+      // character for one, so copied text searches and pastes as written
+      text: String(item.str).replace(/[\u2E80-\u2EFF\u2F00-\u2FDF]/g, function (c) { var k = c.normalize ? c.normalize('NFKC') : c; return k.length === 1 ? k : c; }),
       x0: x0 / Wpx, y0: y0 / Hpx, x1: x1 / Wpx, y1: y1 / Hpx,
       fontSize: fontHeight / Hpx,
       // the same font height normalized by the page WIDTH: x and y are normalized against
@@ -1765,6 +2052,7 @@
   var lastDropped = 0;       // added texts/watermarks that lost characters (not WinAnsi-encodable)
   var lastSigFailed = 0;     // placed signatures that could not be embedded into the output
   var lastFormFailed = 0;    // filled form field values that could not be applied
+  var lastFlattenedForm = 0; // pages the last build rasterized to keep form text the standard fonts cannot encode
   var lastDpiCapped = 0;     // pages flattened at a lower DPI than requested (page too large)
   var lastDpiFloor = 0;      // the lowest effective DPI actually used, when lastDpiCapped > 0
   var redactDpi = 150;       // render quality used when redacted pages are flattened on download
@@ -1822,9 +2110,17 @@
   var progWrap = $('pt-progress'), progFill = $('pt-progress-fill');
 
   // kind: 'err' | 'warn' | omit — styles the status line (see .pt-status--err/--warn)
-  function setStatus(msg, kind) {
+  // `keep` (optional): substrings of msg (file names, sizes) a browser translator must
+  // leave alone; each is wrapped in translate="no". The text content is msg either way.
+  function setStatus(msg, kind, keep) {
     if (!statusEl) return;
+    // a file name may carry direction controls (U+202A-U+202E, U+2066-U+2069): an
+    // unclosed override flipped the rest of the sentence. They are dropped from what is
+    // shown, and keepUntranslated isolates each quoted name (see there).
+    msg = PURE.stripBidiControls(msg);
+    if (keep) keep = keep.map(PURE.stripBidiControls);
     statusEl.textContent = msg || '';
+    if (msg && keep && keep.length) PURE.keepUntranslated(statusEl, msg, keep);
     statusEl.classList.remove('pt-status--err', 'pt-status--warn');
     if (kind === 'err') statusEl.classList.add('pt-status--err');
     else if (kind === 'warn') statusEl.classList.add('pt-status--warn');
@@ -2003,11 +2299,12 @@
       if (badType.length) msg.push('Skipped ' + badType.map(function (f) { return f.name; }).join(', ') + ' (not a PDF or image).');
       var addKind = added === 0 ? 'err' : (failed.length || skipped.length || badType.length) ? 'warn' : undefined;
       var base = msg.join(' ');
-      setStatus(base, addKind);
+      var names = failed.concat(skipped, badType.map(function (f) { return f.name; }));
+      setStatus(base, addKind, names);
       // a form PDF looks like any other one in the grid until you open the editor — say so
       if (added > 0) hasFillableFields(beforeDocs).then(function (yes) {
         if (!yes || !statusEl || statusEl.textContent !== base) return;   // something else has spoken since
-        setStatus(base + ' This PDF has fillable form fields. Double-click a page to fill them.', addKind);
+        setStatus(base + ' This PDF has fillable form fields. Double-click a page to fill them.', addKind, names);
       }, function () {});   // a notice is a nicety: never let it break the rest of the load
       // let the open editor refresh its page label / nav arrows for the new pages
       if (added > 0 && window.__PT && window.__PT.onPagesChanged) window.__PT.onPagesChanged();
@@ -2072,8 +2369,8 @@
     function show() {
       return new Promise(function (res) {
         passResolve = res;
-        if (passMsg) passMsg.textContent = (again ? 'That password didn’t work. ' : '') +
-          '“' + name + '” is password-protected. Enter its password to open it, or cancel to skip this file.';
+        if (passMsg) PURE.keepUntranslated(passMsg, (again ? 'That password didn’t work. ' : '') +
+          '“' + name + '” is password-protected. Enter its password to open it, or cancel to skip this file.', [name]);
         if (passInput) passInput.value = '';
         if (passDialog.hidden) passDialog.__opener = document.activeElement;   // opened directly, not via openDialog
         passDialog.hidden = false;
@@ -2413,7 +2710,7 @@
 
       var bar = document.createElement('div');
       bar.className = 'pt-thumb__bar';
-      bar.innerHTML = '<span class="pt-thumb__num">' + (idx + 1) +
+      bar.innerHTML = '<span class="pt-thumb__num"><span translate="no" class="notranslate">' + (idx + 1) + '</span>' +
         (hasRedacts(pg) ? ' <span class="pt-thumb__redacted" title="Redacted (flattened to an image on download)">▮</span>' : '') +
         (hasWhiteouts(pg) ? ' <span class="pt-thumb__whiteout" title="White-out (covers, does not remove)">▯</span>' : '') +
         (pg.sigs && pg.sigs.length ? ' <span class="pt-thumb__signed" title="Signed">✎</span>' : '') +
@@ -2871,11 +3168,16 @@
       // apply any filled form values, then flatten so the values bake into page content
       if (d.formValues && Object.keys(d.formValues).length) {
         try {
-          var form = doc.getForm();
+          var form = doc.getForm(), applied = 0;
           Object.keys(d.formValues).forEach(function (name) {
             var val = d.formValues[name];
+            /* a text or choice value outside WinAnsi would make form.flatten() throw for
+               the WHOLE document (pdf-lib draws field appearances in Helvetica): leave it
+               unset here; buildPdf bakes the page that carries it (formBakePage) */
+            if (typeof val === 'string' && !PURE.winAnsiOk(val)) return;
             try {
               var f = form.getField(name); var ty = fieldType(f);
+              applied++;
               if (ty === 'text') f.setText(val == null ? '' : String(val));
               else if (ty === 'checkbox') { if (val) f.check(); else f.uncheck(); }
               else if ((ty === 'select' || ty === 'radio') && val != null && val !== '') {
@@ -2896,8 +3198,16 @@
               if (window.console) console.warn('pdftools: form field "' + name + '" could not be filled.', e2);
             }
           });
-          form.flatten();
-        } catch (e) {}
+          try { form.flatten(); }
+          catch (ef) {
+            /* never silent: the values set above did not reach the page content */
+            lastFormFailed += Math.max(1, applied);
+            if (window.console) console.warn('pdftools: the form in ' + d.name + ' could not be flattened.', ef);
+          }
+        } catch (e) {
+          lastFormFailed++;
+          if (window.console) console.warn('pdftools: the form in ' + d.name + ' could not be read.', e);
+        }
       }
       return doc;
     });
@@ -3076,7 +3386,14 @@
         // never let the invisible text layer resurrect redacted content (whole words), nor
         // carry the characters a white-out covers (what is selectable should match what is
         // seen; the file's own text under a white-out is untouched)
-        var words = PURE.cutCovered(PURE.filterOcrWords(pg.ocrWords, pg.redacts), pg.whiteouts, metricsTable);
+        var words = PURE.cutCovered(PURE.ocrTagRtl(PURE.filterOcrWords(pg.ocrWords, pg.redacts)), pg.whiteouts, metricsTable);
+        /* a word the WinAnsi writer cannot carry sends the whole page to the Unicode writer;
+           otherwise the bytes are exactly the WinAnsi writer's */
+        if (PURE.ocrNeedsUnicode(words)) {
+          try { PURE.drawOcrWordsUnicode(PDFLib, out, info.page, fontCache, words, vb.w, vb.h, vb.x, vb.y); }
+          catch (eu) { if (window.console) console.warn('pdftools: the OCR text layer could not be drawn.', eu); }
+          return;
+        }
         return helv().then(function (font) { PURE.drawOcrWords(PDFLib, info.page, font, words, vb.w, vb.h, vb.x, vb.y); })
           .catch(function (e) { if (window.console) console.warn('pdftools: the OCR text layer could not be drawn.', e); });
       });
@@ -3293,7 +3610,7 @@
   function buildPdf(pageList, onTick, numMap, sharedCache) {
     var cache = sharedCache || {}, fontCache = {}, failures = 0;
     lastFlattenedRot = 0; lastFlattenedSrc = 0; lastDropped = 0;
-    lastSigFailed = 0; lastFormFailed = 0; lastDpiCapped = 0; lastDpiFloor = 0;
+    lastSigFailed = 0; lastFormFailed = 0; lastDpiCapped = 0; lastDpiFloor = 0; lastFlattenedForm = 0;
     return PDFLib.PDFDocument.create().then(function (out) {
       var routes = new Array(pageList.length);
 
@@ -3308,12 +3625,16 @@
           var overlaid = (pg.texts && pg.texts.some(function (t) { return (t.text || '').trim().length; })) ||
                          (pg.sigs && pg.sigs.length) ||
                          (pg.wms && pg.wms.length) || (pg.ocrWords && pg.ocrWords.length) || !!pageNums;
+          var formBake = false;
           var mustBakeP = hasRedacts(pg) ? Promise.resolve(true)
-            : (!overlaid || pg.blank) ? Promise.resolve(false)
-            : pageEffRotation(pg).then(function (r) { return r !== 0; });
+            : formBakePage(pg).then(function (fb) {
+              if (fb) { formBake = true; return true; }
+              return (!overlaid || pg.blank) ? false : pageEffRotation(pg).then(function (r) { return r !== 0; });
+            });
           return mustBakeP.then(function (mustBake) {
             if (mustBake) {
-              if (!hasRedacts(pg)) lastFlattenedRot++;
+              if (formBake) lastFlattenedForm++;
+              else if (!hasRedacts(pg)) lastFlattenedRot++;
               routes[i] = { kind: 'bake' };
             } else if (pg.blank) {
               routes[i] = { kind: 'blank' };
@@ -3477,7 +3798,7 @@
     buildPdf(pages, buildTick('Building')).then(function (bytes) {
       var name = exportName('download');
       downloadBytes(bytes, name);
-      setStatus('Saved ' + name + ' (' + fmtSize(bytes.length) + ').' + flattenNote(), flattenKind());
+      setStatus('Saved ' + name + ' (' + fmtSize(bytes.length) + ').' + flattenNote(), flattenKind(), [name, fmtSize(bytes.length)]);
     }).catch(function (e) { setStatus('Error: ' + (e && e.message || e), 'err'); })
       .then(function () { lastDlDone = Date.now(); setBusy(false); });
   });
@@ -3492,7 +3813,7 @@
     buildPdf(list, buildTick('Downloading'), { idx: idxs, total: pages.length }).then(function (bytes) {
       var name = exportName('extract', list);
       downloadBytes(bytes, name);
-      setStatus('Saved ' + name + ' (' + list.length + ' page' + (list.length > 1 ? 's' : '') + ', ' + fmtSize(bytes.length) + ').' + flattenNote(), flattenKind());
+      setStatus('Saved ' + name + ' (' + list.length + ' page' + (list.length > 1 ? 's' : '') + ', ' + fmtSize(bytes.length) + ').' + flattenNote(), flattenKind(), [name, fmtSize(bytes.length)]);
     }).catch(function (e) { setStatus('Error: ' + (e && e.message || e), 'err'); })
       .then(function () { setBusy(false); });
   });
@@ -3529,7 +3850,7 @@
       downloadBytes(zip, name, 'application/zip');
       var msg = 'Saved ' + name + ' (' + files.length + ' files, ' + fmtSize(zip.length) + ').';
       if (splitFailed) msg = 'Split ' + files.length + ' page' + (files.length === 1 ? '' : 's') + '; ' + splitFailed + ' could not be processed. ' + msg;
-      setStatus(msg, splitFailed ? 'warn' : undefined);
+      setStatus(msg, splitFailed ? 'warn' : undefined, [name, fmtSize(zip.length)]);
     }).catch(function (e) { setStatus('Error: ' + (e && e.message || e), 'err'); })
       .then(function () { setBusy(false); });
   });
@@ -3541,6 +3862,7 @@
     var parts = [];
     if (lastFlattenedRot) parts.push(lastFlattenedRot + ' page(s) were flattened to images so added content (text, signatures, watermarks, or page numbers) renders correctly on rotated pages');
     if (lastFlattenedSrc) parts.push(lastFlattenedSrc + ' page(s) from an encrypted or damaged PDF were flattened to images');
+    if (lastFlattenedForm) parts.push(lastFlattenedForm + ' page(s) were flattened to images to keep form text the built-in PDF fonts can’t encode (like non-Latin scripts)');
     if (lastDropped) parts.push(lastDropped + ' added text/watermark item(s) contained characters the built-in PDF fonts can’t encode (like emoji or non-Latin scripts), so those characters were left out');
     if (lastSigFailed) parts.push(lastSigFailed + ' signature' + (lastSigFailed > 1 ? 's' : '') + ' could not be embedded');
     if (lastFormFailed) parts.push(lastFormFailed + ' form field' + (lastFormFailed > 1 ? 's' : '') + ' could not be filled');
@@ -3631,6 +3953,29 @@
   // appearances but knows nothing about our unflattened fill-ins — without this the
   // values silently vanish from any flattened page. Reads formValues at call time, so
   // it always matches the undo state. convertToViewportRectangle handles rotation.
+  // does this page carry a filled text or choice field whose value is outside WinAnsi?
+  // getLibDoc leaves such values unset (pdf-lib cannot draw them), so the page is baked
+  // as an image with paintFormValues painting the value, like every other flattened page.
+  function formBakePage(pg) {
+    if (pg.docIndex < 0 || pg.raster || pg.blank) return Promise.resolve(false);
+    var d = docs[pg.docIndex];
+    if (!d || !d.js || !d.formValues) return Promise.resolve(false);
+    var bad = Object.keys(d.formValues).filter(function (k) {
+      var v = d.formValues[k];
+      return typeof v === 'string' && v !== '' && !PURE.winAnsiOk(v);
+    });
+    if (!bad.length) return Promise.resolve(false);
+    return d.js.getPage(pg.pageIndex + 1).then(function (page) {
+      return page.getAnnotations();
+    }).then(function (annots) {
+      return annots.some(function (a) { return a.subtype === 'Widget' && a.fieldName && bad.indexOf(a.fieldName) >= 0; });
+    }, function (e) {
+      lastFormFailed++;   /* its value was left unset by getLibDoc: say so */
+      if (window.console) console.warn('pdftools: could not read the form fields of a page.', e);
+      return false;
+    });
+  }
+
   function paintFormValues(canvas, pg) {
     if (pg.docIndex < 0 || pg.raster || pg.blank) return Promise.resolve();
     var d = docs[pg.docIndex];
@@ -3847,10 +4192,10 @@
         // lead with the warning instead of burying it in a parenthesis — a text-only PDF
         // coming out bigger is the one outcome that needs explaining, not celebrating
         setStatus('Heads up: ' + name + ' came out larger (' + fmtSize(bytes.length) + ' vs ' + fmtSize(before) +
-          ' in). Shrink helps scanned pages, not text PDFs. The file was still downloaded.', 'warn');
+          ' in). Shrink helps scanned pages, not text PDFs. The file was still downloaded.', 'warn', [name, fmtSize(bytes.length), fmtSize(before)]);
       } else {
         var pct = before ? Math.round((1 - bytes.length / before) * 100) : 0;
-        setStatus('Saved ' + name + ', ' + fmtSize(bytes.length) + (before ? ' (input was ' + fmtSize(before) + ', ' + pct + '% smaller)' : '') + '.');
+        setStatus('Saved ' + name + ', ' + fmtSize(bytes.length) + (before ? ' (input was ' + fmtSize(before) + ', ' + pct + '% smaller)' : '') + '.', undefined, [name, fmtSize(bytes.length), before ? fmtSize(before) : '']);
       }
     }).catch(function (e) { setStatus('Error: ' + (e && e.message || e), 'err'); })
       .then(function () { setBusy(false); });
