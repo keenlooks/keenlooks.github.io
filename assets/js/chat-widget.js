@@ -42,7 +42,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     <button class="suggestion-chip">How can I collaborate?</button>
                 </div>
                 <div class="chat-input">
-                    <textarea id="user-input" placeholder="Ask me about Keane's research..." maxlength="2000" aria-label="Your question"></textarea>
+                    <textarea id="user-input" dir="auto" placeholder="Ask me about Keane's research..." maxlength="2000" aria-label="Your question"></textarea>
                     <button id="send-button">Send</button>
                 </div>
                 <p class="chat-disclosure">Messages go to Anthropic's API through a Cloudflare Worker and stay in this browser until you reset the chat. <a class="chat-terms-link" href="">Privacy</a></p>
@@ -515,6 +515,19 @@ document.addEventListener('DOMContentLoaded', function() {
     </ul>
     <p>How can I help you today?</p>`;
 
+    // The visitor's browser language (first of navigator.languages, else
+    // navigator.language), sent with each question so the Worker can tell the
+    // bot which language to answer in. Undefined (and so left out of the JSON)
+    // when the browser gives none; the Worker ignores anything that is not a
+    // plain BCP 47 tag.
+    function browserLang() {
+        try {
+            const list = navigator.languages;
+            const l = (list && list.length && list[0]) || navigator.language;
+            return typeof l === 'string' && l && l.length <= 35 ? l : undefined;
+        } catch (e) { return undefined; }
+    }
+
     // ---- storage (every call guarded: storage can be blocked or full) ----
     function storeGet(key) {
         try { return window.localStorage.getItem(key); } catch (e) { return null; }
@@ -633,6 +646,11 @@ document.addEventListener('DOMContentLoaded', function() {
                     (tag === 'OL' && name === 'start');
                 if (!keep) child.removeAttribute(attr.name);
             });
+            // Code stays as written when the visitor's browser translates the page.
+            if (tag === 'CODE' || tag === 'PRE') {
+                child.setAttribute('translate', 'no');
+                child.className = 'notranslate';
+            }
             if (tag === 'A') {
                 let ok = false;
                 try {
@@ -658,6 +676,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 const tpl = document.createElement('template');
                 tpl.innerHTML = html;
                 cleanTree(tpl.content);
+                setBlockDirs(tpl.content);
                 el.classList.remove('chat-plain');
                 el.textContent = '';
                 el.appendChild(tpl.content);
@@ -666,13 +685,45 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         // marked unavailable: plain text, line breaks kept by CSS
         el.classList.add('chat-plain');
+        el.setAttribute('dir', textDir(text));
         el.textContent = String(text);
+    }
+
+    // Arabic, Hebrew or Persian text: every block of a reply (and each user bubble) gets
+    // the direction most of its letters are written in, so a Hebrew paragraph reads right
+    // to left with its punctuation and list marker on the right, and an English one beside
+    // it stays left to right. Counted, not first-letter (dir="auto"): a Hebrew sentence
+    // that opens with "PDF Toolbench" is still a right-to-left sentence. Per block, not
+    // per bubble; a list takes the direction of all its items; code stays left to right.
+    const RTL_CHAR = /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/;
+    const LETTER = (function () {
+        try { return new RegExp('\\p{L}', 'u'); } catch (e) { return /[A-Za-z\u00C0-\u024F\u0370-\u052F]/; }
+    })();
+    function textDir(text) {
+        let rtl = 0, all = 0;
+        for (const ch of String(text || '')) {
+            if (RTL_CHAR.test(ch)) { rtl++; all++; }
+            else if (LETTER.test(ch)) all++;
+        }
+        if (!all) return 'auto';
+        return rtl > 0 && rtl >= 0.4 * all ? 'rtl' : 'ltr';
+    }
+    function proseText(el) {
+        const c = el.cloneNode(true);
+        c.querySelectorAll('pre, code').forEach(x => x.remove());
+        return c.textContent;
+    }
+    const DIR_BLOCKS = 'p, li, ul, ol, h1, h2, h3, h4, h5, h6, blockquote, td, th';
+    function setBlockDirs(root) {
+        root.querySelectorAll(DIR_BLOCKS).forEach(b => b.setAttribute('dir', textDir(proseText(b))));
+        root.querySelectorAll('pre, code').forEach(c => c.setAttribute('dir', 'ltr'));
     }
 
     function appendMessage(role, text) {
         const div = document.createElement('div');
         if (role === 'user') {
             div.className = 'message user-message';
+            div.setAttribute('dir', textDir(text));
             div.textContent = text;
         } else {
             div.className = 'message claude-message';
@@ -819,7 +870,8 @@ document.addEventListener('DOMContentLoaded', function() {
                         messages: [{
                             role: 'user',
                             content: messageText
-                        }]
+                        }],
+                        lang: browserLang()
                     })
                 });
             } catch (e) {
@@ -873,6 +925,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!text) {
                 userInput.disabled = false;
                 userInput.value = '';
+                userInput.setAttribute('dir', 'auto');
             }
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
@@ -938,6 +991,9 @@ document.addEventListener('DOMContentLoaded', function() {
             sendMessage();
         }
     });
+    // the box follows the direction of what is typed (see textDir); empty, it is "auto"
+    function syncInputDir() { userInput.setAttribute('dir', textDir(userInput.value)); }
+    userInput.addEventListener('input', syncInputDir);
 
     // Load chat state and show welcome message if needed.
     // r24 (1): restoring a long history measured 117 to 240 ms on a cold

@@ -47,6 +47,12 @@ const MAX_TURNS = 12;
 const MAX_CHARS_PER_MESSAGE = 2000;
 const MAX_CHARS_TOTAL = 12000;
 const MAX_BODY_BYTES = 64 * 1024;
+// The visitor's browser language (the widget sends navigator.languages[0] as
+// `lang`). Optional; accepted only in a strict BCP 47 shape, anything else is
+// ignored without an error. It becomes a SECOND system block after the cached
+// first one, so the big block's cache_control prefix is unchanged.
+const LANG_SHAPE = /^[a-z]{2,3}(-[A-Za-z0-9]{2,8}){0,3}$/i;
+const LANG_MAX_CHARS = 35;
 
 // Rate limits. These live in the isolate's memory, so they are best effort:
 // Cloudflare runs many isolates and recycles them, each with its own counters.
@@ -136,7 +142,18 @@ function validate(body) {
     messages.push({ role: m.role, content });
   }
   if (messages[messages.length - 1].role !== 'user') return { error: 'The last message must come from the user.' };
-  return { messages };
+  return { messages, lang: cleanLang(body.lang) };
+}
+
+function cleanLang(v) {
+  if (typeof v !== 'string' || v.length > LANG_MAX_CHARS || !LANG_SHAPE.test(v)) return null;
+  return v;
+}
+
+function langNote(lang) {
+  return "The visitor's browser language is " + lang + '. Answer in the language the visitor writes in; ' +
+    'if the message gives no clear language, answer in ' + lang + '. ' +
+    'Keep page names, URLs, paper titles and code exactly as they are.';
 }
 
 function pickNewestHaiku(list) {
@@ -227,6 +244,7 @@ export default {
 
       const model = await resolveModel(env, now);
       const systemPrompt = [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
+      if (checked.lang) systemPrompt.push({ type: 'text', text: langNote(checked.lang) });
       const upstream = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
@@ -238,7 +256,7 @@ export default {
         body: JSON.stringify({
           model,
           max_tokens: MAX_TOKENS,
-          // Haiku 5.5 thinks by default; low effort keeps answers quick and cheap for a site FAQ bot, and the widget only renders text blocks (assets/js/chat-widget.js line 840 filters item.type === 'text').
+          // Haiku 5.5 thinks by default; low effort keeps answers quick and cheap for a site FAQ bot, and the widget only renders text blocks (assets/js/chat-widget.js, sendMessage, keeps only item.type === 'text').
           output_config: { effort: 'low' },
           system: systemPrompt,
           messages: checked.messages
