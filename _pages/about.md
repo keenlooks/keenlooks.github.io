@@ -1,7 +1,7 @@
 ---
 permalink: /
 title: "About me"
-excerpt: "About me"
+excerpt: "Keane Lucas, on Anthropic's Frontier Red Team: research on the cyber capabilities of large language models, papers, talks and a few interactive demos."
 description: "Keane Lucas is a member of Anthropic's Frontier Red Team, where he evaluates and improves large language models' cyber capabilities. Previously: PhD at Carnegie Mellon University (CMU), MS in Machine Learning (CMU), MS in Information Security (CMU), and BS in Computer Science (US Air Force Academy)."
 author_profile: true
 redirect_from: 
@@ -118,7 +118,6 @@ My most recent contributions are on [Anthropic's Frontier Red Team blog](https:/
   color: inherit;
   border-color: #82a6cc;                 /* dark-theme accent */
   background: rgba(130, 166, 204, 0.10);
-  outline: none;
 }
 .home-strip .xp-card__art {
   position: relative;

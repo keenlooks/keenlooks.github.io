@@ -3,7 +3,9 @@
    (rasterized from an offscreen canvas), holds for a moment, then evolves
    under B3/S23 and dissolves. Clicking the canvas re-seeds it.
    Theme-aware, pauses on hidden tabs, and stays frozen for
-   prefers-reduced-motion. */
+   prefers-reduced-motion. It also follows the footer's "Pause background"
+   switch (gol-bg.js: window.golBgPaused and the 'gol-bg-pause' event), which
+   itself starts paused under reduced motion unless the visitor resumed it. */
 (function () {
   'use strict';
 
@@ -17,6 +19,11 @@
   var hash1 = -1, hash2 = -2;
   var lastW = 0, lastH = 0;
   var reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  var bgPaused = null; /* null until the footer switch reports */
+
+  function paused() {
+    return bgPaused === null ? reducedMotion.matches : bgPaused;
+  }
 
   function effectiveTheme() {
     var t = document.documentElement.getAttribute('data-theme');
@@ -136,7 +143,7 @@
 
   function frame(ts) {
     window.requestAnimationFrame(frame);
-    if (frozen || reducedMotion.matches) { return; }
+    if (frozen || paused()) { return; }
     if (ts < holdUntil) { return; }
     if (ts - lastStep < STEP_MS) { return; }
     lastStep = ts;
@@ -198,6 +205,18 @@
       /* Coming back from reduced motion, give the pattern a fresh hold. */
       if (!reducedMotion.matches && !frozen) {
         holdUntil = performance.now() + HOLD_MS;
+      }
+    });
+
+    if (typeof window.golBgPaused === 'function') { bgPaused = !!window.golBgPaused(); }
+    document.addEventListener('gol-bg-pause', function (e) {
+      var was = paused();
+      bgPaused = !!(e.detail && e.detail.paused);
+      /* Resumed: no instant step; a 404 that has not started to evolve yet
+         gets a fresh hold so it is seen before it dissolves. */
+      if (was && !bgPaused) {
+        lastStep = performance.now();
+        if (!frozen && hash1 === -1) { holdUntil = performance.now() + HOLD_MS; }
       }
     });
 

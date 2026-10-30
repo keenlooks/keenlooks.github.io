@@ -28,14 +28,44 @@
 
 <title>{{ seo_title | default: site.title }}{% if paginator %}{% unless paginator.page == 1 %} {{ site.title_separator }} {{ site.data.ui-text[site.locale].page | default: "Page" }} {{ paginator.page }}{% endunless %}{% endif %}</title>
 
+{% comment %} Description: the page's own, else its excerpt, else the site's; an empty string
+   counts as absent. og: and twitter: get the whole text (the platforms clip on their own); the
+   meta description is cut at a word boundary to at most 155 characters plus an ellipsis.
+   (Whitespace, newlines included, collapses to single spaces so words never run together.) {% endcomment %}
 {% assign seo_description = page.description | default: page.excerpt %}
 {% if seo_description %}
-  {% assign seo_description = seo_description | markdownify | strip_html | strip_newlines | truncate: 160 %}
+  {% assign seo_description = seo_description | markdownify | strip_html | normalize_whitespace | strip %}
 {% endif %}
-{% assign seo_description = seo_description | default: site.description %}
-{% if seo_description %}
-  {% assign seo_description = seo_description | strip_newlines | escape_once %}
-  <meta name="description" content="{{ seo_description }}">
+{% if seo_description == nil or seo_description == "" %}
+  {% assign seo_description = site.description | strip_html | normalize_whitespace | strip %}
+{% endif %}
+{% assign seo_meta_description = seo_description %}
+{% if seo_description.size > 155 %}
+  {% assign seo_cut = seo_description | slice: 0, 155 %}
+  {% assign seo_cut_next = seo_description | slice: 155, 1 %}
+  {% if seo_cut_next != " " %}
+    {% assign seo_cut_words = seo_cut | split: " " %}
+    {% if seo_cut_words.size > 1 %}
+      {% assign seo_cut_keep = seo_cut_words.size | minus: 1 %}
+      {% assign seo_cut = seo_cut_words | slice: 0, seo_cut_keep | join: " " %}
+    {% endif %}
+  {% endif %}
+  {% assign seo_cut = seo_cut | strip %}
+  {% assign seo_cut_last = seo_cut | slice: -1, 1 %}
+  {% if seo_cut_last == "," or seo_cut_last == ";" or seo_cut_last == ":" %}
+    {% assign seo_cut_len = seo_cut.size | minus: 1 %}
+    {% assign seo_cut = seo_cut | slice: 0, seo_cut_len %}
+  {% endif %}
+  {% if seo_cut_last == "." %}
+    {% assign seo_meta_description = seo_cut %}
+  {% else %}
+    {% assign seo_meta_description = seo_cut | append: "…" %}
+  {% endif %}
+{% endif %}
+{% if seo_description and seo_description != "" %}
+  {% assign seo_description = seo_description | escape_once %}
+  {% assign seo_meta_description = seo_meta_description | escape_once %}
+  <meta name="description" content="{{ seo_meta_description }}">
 {% endif %}
 
 {% assign seo_author = page.author | default: page.author[0] | default: site.author[0] %}
@@ -51,8 +81,12 @@
   {% endif %}
   {% assign seo_author_twitter = seo_author_twitter | replace: "@", "" %}
 {% endif %}
+{% comment %} site.author is a hash here, so site.author[0] above is nil: fall back to its twitter. {% endcomment %}
+{% assign seo_author_twitter = seo_author_twitter | default: site.author.twitter | replace: "@", "" %}
 
-<meta property="og:locale" content="{{ site.locale | default: "en" }}">
+{% assign seo_image_alt = page.og_image_alt | default: seo_og_title | markdownify | strip_html | normalize_whitespace | strip | escape_once %}
+
+<meta property="og:locale" content="{{ site.locale | default: "en_US" | replace: "-", "_" }}">
 <meta property="og:site_name" content="{{ site.title }}">
 <meta property="og:title" content="{{ seo_og_title | markdownify | strip_html | strip_newlines | escape_once }}">
 
@@ -74,12 +108,15 @@
   {% if page.og_image %}
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:image" content="{{ page.og_image | prepend: base_path }}">
+    <meta name="twitter:image:alt" content="{{ seo_image_alt }}">
   {% elsif page.header.image %}
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:image" content="{% if page.header.image contains "://" %}{{ page.header.image }}{% else %}{{ page.header.image | prepend: "/images/" | prepend: base_path }}{% endif %}">
+    <meta name="twitter:image:alt" content="{{ seo_image_alt }}">
   {% elsif site.og_image %}
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:image" content="{{ site.og_image | prepend: "/images/" | prepend: base_path }}">
+    <meta name="twitter:image:alt" content="{{ seo_image_alt }}">
   {% else %}
     <meta name="twitter:card" content="summary">
   {% endif %}
@@ -101,14 +138,18 @@
 
 {% if page.og_image %}
   <meta property="og:image" content="{{ page.og_image | prepend: base_path }}">
+  <meta property="og:image:alt" content="{{ seo_image_alt }}">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
 {% elsif page.header.image %}
   <meta property="og:image" content="{% if page.header.image contains "://" %}{{ page.header.image }}{% else %}{{ page.header.image | prepend: "/images/" | prepend: base_path }}{% endif %}">
+  <meta property="og:image:alt" content="{{ seo_image_alt }}">
 {% elsif page.header.overlay_image %}
   <meta property="og:image" content="{% if page.header.overlay_image contains "://" %}{{ page.header.overlay_image }}{% else %}{{ page.header.overlay_image | prepend: "/images/" | prepend: base_path }}{% endif %}">
+  <meta property="og:image:alt" content="{{ seo_image_alt }}">
 {% elsif site.og_image %}
   <meta property="og:image" content="{{ site.og_image | prepend: "/images/" | prepend: base_path }}">
+  <meta property="og:image:alt" content="{{ seo_image_alt }}">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
 {% endif %}
@@ -182,13 +223,28 @@
   {% endif %}
   {% assign person_links = person_links | append: seo_github_url | append: "||" %}
 {% endif %}
+{% if site.author.twitter %}
+  {% assign person_links = person_links | append: "https://twitter.com/" | append: site.author.twitter | append: "||" %}
+{% endif %}
+{% if site.author.researchgate %}
+  {% assign person_links = person_links | append: site.author.researchgate | append: "||" %}
+{% endif %}
 {% assign person_links = person_links | split: "||" %}
+{% if site.author.avatar contains "://" %}
+  {% assign seo_person_image = site.author.avatar %}
+{% else %}
+  {% assign seo_person_image = site.author.avatar | prepend: "/images/" | prepend: seo_url %}
+{% endif %}
+{% comment %} "@id" lets other blocks (the tools' SoftwareApplication author) point at this Person. {% endcomment %}
 <script type="application/ld+json">
   {
     "@context": "https://schema.org",
     "@type": "Person",
+    "@id": {{ seo_url | append: "/#person" | jsonify }},
     "name": {{ site.author.name | default: site.name | jsonify }},
     "url": {{ seo_url | jsonify }},
+    "image": {{ seo_person_image | jsonify }},
+    "description": "Member of Anthropic's Frontier Red Team, where he evaluates and improves large language models' cyber capabilities. PhD in Electrical and Computer Engineering from Carnegie Mellon University.",
     "jobTitle": "Member of Technical Staff",
     "worksFor": {
       "@type": "Organization",

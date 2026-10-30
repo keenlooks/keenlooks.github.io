@@ -150,8 +150,10 @@
       border-bottom-left-radius: 0;
     }
 
+    /* the end of the list: a <span aria-disabled="true">, not a link;
+       dimmer than the live pager (it was brighter in dark mode) */
     &.disabled {
-      color: mix(#fff, $gray, 75%);
+      color: mix(#fff, $background-color, 35%);
       pointer-events: none;
       cursor: not-allowed;
     }

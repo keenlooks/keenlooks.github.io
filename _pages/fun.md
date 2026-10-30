@@ -4,11 +4,11 @@ title: "Fun"
 permalink: /fun/
 author_profile: false
 excerpt: "A small, growing collection of interactive things, built as an ongoing exercise in seeing what Claude can do."
-description: "Interactive visualizations and toys by Keane Lucas: machine learning demos, simulations, physics sandboxes, and visual explainers."
+description: "Demos by Keane Lucas: machine learning, simulations, physics, money explainers, and free private in-browser tools for PDFs, images, QR codes and diffs."
 ---
 
 <p class="xp-intro">
-Some fun, sometimes interactive, things. Most of this was built as an ongoing exercise in seeing what <a href="https://claude.com/claude-code">Claude</a> can do: I supply ideas, direction, and review, and Claude writes most of the code.
+Some fun, sometimes interactive, things. Most of this was built as an ongoing exercise in seeing what <a href="https://claude.com/product/claude-code">Claude</a> can do: I supply ideas, direction, and review, and Claude writes most of the code.
 </p>
 
 <nav class="xp-jump" aria-label="Sections on this page"><a href="#fun-ml">ML</a><a href="#fun-computing">Computing</a><a href="#fun-physics">Physics</a><a href="#fun-money">Money</a><a href="#fun-tools">Tools</a></nav>

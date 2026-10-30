@@ -15,14 +15,14 @@ redirect_from:
 {% include base_path %}
 
 Education
-======
+------
 * B.S. in Computer Science, United States Air Force Academy, 2014
 * M.S. in Information Security, Carnegie Mellon University, 2016
 * M.S. in Machine Learning, Carnegie Mellon University, 2024
 * PhD in Electrical and Computer Engineering, Carnegie Mellon University, 2024
 
 Highlighted Experience
-======
+------
 * Member of Technical Staff at Anthropic (Frontier Red Team)
   * July 2024 to Present
   * Evaluates, measures, and improves the cyber capabilities of frontier large language models to support their safe and robust deployment. Builds benchmarks and realistic evaluations for autonomous vulnerability discovery and exploit development (e.g., ExploitBench, ExploitGym), assesses model performance in cyber competitions and against real-world software, and develops defensive applications through partnerships with external organizations (e.g., Mozilla, PNNL). Regularly publishes findings on the [Anthropic Frontier Red Team blog](https://www.anthropic.com/research/team/frontier-red-team).
@@ -33,11 +33,11 @@ Highlighted Experience
 
 * Summer Intern at Massachusetts Institute of Technology Lincoln Laboratory
   * Summer 2021
-  * Worked with Dr Ross Allen on an intrinsic augmentation to cooperative reinforcement learning that incentivizes accommodative behavior in agents, resulting in demonstrated zero-shot coordination. [Paper published at AAMAS 2022 (click for more details)](/publications/2022-05-11-anyplay-an-intrinsic-augmentation-for-zero-shot-coordination).
+  * Worked with Dr Ross Allen on an intrinsic augmentation to cooperative reinforcement learning that incentivizes accommodative behavior in agents, resulting in demonstrated zero-shot coordination. [Paper published at AAMAS 2022 (more details)](/publications/2022-05-11-anyplay-an-intrinsic-augmentation-for-zero-shot-coordination).
 
 * Deep Learning Researcher at Department of Defense (DoD) Research Directorate (RD)
   * Spring 2017 to Fall 2019
-  * Customized dense neural nets, recurrent neural nets, generative adversarial networks, and reinforcement learning networks to aid in solving Intelligence Community (IC) problems. Attended NeurIPS and other AI related conferences.
+  * Customized dense neural nets, recurrent neural nets, generative adversarial networks, and reinforcement learning networks to aid in solving Intelligence Community (IC) problems. Attended NeurIPS and other AI-related conferences.
   * Authored a technical paper presented at internal conferences; the work was pushed into production as a pathfinding use case for deep learning analytics.
 
 * Machine Learning Researcher at Center for Communications Research La Jolla
@@ -49,24 +49,30 @@ Highlighted Experience
   * Focused on applying ML algorithms for the Humanitarian Assistance and Disaster Relief National Mission Initiative. This is a particularly demanding job that requires constant mission justification to external non-technical organizations and rapid objective pivoting in a highly uncertain environment.
 
 Publications
-======
-  <ul>{% for post in site.publications reversed %}
-    {% include archive-single-cv.html %}
-  {% endfor %}</ul>
+------
+<ul class="cv-entries">{% for post in site.publications reversed %}
+  <li class="list__item archive__item" itemscope itemtype="http://schema.org/CreativeWork">
+    <h3 class="archive__item-title" itemprop="headline"><a href="{{ base_path }}{{ post.url }}" rel="permalink">{{ post.title | markdownify | remove: "<p>" | remove: "</p>" | strip }}</a></h3>
+    {% if post.venue %}<p class="archive__item-excerpt" itemprop="description">{{ post.citation }}</p>{% endif %}
+  </li>
+{% endfor %}</ul>
 
 Presentations
-======
-  <ul>{% for post in site.talks %}
-    {% include archive-single-cv.html %}
-  {% endfor %}</ul>
+------
+<ul class="cv-entries">{% for post in site.talks %}
+  <li class="list__item archive__item" itemscope itemtype="http://schema.org/CreativeWork">
+    <h3 class="archive__item-title" itemprop="headline"><a href="{{ base_path }}{{ post.url }}" rel="permalink">{{ post.title | markdownify | remove: "<p>" | remove: "</p>" | strip }}</a></h3>
+    {% if post.venue %}<p class="archive__item-excerpt" itemprop="description">{{ post.citation }}</p>{% endif %}
+  </li>
+{% endfor %}</ul>
   
 Projects
-======
-* Doom Bot: deep reinforcement learning agent that plays DOOM from raw visual input ([GIF-filled presentation](https://bit.ly/mldoom))
+------
+* Doom Bot: deep reinforcement learning agent that plays DOOM from raw visual input ([GIF-filled presentation](https://docs.google.com/presentation/d/1xOni-qYQcpPtxi7FPeIJ_2X4LXEpbnhTtGaHOATmpZo/edit?usp=sharing))
 
 
 Top Achievements
-======
+------
 * 2019 National Defense Science and Engineering Graduate (NDSEG) Fellowship Awardee (166 awarded from 2928)
 * Joint Commendation Medal – awarded August 2019
 * 2018 DoD Research Directorate Military Performer of the Year, awarded Research Directorate and Math Research coins
@@ -79,7 +85,7 @@ Top Achievements
 * 2010 Graduation High School Valedictorian in class size of 290
 
 Skills
-======
+------
 * Data Analysis/Security
   * Introduction to Statistical Data Mining, Graduate Artificial Intelligence, Introduction to Machine Learning, Machine Learning Large Datasets, Search Engines, Cryptography, Secure Software Systems, Network Security
 * Systems
@@ -88,7 +94,7 @@ Skills
   * Python, Java, LaTeX, C, Go, ARM, x86, Octave, Perl, C#, Objective C, SQL
   
 Service and Leadership
-======
+------
 * Deputy Flight Commander, 7th Intelligence Squadron, US Air Force
   * Spring 2017 to Fall 2019
   * Led a Flight consisting of 70+ airmen across 4+ directorates in research, capabilities, and IT support
@@ -102,7 +108,7 @@ Service and Leadership
   * Led an interdisciplinary team of 40 cadets to operate a secure network for the NSA Cyber Defense Competition
 
 Other Experience
-======
+------
 * Rapid Capability Scripter, Air Force Red Team (57th Information Aggressor Squadron), US Air Force
   * Winter 2017/2018
   * Delivered 28 new capabilities to simulate adversary behavior for large scale war games (RED FLAG)

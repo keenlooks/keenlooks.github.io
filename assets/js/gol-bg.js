@@ -8,6 +8,10 @@
      - freezes when the board stabilizes; only re-seeds if it dies out
      - requestAnimationFrame auto-pauses when the tab is hidden
      - honors prefers-reduced-motion (renders one static frame, no animation)
+     - a "Pause background" button in the footer (#gol-pause) stops and
+       resumes it; the choice is remembered in localStorage ('gol-bg-paused')
+       and announced to the 404 page's own animation (gol-404.js) with a
+       'gol-bg-pause' event on document
    Random seed on every load.
    ========================================================================== */
 (function () {
@@ -137,7 +141,7 @@
     if (w === lastW && Math.abs(h - lastH) < 140) return;
     lastW = w; lastH = h;
     clearTimeout(rt);
-    rt = setTimeout(function () { resize(); setColor(); draw(); start(); }, 200);
+    rt = setTimeout(function () { resize(); setColor(); draw(); if (!paused) start(); }, 200);
   });
 
   resize();
@@ -145,11 +149,35 @@
   draw();
 
   var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // Paused: a stored choice wins; with none, reduced motion starts paused.
+  var stored = null;
+  try { stored = localStorage.getItem('gol-bg-paused'); } catch (e) {}
+  var paused = stored === '1' || (stored !== '0' && !!reduced);
+
+  var pauseBtn = document.getElementById('gol-pause');
+  function syncBtn() {
+    if (!pauseBtn) return;
+    pauseBtn.textContent = paused ? 'Resume background' : 'Pause background';
+  }
+  function setPaused(on, remember) {
+    paused = !!on;
+    if (remember) { try { localStorage.setItem('gol-bg-paused', paused ? '1' : '0'); } catch (e) {} }
+    if (paused) stop(); else start();
+    syncBtn();
+    try { document.dispatchEvent(new CustomEvent('gol-bg-pause', { detail: { paused: paused } })); } catch (e) {}
+  }
+  window.golBgPaused = function () { return paused; };
+  if (pauseBtn) {
+    pauseBtn.hidden = false;
+    pauseBtn.addEventListener('click', function () { setPaused(!paused, true); });
+  }
+  syncBtn();
+
   if (reduced) {
     canvas.style.transition = 'none';
     canvas.style.opacity = '1';
   } else {
     setTimeout(function () { canvas.style.opacity = '1'; }, 40); // gentle fade-in
-    start();
   }
+  if (!paused) start();
 })();

@@ -66,14 +66,14 @@
     {% if post.excerpt and site.read_more != 'enabled' %}
     <br>{{ post.excerpt | markdownify }}
     {% elsif post.excerpt and site.read_more == 'enabled' and post.paperurl %}
-    <br>{{ post.excerpt | markdownify | remove: '<p>' | remove: '</p>' }}<strong><a href="{{ base_path }}{{ post.url }}" rel="permalink"> Get details</a></strong> or <strong><a href=" {{ post.paperurl }} ">download paper</a></strong>
+    <br>{{ post.excerpt | markdownify | remove: '<p>' | remove: '</p>' }}<strong><a href="{{ base_path }}{{ post.url }}" rel="permalink"> Get details</a></strong> or <strong><a href="{{ post.paperurl }}">download paper</a></strong>
     {% elsif post.excerpt and site.read_more == 'enabled' %}
     <br>{{ post.excerpt | markdownify | remove: '<p>' | remove: '</p>' }}<strong><a href="{{ base_path }}{{ post.url }}" rel="permalink"> Get details</a></strong>
     {% endif %}
     <!-- {% if post.excerpt and site.read_more != 'enabled' %}
     <p class="archive__item-excerpt" itemprop="description">{{ post.excerpt | markdownify }}</p>
     {% elsif post.excerpt and site.read_more == 'enabled' and post.paperurl %}
-    <p class="archive__item-excerpt" itemprop="description">{{ post.excerpt | markdownify | remove: '<p>' | remove: '</p>' }}<strong><a href="{{ base_path }}{{ post.url }}" rel="permalink"> Get details</a></strong> or <strong><a href=" {{ post.paperurl }} ">download paper</a></strong></p>
+    <p class="archive__item-excerpt" itemprop="description">{{ post.excerpt | markdownify | remove: '<p>' | remove: '</p>' }}<strong><a href="{{ base_path }}{{ post.url }}" rel="permalink"> Get details</a></strong> or <strong><a href="{{ post.paperurl }}">download paper</a></strong></p>
     {% elsif post.excerpt and site.read_more == 'enabled' %}
     <p class="archive__item-excerpt" itemprop="description">{{ post.excerpt | markdownify | remove: '<p>' | remove: '</p>' }}<strong><a href="{{ base_path }}{{ post.url }}" rel="permalink"> Get details</a></strong></p>
     {% endif %} -->
@@ -84,7 +84,7 @@
       <p>Recommended citation: {{ post.citation }} </p> 
     {% endif %}-->
     <!-- {% if post.paperurl %}
-      <p>Download <a href=" {{ post.paperurl }} "><u>here</u></a></p>
+      <p>Download <a href="{{ post.paperurl }}"><u>here</u></a></p>
     {% endif %} -->
 
   </article>

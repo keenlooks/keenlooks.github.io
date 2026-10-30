@@ -389,3 +389,49 @@ select:focus {
 #goog-wm-sb {
   @extend .btn;
 }
+
+/* Tool pages on touch screens: primary buttons, option labels and
+   disclosures get a 40 px tap height (they were 20 to 34 px). body.tool-page
+   comes from `tool_page: true` (_config.yml defaults, _layouts/default.html).
+   Buttons are matched by each tool's id prefix so the PDF editor's own
+   toolbar is left alone. */
+@media (pointer: coarse) {
+  body.tool-page .page__content {
+    button[id^="df-"],
+    button[id^="bond-"],
+    button[id^="bayes-"],
+    button[id^="timing-"],
+    button[id^="qs-"],
+    button[id^="it-"],
+    button[id^="loan-"],
+    button[id^="div-"] {
+      min-height: 40px;
+    }
+
+    label.df-check,
+    .bond-modes > label,
+    label.bond-check {
+      min-height: 40px;
+      align-items: center;
+    }
+
+    details > summary {
+      box-sizing: border-box;
+      min-height: 40px;
+      padding-top: 9px;
+      padding-bottom: 9px;
+    }
+  }
+
+  /* The Image Studio cutout overlay is hoisted to <body> by
+     imagetools-cutout.js, outside .page__content, so its buttons are
+     matched here without that scope. */
+  body.tool-page #it-cut button {
+    min-height: 40px;
+  }
+
+  body.tool-page .it-cut__x {
+    min-width: 40px;
+    min-height: 40px;
+  }
+}

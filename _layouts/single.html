@@ -28,7 +28,8 @@ layout: default
     <div class="page__inner-wrap">
       {% unless page.header.overlay_color or page.header.overlay_image %}
         <header>
-          {% if page.title %}<h1 class="page__title" itemprop="headline">{{ page.title | markdownify | remove: "<p>" | remove: "</p>" }}</h1>{% endif %}
+          {% comment %} hide_page_title: the page prints its own h1 (/locator/, /pdftools/; set in _config.yml defaults) {% endcomment %}
+          {% if page.title %}{% unless page.hide_page_title %}<h1 class="page__title" itemprop="headline">{{ page.title | markdownify | remove: "<p>" | remove: "</p>" }}</h1>{% endunless %}{% endif %}
           {% if page.read_time %}
             <p class="page__meta"><i class="fa fa-clock-o" aria-hidden="true"></i> {% include read-time.html %}</p>
           {% endif %}
@@ -55,14 +56,6 @@ layout: default
         {% endif %} -->
         
              
-        <!-- {% if page.citation and page.paperurl %}
-          <p>Recommended citation: {{ page.citation }} <a href="{{ page.paperurl }}"><u>{{ page.paperurl }}</u></a></p>
-        {% elsif page.citation %}
-          <p>Recommended citation: {{ page.citation }} </p>
-        {% endif %} -->
-        {% if post.paperurl %}
-          <p>Download <a href=" {{ post.paperurl }} "><u>here</u></a></p>
-        {% endif %}
     
         </header>
       {% endunless %}

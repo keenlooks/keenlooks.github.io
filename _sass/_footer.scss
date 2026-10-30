@@ -121,6 +121,34 @@
   opacity: 0.5;
 }
 
+/* "Pause background" (the ambient Game of Life, assets/js/gol-bg.js): a
+   text button that reads like the colophon links. gol-bg.js unhides it. */
+.site-footer__bgtoggle {
+  margin: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+
+  /* 44 px tap target on phones */
+  @media (max-width: 768px), (pointer: coarse) {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+}
+
+.site-footer__bgtoggle[hidden] {
+  display: none;
+}
+
 .site-footer__copyright {
   /* full footer colour: the 0.7 opacity it had fell below AA in light mode */
   opacity: 1;

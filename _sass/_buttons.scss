@@ -151,3 +151,15 @@
     font-size: $type-size-7;
   }
 }
+
+/* Share buttons on paper and talk pages: a 40 px tap height on touch
+   screens (they were 36x31). */
+@media (pointer: coarse) {
+  .page__share .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 40px;
+    min-height: 40px;
+  }
+}

@@ -189,6 +189,23 @@
     return true;
   }
 
+  /* Typo match inside ONE title word that starts with the same letter and
+     is at most two letters longer: "malwre" finds "malware". */
+  function fuzzy(e, w) {
+    for (var j = 0; j < e._tw.length; j++) {
+      var t = e._tw[j];
+      if (t.charAt(0) === w.charAt(0) && t.length <= w.length + 2 && subseq(t, w)) return true;
+    }
+    return false;
+  }
+
+  /* a query word counts only when it holds a letter or a digit: a bare
+     "&" (as in the card title "Diversification & Risk") matched nothing
+     and so sank the whole query */
+  var WORDCH = (function () {
+    try { return new RegExp('[\\p{L}\\p{N}]', 'u'); } catch (e) { return /[0-9a-z\u00c0-\uffff]/; }
+  })();
+
   function prep(e) {
     if (e._t === undefined) {
       e._t = norm(e.title);
@@ -206,10 +223,10 @@
      queryResults can drop those hits when real matches exist. */
   function scoreEntry(e, words) {
     prep(e);
-    var total = 0;
+    var total = 0, anchored = false;
     e._weak = false;
     for (var i = 0; i < words.length; i++) {
-      var w = words[i], s = 0;
+      var w = words[i], s = 0, loose = false;
       var pre = false;
       for (var j = 0; j < e._tw.length; j++) {
         if (e._tw[j].indexOf(w) === 0) { pre = true; break; }
@@ -219,16 +236,31 @@
         if (e._t.indexOf(w) === 0) s += 6; /* leading word */
       } else if (e._t.indexOf(w) >= 0) {
         s = 14;
-      } else if (subseq(e._t, w)) {
+      } else if (fuzzy(e, w)) {
         s = 5;
+      } else if (subseq(e._t, w)) {
+        s = 3; loose = true;
       }
-      var subOnly = (s === 5);
+      var subOnly = (s === 5 || s === 3);
       /* desc + keys, lower weight than the title */
-      if (e._h.indexOf(' ' + w) >= 0) { s += 8; subOnly = false; }
-      else if (e._h.indexOf(w) >= 0) { s += 4; subOnly = false; }
+      if (e._h.indexOf(' ' + w) >= 0) { s += 8; subOnly = false; loose = false; }
+      else if (e._h.indexOf(w) >= 0) { s += 4; subOnly = false; loose = false; }
       if (s === 0) return 0; /* every query word must match somewhere */
+      /* letters of a word of four or more scattered across the whole
+         title never carry an entry on their own: "planes" found PDF
+         Toolbench and "white" a 2020 talk (audit 2026-10-29); with another
+         real hit they still help ("robust malwre detection" on the 404) */
+      if (!loose || w.length < 4) anchored = true;
       if (subOnly) e._weak = true;
       total += s;
+    }
+    if (!anchored) return 0;
+    /* the whole multi-word query as a phrase in the title or the keys:
+       "where am i" is the locator's, not the loan page's ("am" also
+       starts "amortization") */
+    if (words.length > 1) {
+      var ph = words.join(' ');
+      if (e._t.indexOf(ph) >= 0 || e._h.indexOf(' ' + ph) >= 0) total += 20;
     }
     return total;
   }
@@ -282,8 +314,10 @@
   }
 
   function queryResults(q) {
-    var words = norm(q).split(/\s+/).filter(function (w) { return w.length; });
-    if (!words.length) return emptyResults();
+    var raw = norm(q).split(/\s+/).filter(function (w) { return w.length; });
+    if (!raw.length) return emptyResults();
+    var words = raw.filter(function (w) { return WORDCH.test(w); });
+    if (!words.length) return [];
     var scored = [];
     var all = (index || []).concat(ACTIONS);
     var strong = 0;

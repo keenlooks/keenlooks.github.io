@@ -30,12 +30,16 @@ sitemap: false
   {%- comment -%} Extra search words for queries a visitor types that are not in the
       title or description (fresh-eyes audit 2026-10-14). {%- endcomment -%}
   {%- assign keys = p.search_keys | default: "" -%}
+  {%- assign ptitle = p.title -%}
   {%- case p.url -%}
+    {%- comment -%} the homepage's own title is "About me", so "home" and
+        "keane" missed it (audit 2026-10-29) {%- endcomment -%}
+    {%- when "/" -%}{%- assign ptitle = "Keane Lucas (home)" -%}{%- assign keys = "home homepage about me start main" -%}
     {%- when "/cv/" -%}{%- assign keys = "resume curriculum vitae experience education" -%}
     {%- when "/terms/" -%}{%- assign keys = "privacy policy data analytics cookies" -%}
     {%- when "/locator/" -%}{%- assign keys = "locator location latency light where am i ping geolocation" -%}
   {%- endcase -%}
-  {%- capture item -%}{"title":{{ p.title | jsonify }},"url":{{ p.url | jsonify }},"kind":{{ kind | jsonify }},"desc":{{ d | jsonify }},"keys":{{ keys | jsonify }}}{%- endcapture -%}
+  {%- capture item -%}{"title":{{ ptitle | jsonify }},"url":{{ p.url | jsonify }},"kind":{{ kind | jsonify }},"desc":{{ d | jsonify }},"keys":{{ keys | jsonify }}}{%- endcapture -%}
   {%- unless first -%}{%- assign out = out | append: "," -%}{%- endunless -%}
   {%- assign first = false -%}
   {%- assign out = out | append: item -%}
@@ -53,7 +57,10 @@ sitemap: false
 {%- for p in site.talks -%}
   {%- if p.title == nil or p.title == "" -%}{%- continue -%}{%- endif -%}
   {%- if p.search == false -%}{%- continue -%}{%- endif -%}
-  {%- capture d -%}{{ p.venue }}{%- if p.date -%}, {{ p.date | date: "%Y" }}{%- endif -%}{%- endcapture -%}
+  {%- comment -%} the year only when the venue does not already carry it
+      ("... Multi-Agent Systems 2022, 2022", audit 2026-10-29) {%- endcomment -%}
+  {%- assign ty = p.date | date: "%Y" -%}
+  {%- capture d -%}{{ p.venue }}{%- if p.date -%}{%- assign vs = p.venue | append: "" -%}{%- unless vs contains ty -%}, {{ ty }}{%- endunless -%}{%- endif -%}{%- endcapture -%}
   {%- assign d = d | strip_html | strip_newlines | truncate: 100 -%}
   {%- capture k -%}{{ p.venue | strip_html }} {{ p.location }} {{ p.type }} {{ p.date | date: "%Y" }}{%- endcapture -%}
   {%- capture item -%}{"title":{{ p.title | jsonify }},"url":{{ p.url | jsonify }},"kind":"talk","desc":{{ d | jsonify }},"keys":{{ k | strip_newlines | jsonify }}}{%- endcapture -%}

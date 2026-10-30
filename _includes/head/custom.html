@@ -25,10 +25,9 @@
 <meta name="theme-color" content="#141414" media="(prefers-color-scheme: dark)">
 <link rel="stylesheet" href="{{ base_path }}/assets/css/academicons.css?v={{ site.time | date: '%s' }}"/>
 
-<!-- Source Sans 3 (site typeface) -->
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
+<!-- Source Sans 3 (site typeface), self-hosted: @font-face in _sass/_base.scss,
+     files in assets/fonts/source-sans-3/. The Latin subset is on every page. -->
+<link rel="preload" href="{{ base_path }}/assets/fonts/source-sans-3/source-sans-3-latin.woff2" as="font" type="font/woff2" crossorigin>
 
 {% if page.math %}
 <!-- MathJax is loaded ONLY on pages that opt in with `math: true` front matter.
@@ -40,12 +39,14 @@
     tex2jax: {
       inlineMath: [ ['$','$'], ["\\(","\\)"] ],
       processEscapes: true
-    }
+    },
+    MathMenu: { showRenderer: false }
   });
 </script>
-<!-- Pinned to one exact MathJax file with Subresource Integrity (latest.js fetched whatever 2.x was newest).
-     The hash is cdnjs's own published SRI for 2.7.9/MathJax.js. -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.9/MathJax.js?config=TeX-MML-AM_CHTML" integrity="sha512-M36RUChWzAh1veeenRZFql7HydLEnkYmoloiCvVrhz402UZgKI93qkV7SsaxtVKdN95Wzajh39ysrXCq34NTsg==" crossorigin="anonymous" referrerpolicy="no-referrer" async></script>
+<!-- MathJax 2.7.9 served from this site (assets/js/mathjaxlib/, Apache-2.0, see its
+     VENDOR-LICENSES.md): the loader and every file it fetches afterwards come from the
+     same pinned copy. Only the CommonHTML output ships, so the renderer menu is hidden. -->
+<script src="{{ base_path }}/assets/js/mathjaxlib/MathJax.js?config=TeX-MML-AM_CHTML" async></script>
 {% endif %}
 
 <!-- Conway's Game of Life: subtle animated background (deferred; non-blocking) -->
@@ -221,23 +222,29 @@
       });
       document.body.appendChild(btn);
 
-      /* Phones: the fixed theme button sits inside the reading column, so it
-         tucks away while the visitor scrolls down and comes back on a scroll
-         up, near the top, or once scrolling has stopped. On ordinary pages it
-         also stays tucked while it would sit over a slider. */
+      /* Phones (portrait, and landscape: a short touch screen): the fixed
+         theme button sits inside the reading column, so it tucks away while
+         the visitor scrolls down and comes back on a scroll up, near the top,
+         or once scrolling has stopped. On ordinary pages it also stays tucked
+         while it would sit over a control (a slider, button, tab, field). */
       (function () {
         if (!window.matchMedia) return;
-        var phone = window.matchMedia('(max-width: 768px)');
+        var phone = window.matchMedia('(max-width: 768px), (pointer: coarse) and (max-height: 500px)');
         var immersive = !!document.querySelector('.life-app');
         var lastY = window.scrollY || 0;
         var restTimer = null;
+        var CONTROLS = 'input:not([type="hidden"]), button, select, textarea, a.btn, [role="tab"], [role="button"], summary';
         function overSlider() {
           if (immersive) return false;
           var b = btn.getBoundingClientRect();
-          var ranges = document.querySelectorAll('input[type="range"]');
-          for (var i = 0; i < ranges.length; i++) {
-            var r = ranges[i].getBoundingClientRect();
-            if (r.width && r.left < b.right + 6 && r.right > b.left - 6 && r.top < b.bottom + 6 && r.bottom > b.top - 6) return true;
+          var els = document.querySelectorAll(CONTROLS);
+          for (var i = 0; i < els.length; i++) {
+            var el = els[i];
+            if (el === btn || btn.contains(el)) continue;
+            /* other fixed chrome (the chat bar, the palette) is not page content */
+            if (el.closest && el.closest('#chat-widget, .cmdk, #life-egg, #life-link, .masthead')) continue;
+            var r = el.getBoundingClientRect();
+            if (r.width && r.height && r.left < b.right + 6 && r.right > b.left - 6 && r.top < b.bottom + 6 && r.bottom > b.top - 6) return true;
           }
           return false;
         }

@@ -55,7 +55,8 @@
     border-bottom: 1px solid $border-color;
   }
 
-  p, li, dl {
+  // :where() keeps this at (0,0,1) so a page's own single-class small-print rule (credits, hints, captions) wins
+  @at-root :where(.page__content) p, :where(.page__content) li, :where(.page__content) dl {
     font-size: 1em;
   }
 

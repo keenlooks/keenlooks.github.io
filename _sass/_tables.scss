@@ -15,9 +15,21 @@ table {
   }
 }
 
+/* a grey tint, not the theme's near-white: the site is dark by default and its
+   header text is light, so a solid light fill made the header unreadable */
 thead {
-  background-color: $lighter-gray;
+  background-color: rgba(127, 127, 127, 0.14);
   border-bottom: 1px solid $light-gray;
+}
+
+/* Long unbroken inline code (URLs, hashes) may wrap anywhere, so a table cell or a
+   paragraph holding one fits a phone instead of widening the whole page; a long bare
+   URL in running text breaks only when it would overflow. */
+.page__content {
+  overflow-wrap: break-word;
+}
+.page__content code {
+  overflow-wrap: anywhere;
 }
 
 th {

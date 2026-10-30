@@ -48,6 +48,28 @@
   }
 }
 
+/* Touch screens: a 40 px search button (it was 34 px), and the nav's
+   reserved slot widened to match. */
+@media (pointer: coarse) {
+  .greedy-nav {
+    margin-right: 2.6rem;
+  }
+
+  #palette-btn {
+    width: 2.5rem;
+    height: 2.5rem;
+  }
+}
+
+/* Below 360 px the nav's 250 px min-width would push the hamburger under
+   the widened search button; let the nav shrink instead (greedy-nav then
+   moves one more link into the menu). */
+@media (pointer: coarse) and (max-width: 359px) {
+  .greedy-nav {
+    min-width: 0;
+  }
+}
+
 /* Voyage's dark-sky light mode re-inks the masthead links by hand; the
    search button sits on the same sky, so it follows the same ink. */
 body.voy-darksky #palette-btn {

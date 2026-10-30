@@ -1,8 +1,8 @@
 ---
 permalink: /terms/
 title: "Terms and Privacy Policy"
-description: "What this site collects and where your data goes: analytics, the research chat, the Observatory's data relay, and tools that never upload your files."
-modified: 2026-10-27
+description: "What this site collects and where your data goes: analytics, the research chat, the Observatory, Located by Light, and tools that never upload your files."
+modified: 2026-10-29
 ---
 
 {% include base_path %}
@@ -21,11 +21,11 @@ I use Google Analytics (GA4) to see which pages people visit and roughly where v
 
 The "Ask About My Research" box at the bottom of most pages is an AI assistant. When you send a message:
 
-* The text of that message goes to a small Cloudflare Worker that I run, which passes it to Anthropic's API (Claude) together with a fixed description of my work, and returns the reply. Your browser's language setting (a short code such as <span translate="no" class="notranslate">en-US</span>) goes with it, so the assistant can answer in your language. The Worker does not store your messages. Cloudflare and Anthropic process the request as described in the [Cloudflare Privacy Policy](https://www.cloudflare.com/privacypolicy/) and the [Anthropic Privacy Policy](https://www.anthropic.com/legal/privacy).
-* The conversation is saved in your own browser's local storage, so it follows you from page to page on this site. It stays there until you press the reset button in the chat header (or clear this site's data in your browser). It is not sent anywhere else.
+* The text of that message, with the recent part of the conversation shown in the chat (at most the last five exchanges, so the assistant can follow up on them), goes to a small Cloudflare Worker that I run, which passes it to Anthropic's API (Claude) together with a fixed description of my work, and returns the reply. Your browser's language setting (a short code such as <span translate="no" class="notranslate">en-US</span>) goes with it, so the assistant can answer in your language. The Worker does not store your messages. Cloudflare and Anthropic process the request as described in the [Cloudflare Privacy Policy](https://www.cloudflare.com/privacypolicy/) and the [Anthropic Privacy Policy](https://www.anthropic.com/legal/privacy).
+* The conversation is saved in your own browser's local storage, so it follows you from page to page on this site. It stays there until you press the reset button in the chat header (or clear this site's data in your browser). Apart from the recent exchanges sent with each new message, it is not sent anywhere else.
 * Please do not type anything private into the chat.
 
-Replies are formatted with <span translate="no" class="notranslate">[marked](https://github.com/markedjs/marked)</span> (MIT licence), served from this site.
+Replies are formatted with <span translate="no" class="notranslate">[marked](https://github.com/markedjs/marked)</span> (MIT license), served from this site.
 
 ## The tools run in your browser
 
@@ -33,7 +33,7 @@ PDF Toolbench, Image Studio, Diff Checker and QR Studio process your files entir
 
 ## Pages that load live public data
 
-Some interactive pages contact third-party services directly from your browser to load public data. The Observatory, for example, loads live feeds from public scientific and government sources (earthquake, space weather and weather services, among others); those services see your IP address like any website you visit. For the aircraft, flight restriction and GPS notice layers it asks a small Cloudflare Worker that I run, which keeps only the time of the most recent visit (to decide when to refresh its data), not who visited. A few talk pages embed YouTube videos, and YouTube may set cookies when a video loads.
+Some interactive pages contact third-party services directly from your browser to load public data. The Observatory, for example, loads live feeds from public scientific and government sources (earthquake, space weather and weather services, among others); those services see your IP address like any website you visit. For the aircraft, flight restriction and GPS notice layers it asks a small Cloudflare Worker that I run, which keeps only the time of the most recent visit (to decide when to refresh its data), not who visited. Located by Light, when you press its button, times small requests from your browser to about 76 Amazon Web Services and Google Cloud endpoints; those providers see your IP address as any website does, and this site receives nothing. Pages with a YouTube video load YouTube only when you press play; from then on YouTube may set cookies.
 
 ## Contact
 

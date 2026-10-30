@@ -125,6 +125,7 @@
     td, th { border-color: $lt-border; }
   }
   .pagination li a { border-color: $lt-border; }
+  .pagination--pager.disabled { color: #8c8c8c; }
 
   /* Callouts / announcement banners */
   .callout {
