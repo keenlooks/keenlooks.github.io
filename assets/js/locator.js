@@ -506,7 +506,7 @@
     'vpn-frankfurt': { kind: 'vpn', label: 'VPN exit in Frankfurt', exit: { name: 'Frankfurt', lat: 50.11, lon: 8.68 } },
     'vpn-ashburn': { kind: 'vpn', label: 'VPN exit in Ashburn', exit: { name: 'Ashburn, Virginia', lat: 39.04, lon: -77.49 } },
     'vpn-singapore': { kind: 'vpn', label: 'VPN exit in Singapore', exit: { name: 'Singapore', lat: 1.35, lon: 103.82 } },
-    'vpn-saopaulo': { kind: 'vpn', label: 'VPN exit in Sao Paulo', exit: { name: 'Sao Paulo', lat: -23.55, lon: -46.63 } },
+    'vpn-saopaulo': { kind: 'vpn', label: 'VPN exit in S\u00e3o Paulo', exit: { name: 'S\u00e3o Paulo', lat: -23.55, lon: -46.63 } },
     'vpn-nearest': { kind: 'vpn', label: 'VPN exit nearest to me', exit: null },
     'cell': { kind: 'cell', label: 'Cellular (4G/5G)', mean: 35, sd: 12, floor: 15 },
     'hotspot': { kind: 'cell', label: 'Wi-Fi hotspot on a phone', mean: 35, sd: 12, floor: 15, extra: 5 },
@@ -792,6 +792,8 @@
   function signed(v) { var s = fmt1(v); return v > 0.05 ? '+' + s : s; }
   function radiusShown(r) { return fmtInt(P.radiusShownKm(r)); }
   var provName = P.providerName;
+  // provider and region id as HTML, kept away from page translators (the table cells already are)
+  function codeHtml(e) { return '<span class="notranslate" translate="no">' + provName(e.provider) + ' ' + esc(e.region) + '</span>'; }
   // The geostationary simulation names no place whatever its radius (its lesson is that
   // location by light is hopeless there); every other fit follows P.place's rule.
   function placeOf(fit, simId) { return P.place(fit, !!simId && P.SIMS[simId].kind === 'geo'); }
@@ -1287,14 +1289,14 @@
     var fit = S.fit, near = fit.near, c = classification(), pl = placeOf(fit);
     var h = esc(P.cap(pl.text));
     var body = '<p>The best point is ' + latlon(fit.best.lat, fit.best.lon) + ', about ' + fmtInt(roundKm(near.km)) + ' km from the cloud region at ' +
-      esc(near.ep.metro) + ' (' + provName(near.ep.provider) + ' ' + esc(near.ep.region) + '). ' + fmtInt(fit.answered) + ' of ' + fmtInt(N) + ' regions answered.' +
+      esc(near.ep.metro) + ' (' + codeHtml(near.ep) + '). ' + fmtInt(fit.answered) + ' of ' + fmtInt(N) + ' regions answered.' +
       (pl.kind === 'none' ? ' The likely region is too wide to name a place, so the map marks no point.' : '') + '</p>' +
       '<ul><li>' + esc(hopLine(fit)) + '</li>' +
       '<li>Routes to your ' + fmtInt(fit.fitted) + ' nearest regions ran about ' + fmt2(fit.best.k) + ' times longer than straight lines.</li>' +
       '<li>' + esc(c.verdict) + ', because ' + esc(c.rule) + '. ' + esc(evidenceLine(c)) +
       (c.alternatives.length ? ' Another pattern also fits: ' + c.alternatives.map(function (k) { return KIND_WORDS[k]; }).join(', ') + '.' : '') + '</li></ul>';
     var ex = P.explainResiduals(EPS, fit, 3, S.meas);
-    if (ex.length) body += '<p class="loc-small">Largest misfits among the ' + fmtInt(fit.fitted) + ' fitted regions:</p><ul class="loc-small">' + ex.map(function (x) { return '<li>' + esc(x.text) + '</li>'; }).join('') + '</ul>';
+    if (ex.length) body += '<p class="loc-small">Largest misfits among the ' + fmtInt(fit.fitted) + ' fitted regions:</p><ul class="loc-small">' + ex.map(function (x) { return '<li>' + esc(x.text).replace(/\((AWS|Google)\)/, '(<span class="notranslate" translate="no">$1</span>)') + '</li>'; }).join('') + '</ul>';
     return { kicker: 'Result', h: h, body: body };
   }
 
@@ -1336,7 +1338,7 @@
 
   function simCardHtml() {
     var sim = S.sim, def = P.SIMS[sim.id], f = sim.fit;
-    var pill = '<span class="loc-pill">Simulated</span>modelled, not measured';
+    var pill = '<span class="loc-pill">Simulated</span>modeled, not measured';
     if (!f.ok) {
       return { kicker: pill, h: 'Simulated: ' + esc(def.label) + '. No place on Earth fits', body: '<p>' + simText(sim).model + '</p>' + backBtn() };
     }
@@ -1381,7 +1383,7 @@
   function renderMath() {
     var i0 = fastest(), fit = S.fit && S.fit.ok ? S.fit : null;
     if (i0 < 0) { ['lm-hard', 'lm-fibre', 'lm-solve', 'lm-region'].forEach(function (id) { setLive(id, ''); }); $('lm-example').hidden = true; return; }
-    var e = EPS[i0], m = S.meas[i0], name = esc(e.metro) + ' (' + provName(e.provider) + ' ' + esc(e.region) + ')';
+    var e = EPS[i0], m = S.meas[i0], name = esc(e.metro) + ' (' + codeHtml(e) + ')';
     var hard = P.hardBoundKm(m.rtt, S.slackMs), b = fit ? fit.best.b : 0;
     setLive('lm-hard', 'Your nearest region by time was ' + name + ': fastest round trip ' + fmt1(m.rtt) + ' ms, so it is at most ' + hardText(hard) + ' away' +
       (S.slackMs >= 0.9 ? ' (your browser\'s timer ticks in whole milliseconds, so each light-in-vacuum bound was widened by 1 ms of round trip, about 150 km)' : '') + '.');
@@ -1408,7 +1410,7 @@
     // the worked example uses the fastest region whose glass distance is still positive
     var order = answeredOrder(S.meas), ie = i0, skipped = 0;
     for (var t = 0; t < order.length; t++) { if (S.meas[order[t]].rtt / 2 > b) { ie = order[t]; break; } skipped++; }
-    e = EPS[ie]; m = S.meas[ie]; name = esc(e.metro) + ' (' + provName(e.provider) + ' ' + esc(e.region) + ')'; hard = P.hardBoundKm(m.rtt, S.slackMs);
+    e = EPS[ie]; m = S.meas[ie]; name = esc(e.metro) + ' (' + codeHtml(e) + ')'; hard = P.hardBoundKm(m.rtt, S.slackMs);
     var r = fit.residuals[ie], half = m.rtt / 2;
     var ex = $('lm-example');
     ex.innerHTML = '<strong>One region worked through.</strong> Light covers ' + C_TXT + ' km per millisecond in vacuum and ' + VF_TXT + ' km per millisecond in glass. ' +
@@ -1476,7 +1478,7 @@
     });
     if (!(S.fit && S.fit.ok)) { out.innerHTML = '<p class="loc-p loc-muted">Run the measurement first; the simulations reuse its samples.</p>'; return; }
     if (!S.sim) { out.innerHTML = '<p class="loc-p loc-muted">Showing your real measurement. Pick a button to see what would change.</p>'; return; }
-    var f = S.sim.fit, def = P.SIMS[S.sim.id], s = '<p class="loc-p"><span class="loc-pill">Simulated</span>' + esc(def.label) + ' (modelled, not measured): ';
+    var f = S.sim.fit, def = P.SIMS[S.sim.id], s = '<p class="loc-p"><span class="loc-pill">Simulated</span>' + esc(def.label) + ' (modeled, not measured): ';
     if (f.ok) {
       var mv = P.haversine(S.fit.best.lat, S.fit.best.lon, f.best.lat, f.best.lon), t = simText(S.sim, mv), pl = placeOf(f, S.sim.id);
       var b = 'shared delay b ' + fmt1(S.fit.best.b) + ' ms on your measurement, ' + fmt1(f.best.b) + ' ms simulated.';

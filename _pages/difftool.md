@@ -11,28 +11,28 @@ description: "A private, in-browser diff checker by Keane Lucas: compare two pie
 <div class="df-wrap tex2jax_ignore">
 
   <p class="df-intro">
-    Compare two pieces of text entirely in your browser. Paste into the boxes, drop files
-    onto them, or drop PDFs and the text is extracted locally, page by page. Nothing you
-    put here is uploaded anywhere. Ctrl+Enter (or Cmd+Enter) compares at any time.
+    Compare two pieces of text entirely in your browser. <span id="df-intro-load">Paste into the boxes, drop files
+    onto them, or drop PDFs and the text is extracted locally, page by page.</span> Nothing you
+    put here is uploaded anywhere. <span id="df-intro-keys">Ctrl+Enter (or Cmd+Enter) compares at any time.</span>
   </p>
 
   <div class="df-inputs">
     <div class="df-pane" id="df-pane-a">
       <div class="df-pane__head">
-        <span class="df-pane__label">Original</span>
-        <span class="df-pane__file notranslate" id="df-file-a" translate="no"></span>
+        <span class="df-pane__label" id="df-label-a">Original</span>
+        <span class="df-pane__file" id="df-file-a"></span>
         <button id="df-choose-a" class="df-btn df-btn--sm" type="button">Choose file</button>
       </div>
-      <textarea id="df-text-a" class="df-ta" spellcheck="false" autocomplete="off" placeholder="Paste the original text, or drop a text file or PDF here"></textarea>
+      <textarea id="df-text-a" class="df-ta" aria-labelledby="df-label-a" spellcheck="false" autocomplete="off" placeholder="Paste the original text, or drop a text file or PDF here"></textarea>
       <input id="df-fileinput-a" type="file" hidden style="display:none!important">
     </div>
     <div class="df-pane" id="df-pane-b">
       <div class="df-pane__head">
-        <span class="df-pane__label">Changed</span>
-        <span class="df-pane__file notranslate" id="df-file-b" translate="no"></span>
+        <span class="df-pane__label" id="df-label-b">Changed</span>
+        <span class="df-pane__file" id="df-file-b"></span>
         <button id="df-choose-b" class="df-btn df-btn--sm" type="button">Choose file</button>
       </div>
-      <textarea id="df-text-b" class="df-ta" spellcheck="false" autocomplete="off" placeholder="Paste the changed text, or drop a text file or PDF here"></textarea>
+      <textarea id="df-text-b" class="df-ta" aria-labelledby="df-label-b" spellcheck="false" autocomplete="off" placeholder="Paste the changed text, or drop a text file or PDF here"></textarea>
       <input id="df-fileinput-b" type="file" hidden style="display:none!important">
     </div>
   </div>
@@ -61,6 +61,21 @@ description: "A private, in-browser diff checker by Keane Lucas: compare two pie
 
   <p class="df-stats" id="df-stats" aria-live="polite"></p>
   <div id="df-out" class="df-out notranslate" translate="no"></div>
+
+  <!-- Password prompt for encrypted PDFs (replaces window.prompt, which showed the password) -->
+  <dialog class="df-dialog" id="df-pass-dialog" aria-labelledby="df-pass-head" aria-describedby="df-pass-msg">
+    <form id="df-pass-form" method="dialog">
+      <p class="df-dialog__head" id="df-pass-head"><strong>Password required</strong></p>
+      <p class="df-dialog__msg" id="df-pass-msg"></p>
+      <label class="df-dialog__field" for="df-pass-input">Password</label>
+      <input id="df-pass-input" class="df-dialog__input" type="password" autocomplete="off" spellcheck="false">
+      <p class="df-dialog__hint">The password is used only on your device, to open the file.</p>
+      <div class="df-dialog__foot">
+        <button id="df-pass-cancel" class="df-btn" type="button">Skip this file</button>
+        <button id="df-pass-go" class="df-btn df-btn--accent" type="submit">Unlock</button>
+      </div>
+    </form>
+  </dialog>
 
   <p class="df-privacy">100% in-browser. Your text and files are never uploaded. (I use Google Analytics to see whether anyone visits this page, but it cannot see your content.)</p>
   <p class="df-privacy" style="margin-top:0.35rem">A caveat: this is a personal side project and I have not tested it exhaustively; for anything important, double-check the result rather than trusting it blindly. Found a problem? <a class="df-report" href="mailto:{{ site.author.email }}?subject=Diff%20Checker%20problem">Tell me</a>.</p>
@@ -143,24 +158,33 @@ html[data-theme="light"] .df-pane--over { border-color: #34568a; background: rgb
 
 /* ---- diff output ---- */
 /* Restrained, dual-theme tints: additions reuse the site accent, deletions a muted red. */
+/* Colour is never the only cue (WCAG 1.4.1): a changed row also carries a +/- sign and a
+   3px edge in the kind's colour (over 3:1 against the page), and a changed word is
+   underlined as well as tinted. */
 .df-out {
   --df-add-bg: rgba(130,166,204,0.14);
   --df-del-bg: rgba(200,90,90,0.15);
-  --df-add-mk: rgba(130,166,204,0.34);
-  --df-del-mk: rgba(200,90,90,0.34);
+  --df-add-mk: rgba(130,166,204,0.40);
+  --df-del-mk: rgba(200,90,90,0.40);
+  --df-add-edge: #82a6cc;
+  --df-del-edge: #d98080;
 }
 html[data-theme="light"] .df-out {
   --df-add-bg: rgba(52,86,138,0.10);
   --df-del-bg: rgba(180,60,60,0.10);
-  --df-add-mk: rgba(52,86,138,0.22);
-  --df-del-mk: rgba(180,60,60,0.24);
+  --df-add-mk: rgba(52,86,138,0.26);
+  --df-del-mk: rgba(180,60,60,0.28);
+  --df-add-edge: #34568a;
+  --df-del-edge: #b03a3a;
 }
 @media (prefers-color-scheme: light) {
   html:not([data-theme="dark"]) .df-out {
     --df-add-bg: rgba(52,86,138,0.10);
     --df-del-bg: rgba(180,60,60,0.10);
-    --df-add-mk: rgba(52,86,138,0.22);
-    --df-del-mk: rgba(180,60,60,0.24);
+    --df-add-mk: rgba(52,86,138,0.26);
+    --df-del-mk: rgba(180,60,60,0.28);
+    --df-add-edge: #34568a;
+    --df-del-edge: #b03a3a;
   }
 }
 
@@ -197,12 +221,21 @@ html[data-theme="light"] .df-out {
 .df-pair > .df-row { min-width: 0; }
 .df-pair > .df-row + .df-row { border-left: 1px solid rgba(127,127,127,0.3); }
 
-.df-add { background: var(--df-add-bg); }
-.df-del { background: var(--df-del-bg); }
+.df-add { background: var(--df-add-bg); box-shadow: inset 3px 0 0 var(--df-add-edge); }
+.df-del { background: var(--df-del-bg); box-shadow: inset 3px 0 0 var(--df-del-edge); }
+.df-add > .df-pre, .df-del > .df-pre { opacity: 1; font-weight: 700; }
+.df-add > .df-pre { color: var(--df-add-edge); }
+.df-del > .df-pre { color: var(--df-del-edge); }
 .df-empty { background: rgba(127,127,127,0.07); }
-.df-mk { color: inherit; padding: 0; border-radius: 2px; }
-.df-mk-add { background: var(--df-add-mk); }
-.df-mk-del { background: var(--df-del-mk); }
+.df-mk { color: inherit; padding: 0; border-radius: 2px; text-decoration: underline 2px; text-underline-offset: 0.18em; text-decoration-skip-ink: none; }
+.df-mk-add { background: var(--df-add-mk); text-decoration-color: var(--df-add-edge); }
+.df-mk-del { background: var(--df-del-mk); text-decoration-color: var(--df-del-edge); }
+/* <ins>/<del> say "added"/"removed" to screen readers; generated text is never copied */
+.df-mk::before {
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}
+.df-mk-add::before { content: " added: "; }
+.df-mk-del::before { content: " removed: "; }
 
 .df-foldrow { cursor: pointer; background: rgba(127,127,127,0.10); }
 .df-foldrow:hover { background: rgba(127,127,127,0.16); }
@@ -211,6 +244,36 @@ html[data-theme="light"] .df-out {
 .df-foldrow:focus-visible { outline: 2px solid #82a6cc; outline-offset: -2px; }
 html[data-theme="light"] .df-foldrow:focus-visible { outline-color: #34568a; }
 @media (prefers-color-scheme: light) { html:not([data-theme="dark"]) .df-foldrow:focus-visible { outline-color: #34568a; } }
+
+/* ---- password dialog (a native <dialog>: modal, focus kept inside, Escape skips) ---- */
+.df-dialog {
+  width: min(26rem, calc(100vw - 2rem)); padding: 1.1rem 1.2rem 1rem; border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.18); background: #1d2026; color: #e8e8e8;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+}
+.df-dialog::backdrop { background: rgba(0,0,0,0.55); }
+.df-dialog p { margin: 0 0 0.7rem; font-size: 0.95em; line-height: 1.5; }
+.df-dialog__head { font-size: 1.05em; }
+.df-dialog__msg { overflow-wrap: anywhere; }
+.df-dialog__field { display: block; font-size: 0.9em; margin: 0 0 0.3rem; color: inherit; }
+.df-dialog .df-dialog__input {
+  width: 100%; margin: 0 0 0.6rem; padding: 0.5em 0.6em; font: inherit; border-radius: 6px;
+  color: #e8e8e8; background: #141414; border: 1px solid rgba(255,255,255,0.3);
+}
+.df-dialog__hint { font-size: 0.82em !important; color: #b4b4b4; }
+.df-dialog__foot { display: flex; justify-content: flex-end; gap: 0.6rem; flex-wrap: wrap; }
+html[data-theme="light"] .df-dialog { background: #fff; color: #1f2430; border-color: rgba(0,0,0,0.2); }
+html[data-theme="light"] .df-dialog .df-dialog__input { color: #1f2430; background: #fff; border-color: rgba(0,0,0,0.35); }
+html[data-theme="light"] .df-dialog__hint { color: #5c5c5c; }
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .df-dialog { background: #fff; color: #1f2430; border-color: rgba(0,0,0,0.2); }
+  html:not([data-theme="dark"]) .df-dialog .df-dialog__input { color: #1f2430; background: #fff; border-color: rgba(0,0,0,0.35); }
+  html:not([data-theme="dark"]) .df-dialog__hint { color: #5c5c5c; }
+}
+@media (pointer: coarse) {
+  .df-dialog .df-btn { min-height: 44px; }
+  .df-dialog .df-dialog__input { font-size: 16px; min-height: 44px; }   /* 16px: iOS does not zoom on focus */
+}
 
 /* Solid muted colours rather than opacity, so the links in these lines keep their contrast. */
 .df-privacy { font-size: 0.82em; color: #9c9c9c; margin: 1.4rem 0 0; }

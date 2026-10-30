@@ -5,7 +5,8 @@
  * Encoding: qrcode-generator 1.5.0 (Kazuhiko Arase, MIT) — assets/js/qrlib/qrcode.js
  * Decoding: jsQR 1.4.0 (Apache-2.0) — assets/js/qrlib/jsQR.js, with the browser's
  * native BarcodeDetector preferred (camera and image files) where available.
- * BarcodeDetector finds every code in an image; jsQR finds at most one.
+ * BarcodeDetector finds every code in an image; jsQR finds one per pass, so the
+ * file scanner paints each found code out and scans again, then scans in tiles.
  *
  * The preview and both exports are always pure black modules on white,
  * regardless of site theme, so the code stays scannable.
@@ -56,6 +57,9 @@
     tabScan.classList.toggle('qs-tab--on', !gen);
     tabGen.setAttribute('aria-selected', gen ? 'true' : 'false');
     tabScan.setAttribute('aria-selected', gen ? 'false' : 'true');
+    /* roving tabindex: Tab reaches only the selected tab, the arrows move between them */
+    tabGen.tabIndex = gen ? 0 : -1;
+    tabScan.tabIndex = gen ? -1 : 0;
     if (gen) {
       stopCamera('');
       /* the preview canvas was measured while possibly hidden; redraw after layout */
@@ -64,6 +68,17 @@
   }
   tabGen.addEventListener('click', function () { showTab('gen'); });
   tabScan.addEventListener('click', function () { showTab('scan'); });
+  /* ARIA tabs keyboard pattern: Left/Right (wrapping), Home and End move focus and select */
+  tabGen.parentNode.addEventListener('keydown', function (e) {
+    var k = e.key, to = null;
+    if (k === 'ArrowLeft' || k === 'ArrowRight') to = (document.activeElement === tabGen) ? 'scan' : 'gen';
+    else if (k === 'Home') to = 'gen';
+    else if (k === 'End') to = 'scan';
+    if (!to) return;
+    e.preventDefault();
+    showTab(to);
+    (to === 'gen' ? tabGen : tabScan).focus();
+  });
 
   /* ======================= payload builders ======================= */
 
@@ -82,11 +97,17 @@
       .replace(/\r?\n/g, '\\n');
   }
 
+  /* File-name stem: letters (with their combining marks) and digits of any script, NFC,
+     cut to 40 code points so a surrogate pair is never split ("İstanbul ığüşöç" ->
+     "İstanbul-ığüşöç", "山田 太郎" -> "山田-太郎"). Engines without Unicode property
+     escapes keep the old ASCII rule. */
+  var SLUG_RE = /[^A-Za-z0-9]+/g;
+  try { SLUG_RE = new RegExp('[^\\p{L}\\p{M}\\p{N}]+', 'gu'); } catch (e) {}
   function slug(s) {
-    var t = String(s || '').replace(/^[a-z][a-z0-9+.-]*:\/\//i, '')
-      .replace(/[^A-Za-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 40);
+    var t = String(s || '').replace(/^[a-z][a-z0-9+.-]*:\/\//i, '');
+    if (t.normalize) t = t.normalize('NFC');
+    t = t.replace(SLUG_RE, '-').replace(/^-+|-+$/g, '');
+    t = Array.from(t).slice(0, 40).join('').replace(/-+$/, '');
     return t || 'code';
   }
 
@@ -114,13 +135,16 @@
       var u = $('qs-url').value.trim();
       if (!u) return { hint: 'Enter a URL to generate the code.' };
       if (!/^[a-z][a-z0-9+.-]*:/i.test(u)) u = 'https://' + u;
-      return { text: u, name: 'url-' + slug(u) };
+      /* A raw space (or a quote or angle bracket) ends the link in many camera apps:
+         percent-encode just those, as a browser would, and leave the rest as typed
+         (no punycode host, no added slash). */
+      return { text: u.replace(/[\s"<>`]/g, function (c) { return encodeURIComponent(c); }), name: 'url-' + slug(u) };
     }
 
     if (type === 'text') {
       var txt = $('qs-text').value;
       if (!txt.trim()) return { hint: 'Enter some text to generate the code.' };
-      return { text: txt, name: 'text-' + slug(txt.slice(0, 30)) };
+      return { text: txt, name: 'text-' + slug(Array.from(txt).slice(0, 30).join('')) };
     }
 
     if (type === 'wifi') {
@@ -376,6 +400,11 @@
   var detectBusy = false;
   var workCanvas = document.createElement('canvas');
   var workCtx = workCanvas.getContext('2d', { willReadFrequently: true });
+  /* the file decoder runs in steps between which the camera may tick, so each has
+     its own canvas; useCanvas picks the one the jsQR helpers below draw on */
+  var CANVAS = { cam: [workCanvas, workCtx], file: [document.createElement('canvas'), null] };
+  CANVAS.file[1] = CANVAS.file[0].getContext('2d', { willReadFrequently: true });
+  function useCanvas(which) { workCanvas = CANVAS[which][0]; workCtx = CANVAS[which][1]; }
 
   function scanStatus(msg) {
     $('qs-scan-status').textContent = msg;
@@ -389,11 +418,54 @@
 
   function isLink(t) { return /^(https?:\/\/|www\.)/i.test(String(t).trim()); }
 
+  /* Format characters are invisible or reorder what follows them: with a right-to-left
+     override, "https://evil.example/<U+202E>gpj.exe" reads as ".../exe.jpg". The result
+     shows each one as a visible marker such as "<U+202E>" in angle brackets; Copy text
+     still copies the exact decoded string. In plain text (not a link) the zero-width
+     joiner and tag characters stay, since emoji sequences and flags are built from them. */
+  var CF_RE = /[\u00AD\u0600-\u0605\u061C\u06DD\u070F\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u206F\uFEFF\uFFF9-\uFFFB]/g;
+  try { CF_RE = new RegExp('\\p{Cf}', 'gu'); } catch (e) {}
+  function renderDecoded(code, t, link) {
+    code.textContent = '';
+    code.setAttribute('dir', 'ltr');
+    var last = 0, m, c, cp, mk;
+    CF_RE.lastIndex = 0;
+    while ((m = CF_RE.exec(t))) {
+      c = m[0];
+      cp = c.codePointAt ? c.codePointAt(0) : c.charCodeAt(0);
+      if (!link && (cp === 0x200D || (cp >= 0xE0020 && cp <= 0xE007F))) continue;
+      if (m.index > last) code.appendChild(document.createTextNode(t.slice(last, m.index)));
+      mk = document.createElement('span');
+      mk.className = 'qs-cf';
+      mk.textContent = '\u27E8U+' + ('000' + cp.toString(16).toUpperCase()).slice(-Math.max(4, cp.toString(16).length)) + '\u27E9';
+      code.appendChild(mk);
+      last = m.index + c.length;
+    }
+    if (last < t.length) code.appendChild(document.createTextNode(t.slice(last)));
+  }
+
+  /* The host a link really opens, when it is not what the text appears to say: a
+     lookalike Cyrillic or other non-ASCII name (shown in its xn-- form), a
+     "name@" prefix (https://apple.com@evil.example opens evil.example), hidden
+     characters. Empty when the two agree or the text does not parse as a web link. */
+  function realHost(t) {
+    var s = String(t).trim();
+    if (/^www\./i.test(s)) s = 'http://' + s;
+    if (!/^https?:\/\//i.test(s) || typeof URL !== 'function') return '';
+    var u;
+    try { u = new URL(s); } catch (e) { return ''; }
+    var real = (u.hostname || '').replace(/\.$/, '');
+    var shown = s.replace(/^https?:\/\//i, '').split(/[\/?#\\]/)[0]
+      .replace(/:\d*$/, '').replace(/\.$/, '').toLowerCase();
+    return (real && shown !== real) ? real : '';
+  }
+
   /* texts: an array of decoded strings (every code found), a single string,
    * or null/empty for "nothing found". The first result block is the static
    * markup (#qs-decoded, #qs-copy); blocks for further codes are clones. */
-  function showResult(texts) {
+  function showResult(texts, tail) {
     var res = $('qs-result');
+    tail = tail ? ' ' + tail : '';
     if (typeof texts === 'string') texts = [texts];
     if (!texts || !texts.length) {
       res.hidden = true;
@@ -414,55 +486,239 @@
       var lab = blk.querySelector('.qs-item__label');
       lab.hidden = !many;
       lab.textContent = many ? 'Code ' + num(i + 1) + ' of ' + num(texts.length) : '';
-      blk.querySelector('code').textContent = texts[i];
+      var link = isLink(texts[i]);
+      renderDecoded(blk.querySelector('code'), texts[i], link);
+      blk.qsText = texts[i];   /* what Copy text copies: the exact string, no markers */
+      var hostEl = blk.querySelector('.qs-item__host'), host = link ? realHost(texts[i]) : '';
+      if (hostEl) {
+        hostEl.textContent = '';
+        hostEl.hidden = !host;
+        if (host) {
+          var hb = document.createElement('strong');
+          hb.className = 'notranslate';
+          hb.setAttribute('translate', 'no');
+          hb.textContent = host;
+          hostEl.appendChild(document.createTextNode('This link opens the site '));
+          hostEl.appendChild(hb);
+          hostEl.appendChild(document.createTextNode('.'));
+        }
+      }
       blk.querySelector('.qs-copy').textContent = 'Copy text';
       blk.querySelector('.qs-copy').setAttribute('aria-label', many ? 'Copy code ' + (i + 1) : 'Copy text');
-      if (isLink(texts[i])) anyLink = true;
+      if (link) anyLink = true;
     }
     var warn = $('qs-linkwarn');
     warn.textContent = many ? LINKWARN_MANY : LINKWARN_ONE;
     warn.hidden = !anyLink;
     res.hidden = false;
-    if (many) scanStatus('Found ' + num(texts.length) + ' QR codes in that image.');
-    else scanStatus('Decoded ' + num(texts[0].length) + ' character' + (texts[0].length === 1 ? '' : 's') + '.');
+    if (many) scanStatus('Found ' + num(texts.length) + ' QR codes in that image.' + tail);
+    else scanStatus('Decoded ' + num(texts[0].length) + ' character' + (texts[0].length === 1 ? '' : 's') + '.' + tail);
   }
 
-  function jsqrOn(source, w, h) {
-    if (typeof jsQR === 'undefined' || !w || !h) return null;
+  /* Draws source at w x h with the quads in cover (corner lists in 0..1 image
+   * coordinates, codes already found) painted white, so the next pass finds another. */
+  function paintWork(source, w, h, cover) {
     workCanvas.width = w;
     workCanvas.height = h;
     workCtx.drawImage(source, 0, 0, w, h);
+    paintCover(cover, w, h);
+  }
+  function paintCover(cover, w, h) {
+    if (!cover || !cover.length) return;
+    workCtx.fillStyle = '#fff';
+    for (var i = 0; i < cover.length; i++) {
+      workCtx.beginPath();
+      for (var j = 0; j < 4; j++) {
+        if (j) workCtx.lineTo(cover[i][j][0] * w, cover[i][j][1] * h);
+        else workCtx.moveTo(cover[i][j][0] * w, cover[i][j][1] * h);
+      }
+      workCtx.closePath();
+      workCtx.fill();
+    }
+  }
+  /* One jsQR pass over the work canvas, whole (no rect) or one rect [x, y, w, h] of it;
+   * inv: jsQR's inversionAttempts (light-on-dark codes too unless 'dontInvert'). */
+  function jsqrWork(rect, inv) {
     var img;
     try {
-      img = workCtx.getImageData(0, 0, w, h);
+      img = rect ? workCtx.getImageData(rect[0], rect[1], rect[2], rect[3])
+        : workCtx.getImageData(0, 0, workCanvas.width, workCanvas.height);
     } catch (e) {
       return null;
     }
-    var r = jsQR(img.data, w, h, { inversionAttempts: 'attemptBoth' });
+    return jsQR(img.data, img.width, img.height, { inversionAttempts: inv || 'attemptBoth' }) || null;
+  }
+  function jsqrRaw(source, w, h, cover) {
+    if (typeof jsQR === 'undefined' || !w || !h) return null;
+    paintWork(source, w, h, cover);
+    return jsqrWork(null);
+  }
+  function jsqrOn(source, w, h) {
+    useCanvas('cam');
+    var r = jsqrRaw(source, w, h, null);
     return (r && r.data) ? r.data : null;
   }
 
-  /* Try a few downscales: full-res photos are slow AND often decode worse than
-   * a downscaled copy; tiny screenshots decode best untouched. */
-  function decodeImageEl(img) {
+  /* A found code's outline grown by two modules a side (its finder patterns and any
+   * stray edge go too), in 0..1 coordinates of the w x h canvas; (ox, oy) is the
+   * offset of the rect jsQR was given. */
+  function coverQuad(r, w, h, ox, oy) {
+    var L = r.location, pts = [L.topLeftCorner, L.topRightCorner, L.bottomRightCorner, L.bottomLeftCorner];
+    var dim = 17 + 4 * (r.version || 1), f = (dim + 4) / dim, cx = 0, cy = 0, i;
+    ox = ox || 0; oy = oy || 0;
+    for (i = 0; i < 4; i++) { cx += pts[i].x / 4; cy += pts[i].y / 4; }
+    return pts.map(function (p) { return [(ox + cx + (p.x - cx) * f) / w, (oy + cy + (p.y - cy) * f) / h]; });
+  }
+
+  /* Overlapping tiles (x, y, w, h as fractions of the image): halves, quadrants,
+   * thirds; then a 3 x 3 grid, tried only once a tile has found a code. jsQR often
+   * stops after one code of a row of equal codes even when that one is painted out,
+   * and finds the rest when shown a part of the image. */
+  var TILES = [
+    [0, 0, 0.6, 1], [0.4, 0, 0.6, 1], [0, 0, 1, 0.6], [0, 0.4, 1, 0.6],
+    [0, 0, 0.6, 0.6], [0.4, 0, 0.6, 0.6], [0, 0.4, 0.6, 0.6], [0.4, 0.4, 0.6, 0.6],
+    [0, 0, 0.4, 1], [0.3, 0, 0.4, 1], [0.6, 0, 0.4, 1],
+    [0, 0, 1, 0.4], [0, 0.3, 1, 0.4], [0, 0.6, 1, 0.4]
+  ];
+  var TILES_FINE = [];
+  (function () {
+    for (var y = 0; y < 3; y++) for (var x = 0; x < 3; x++) TILES_FINE.push([x * 0.3, y * 0.3, 0.4, 0.4]);
+  })();
+  var MAX_CODES = 12;
+
+  /* jsQR (Safari and Firefox have no BarcodeDetector) reads one code per pass, so
+   * after each hit its area is painted out and the image scanned again; once that
+   * stops, the painted image is scanned again in tiles (also when no whole-image
+   * pass found anything). Tries a few downscales:
+   * full-res photos are slow AND often decode worse than a downscaled copy; tiny
+   * screenshots decode best untouched. Each jsQR call runs as its own task, so the
+   * page stays responsive on a big photo. report(texts, done) gets the distinct
+   * texts in reading order (rows top to bottom, then left to right) as soon as the
+   * whole-image passes have found any (done false while the tiles are still being
+   * searched), then once more at the end (null when nothing was found); stale()
+   * true stops the search (a newer file or a camera hit took over). */
+  function decodeAllImageEl(img, nativeRan, report, stale) {
     var w = img.naturalWidth, h = img.naturalHeight;
-    if (!w || !h) return null;
-    var caps = [900, 1400, 520], tried = {}, i, k, tw, th, text;
-    for (i = 0; i < caps.length; i++) {
-      k = Math.min(1, caps[i] / Math.max(w, h));
+    if (!w || !h || typeof jsQR === 'undefined') { report(null, true); return; }
+    var caps = [900, 1400, 520], tried = {}, i = -1, n, k, tw, th, cover, list, seen, t0 = Date.now();
+    function add(r, ox, oy) {
+      var q = coverQuad(r, tw, th, ox, oy), ys;
+      cover.push(q);
+      if (!r.data || seen[r.data]) return false;
+      seen[r.data] = true;
+      ys = q.map(function (p) { return p[1]; });
+      list.push({ text: r.data, x: (q[0][0] + q[2][0]) / 2, y: (q[0][1] + q[2][1]) / 2,
+        h: Math.max.apply(null, ys) - Math.min.apply(null, ys) });
+      return true;
+    }
+    /* true when the codes already painted out leave too little of rect to hold another */
+    function mostlyCovered(rect) {
+      var free = rect[2] * rect[3], c, xs, ys, ix, iy;
+      for (c = 0; c < cover.length; c++) {
+        xs = cover[c].map(function (p) { return p[0] * tw; });
+        ys = cover[c].map(function (p) { return p[1] * th; });
+        ix = Math.min(rect[0] + rect[2], Math.max.apply(null, xs)) - Math.max(rect[0], Math.min.apply(null, xs));
+        iy = Math.min(rect[1] + rect[3], Math.max.apply(null, ys)) - Math.max(rect[1], Math.min.apply(null, ys));
+        if (ix > 0 && iy > 0) free -= ix * iy;
+      }
+      return free < 0.2 * rect[2] * rect[3];
+    }
+    function ordered() {
+      list.sort(function (a, z) {
+        var tol = Math.min(a.h, z.h) / 2;
+        if (Math.abs(a.y - z.y) > tol) return a.y - z.y;
+        return a.x - z.x;
+      });
+      return list.map(function (o) { return o.text; });
+    }
+    /* runs fn as a new task on this decode's own canvas, unless the decode is stale */
+    function later(fn) {
+      setTimeout(function () {
+        if (stale()) return;
+        useCanvas('file');
+        fn();
+      }, 0);
+    }
+    /* One sweep over a tile set on the painted canvas, one tile per task, stopped once
+     * the whole decode has run budget ms (a big detailed photo is slow to search);
+     * done(true) when it found a new code. */
+    function sweep(tiles, inv, budget, done) {
+      var t = 0, got = false;
+      function step() {
+        var rect, rr, before;
+        while (t < tiles.length && cover.length < MAX_CODES && Date.now() - t0 < budget) {
+          rect = [Math.round(tiles[t][0] * tw), Math.round(tiles[t][1] * th),
+            Math.round(tiles[t][2] * tw), Math.round(tiles[t][3] * th)];
+          rect[2] = Math.min(rect[2], tw - rect[0]);
+          rect[3] = Math.min(rect[3], th - rect[1]);
+          if (rect[2] < 42 || rect[3] < 42 || mostlyCovered(rect)) { t++; continue; }
+          rr = jsqrWork(rect, inv);
+          if (rr && rr.location) {
+            before = cover.length;
+            if (add(rr, rect[0], rect[1])) got = true;
+            paintCover(cover.slice(before), tw, th);
+            /* the same tile may hold another: t stays */
+          } else {
+            t++;
+          }
+          later(step);
+          return;
+        }
+        done(got);
+      }
+      step();
+    }
+    function nextCap() {
+      for (i++; i < caps.length; i++) {
+        k = Math.min(1, caps[i] / Math.max(w, h));
+        tw = Math.max(1, Math.round(w * k));
+        th = Math.max(1, Math.round(h * k));
+        if (tried[tw]) continue;
+        tried[tw] = true;
+        cover = []; list = []; seen = {}; n = 0;
+        later(pass);
+        return;
+      }
+      /* No pass saw a whole code: some groups of codes (and some busy images) read only
+       * in parts, so tile the first downscale once before giving up (dark-on-light
+       * only, and within a shorter budget, since this is also the no-code path).
+       * Skipped when BarcodeDetector has already looked at the image and seen nothing. */
+      if (nativeRan) { report(null, true); return; }
+      k = Math.min(1, caps[0] / Math.max(w, h));
       tw = Math.max(1, Math.round(w * k));
       th = Math.max(1, Math.round(h * k));
-      if (tried[tw]) continue;
-      tried[tw] = true;
-      text = jsqrOn(img, tw, th);
-      if (text) return text;
+      cover = []; list = []; seen = {};
+      later(function () {
+        paintWork(img, tw, th, cover);
+        sweep(TILES, 'dontInvert', 1500, function (got) {
+          if (!got) { report(list.length ? ordered() : null, true); return; }
+          sweep(TILES_FINE, 'dontInvert', 2500, function () { report(ordered(), true); });
+        });
+      });
     }
-    return null;
+    function pass() {
+      var r = jsqrRaw(img, tw, th, cover);
+      if (n < MAX_CODES && r && r.location && !(r.data && seen[r.data])) {
+        if (add(r, 0, 0)) report(ordered(), false);
+        n++;
+        later(pass);
+        return;
+      }
+      if (!list.length) { nextCap(); return; }
+      later(function () {
+        paintWork(img, tw, th, cover);
+        sweep(TILES, null, 4000, function (got) {
+          if (!got) { report(ordered(), true); return; }
+          sweep(TILES_FINE, null, 4000, function () { report(ordered(), true); });
+        });
+      });
+    }
+    nextCap();
   }
 
   /* Every distinct code BarcodeDetector sees, in reading order (rows top to
-   * bottom, then left to right). Resolves null when the API is missing, fails,
-   * or finds nothing, so the caller falls back to jsQR. */
+   * bottom, then left to right). Resolves null when the API is missing or fails,
+   * [] when it looked and found nothing; either way the caller falls back to jsQR. */
   function detectAllNative(img) {
     if (!window.BarcodeDetector) return Promise.resolve(null);
     var bd;
@@ -481,7 +737,7 @@
         if (Math.abs(a.y - z.y) > tol) return a.y - z.y;
         return a.x - z.x;
       });
-      return list.length ? list.map(function (o) { return o.text; }) : null;
+      return list.map(function (o) { return o.text; });
     }, function () { return null; });
   }
 
@@ -489,7 +745,11 @@
 
   function handleFile(file) {
     if (!file) return;
-    if (!/^image\//.test(file.type)) {
+    /* some systems give HEIC files an empty type; let the extension vouch for them */
+    var isHeic = /\.(heic|heif)$/i.test(file.name || '') || /heic|heif/i.test(file.type || '');
+    if (!/^image\//.test(file.type) && !isHeic) {
+      ++fileSeq;   /* stops a decode still in flight from replacing this message */
+      $('qs-result').hidden = true;
       scanStatus('That does not look like an image file.');
       return;
     }
@@ -504,16 +764,40 @@
       setTimeout(function () {
         detectAllNative(img).then(function (list) {
           if (my !== fileSeq) return;
-          if (list) { showResult(list); return; }
-          var one = decodeImageEl(img);
-          showResult(one ? [one] : null);
+          if (list && list.length) { showResult(list); return; }
+          /* jsQR fallback: show what the whole-image passes found at once, keep
+             searching the image in tiles, then show the final list with a hint,
+             since jsQR can miss a code among several */
+          var shown = 0;
+          decodeAllImageEl(img, !!list, function (texts, done) {
+            if (!texts || !texts.length) { showResult(null); return; }
+            if (!done) {
+              showResult(texts);
+              shown = texts.length;
+              scanStatus('Decoding… ' + (texts.length === 1 ? 'one code' : num(texts.length) + ' codes') +
+                ' found so far, still looking for more.');
+              return;
+            }
+            var tail = texts.length > 1 ? 'If one is missing, crop the image to it.'
+              : 'If the image has more codes, crop it to each one.';
+            if (texts.length === shown) {
+              /* same codes as shown: keep the blocks (and any Copied state), update the status */
+              if (texts.length > 1) scanStatus('Found ' + num(texts.length) + ' QR codes in that image. ' + tail);
+              else scanStatus('Decoded ' + num(texts[0].length) + ' character' + (texts[0].length === 1 ? '' : 's') + '. ' + tail);
+            } else {
+              showResult(texts, tail);
+            }
+          }, function () { return my !== fileSeq; });
         });
       }, 20);
     };
     img.onerror = function () {
       URL.revokeObjectURL(url);
       if (my !== fileSeq) return;
-      scanStatus('Could not read that image.');
+      $('qs-result').hidden = true;
+      scanStatus(isHeic
+        ? 'This browser cannot open HEIC photos (Safari can). Save the photo as a JPEG first, then choose that.'
+        : 'Could not read that image.');
     };
     img.src = url;
   }
@@ -603,6 +887,7 @@
   }
 
   function cameraFound(text) {
+    fileSeq++;   /* a file decode still in flight must not replace this result */
     stopCamera('Found a code; the camera has been stopped.');
     showResult(text);
   }
@@ -653,7 +938,7 @@
     var b = e.target && e.target.closest ? e.target.closest('.qs-copy') : null;
     if (!b) return;
     var blk = b.closest('.qs-item');
-    var t = blk ? blk.querySelector('code').textContent : '';
+    var t = blk ? (typeof blk.qsText === 'string' ? blk.qsText : blk.querySelector('code').textContent) : '';
     function done(ok) {
       b.textContent = ok ? 'Copied' : 'Copy failed';
       setTimeout(function () { b.textContent = 'Copy text'; }, 1400);

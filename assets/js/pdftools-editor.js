@@ -17,10 +17,12 @@
    baseline and the browser-font baseline offset is family AND size dependent, which is why
    the resting picture is a canvas and not spans.
    External file → // comments fine. */
-(function () {
+(function boot() {
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
-  var PT = window.__PT; if (!PT) return;
+  var PT = window.__PT;
+  // the core starts once the PDF engines have loaded (after the page): wait for it
+  if (!PT) { if (!boot.waiting) { boot.waiting = true; window.addEventListener('pt-ready', function () { boot(); }, { once: true }); } return; }
   var ed = $('pt-ed'); if (!ed) return;
   var PURE = PT.PURE || window.__PT_PURE || {};
 
@@ -40,6 +42,7 @@
 
   var idx = -1, pg = null, tool = 'move';
   var lastOpenIdx = -1;                // the page whose thumb gets focus back on close
+  var opener = null;                   // the control that opened the editor (focus returns to it)
   var dispW = 0, dispH = 0, Wpt = 0, Hpt = 0, scale = 1;
   var selected = null;                 // selected annotation element
   var focusedEl = null;                // the text box currently promoted to the editable flow
@@ -87,7 +90,9 @@
     disarmSig();
     if (pg) PT.markDirty(pg);          // navigating away — that page's thumbnail may be stale
     idx = i; pg = pages[i]; selected = null; lastOpenIdx = i;
+    var fresh = ed.hidden;
     if (ed.hidden) {                     // a fresh open measures the hint bar and the room afresh
+      opener = document.activeElement && document.activeElement !== document.body && !ed.contains(document.activeElement) ? document.activeElement : null;
       hintMin = 0; hint.style.minHeight = '';
       barPad = 0; padB = 0; stage.style.marginTop = ''; stage.style.marginBottom = ''; scrollEl.scrollTop = 0;
     }
@@ -97,6 +102,10 @@
     ed.hidden = false;
     holdHint();
     renderPage();
+    // the full-screen editor is a modal: focus goes INTO it (the page preview, whose label
+    // says how to use it; arrow keys still change pages from there), never left on the
+    // hidden button behind it
+    if (fresh) { try { stage.focus({ preventScroll: true }); } catch (er) {} }
   }
   function close() {
     renderSeq++;                       // abandon any in-flight render (it must not touch a null pg)
@@ -115,11 +124,15 @@
     if (pickedSize != null && sizeSel.value === String(pickedSize)) sizeSel.value = '14';
     textSlot = null; pickedSize = null;
     PT.renderGrid(); PT.updateToolbar();
-    // hand focus back to the grid: the fresh thumb of the page we were editing
-    // (renderGrid rebuilt the nodes), else the first thumb, else the Download button
+    // hand focus back to what opened the editor when it is still there and usable (the
+    // toolbar's Edit page button); else the fresh thumb of the page we were editing
+    // (renderGrid rebuilt the nodes, so a thumb opener is gone), else the first thumb,
+    // else the Download button
     var thumbs = document.querySelectorAll('#pt-grid .pt-thumb');
-    var back = (lastOpenIdx >= 0 && lastOpenIdx < thumbs.length) ? thumbs[lastOpenIdx]
+    var back = (opener && opener.isConnected && !opener.disabled && opener.offsetParent !== null) ? opener
+      : (lastOpenIdx >= 0 && lastOpenIdx < thumbs.length) ? thumbs[lastOpenIdx]
       : (thumbs.length ? thumbs[0] : $('pt-download'));
+    opener = null;
     if (back) { try { back.focus(); } catch (er) {} }
   }
 
@@ -798,6 +811,28 @@
     }
     PT.markDirty(pg);
     syncTextBar();
+    noteDropped(el);
+  }
+
+  // The text tool draws with the twelve fonts built into PDF, which cover English and
+  // Western European letters only (WinAnsi): any other character is left out of the
+  // resting box and the file. Say so the moment such a character is typed or pasted,
+  // naming the characters, rather than only after the download.
+  function droppedChars(s) {
+    var out = [], seen = {};
+    Array.from(String(s || '')).forEach(function (ch) {
+      if (ch === '\n' || seen[ch] || (PURE.winAnsiOk ? PURE.winAnsiOk(ch) : true)) return;
+      seen[ch] = 1; out.push(ch);
+    });
+    return out;
+  }
+  function noteDropped(el) {
+    var d = droppedChars(el && el.__model && el.__model.text), key = d.join('');
+    if (key === (el.__dropKey || '')) return;
+    el.__dropKey = key;
+    if (!d.length) return;
+    edNotice('These characters can’t be saved and will be left out: ' + d.slice(0, 12).join(' ') + (d.length > 12 ? ' …' : '') +
+      '. Text boxes use the fonts built into PDF, which cover English and Western European letters only.', 9000);
   }
 
   // now: focus at once as well, inside the gesture that made the box (the caller has made
@@ -933,6 +968,7 @@
     if (pendingStyle) pendingAt = at;
     PT.markDirty(pg);
     syncTextBar();
+    noteDropped(el);
   }
   // one capture-phase handler owns every input type that would otherwise put markup, a
   // <div>, or a browser history entry into the flow
@@ -1591,7 +1627,7 @@
     if (v === 'other') {
       var cur = boxTarget() ? lhOf(boxTarget().__model) : 1.2, ans = null;
       try { ans = window.prompt('Line spacing (0.8 to 4)', String(cur)); } catch (er) { ans = null; }
-      var n = parseFloat(ans);
+      var n = PURE.parseDecimal ? PURE.parseDecimal(ans) : parseFloat(ans);   // "1,5" is 1.5, not 1
       lhSel.value = String(cur);
       if (!isFinite(n) || n < 0.8 || n > 4) { syncTextBar(); return; }
       if (boxTarget()) { applyBoxProp(function (t) { t.lh = n; }, 'line spacing'); rearmStyle(); }
@@ -2123,14 +2159,15 @@
   // transient in-editor notice: the main status line sits BEHIND the full-screen
   // editor, so feedback for editor-context events goes to the hint bar for a few
   // seconds, then the tool hint comes back
-  var edNoticeTimer = 0;
-  function edNotice(msg) {
-    var prev = hint.textContent;
+  var edNoticeTimer = 0, edNoticeMsg = null, edNoticePrev = '';
+  function edNotice(msg, ms) {
+    var prev = (edNoticeTimer && hint.textContent === edNoticeMsg) ? edNoticePrev : hint.textContent;
     noteHint();
     hint.textContent = msg;
     holdHint();
     clearTimeout(edNoticeTimer);
-    edNoticeTimer = setTimeout(function () { if (hint.textContent === msg) hint.textContent = prev; }, 4000);
+    edNoticeMsg = msg; edNoticePrev = prev;
+    edNoticeTimer = setTimeout(function () { edNoticeTimer = 0; if (hint.textContent === msg) hint.textContent = prev; }, ms || 4000);
   }
 
   // files dropped while the editor is open: with the Sign tool active an image becomes

@@ -1,4 +1,7 @@
-# Vendored third-party files (for the "Cut out background" tool in /imagetools/)
+---
+title: "Vendored third-party files (for the \"Cut out background\" tool in /imagetools/)"
+description: "Licenses and sources of the model and runtime behind Image Studio's Cut out background tool, all served from this site."
+---
 
 Pinned, locally-served copies, downloaded rather than hotlinked. The cutout engine
 itself makes no network requests beyond this origin: the model, the runtime and its

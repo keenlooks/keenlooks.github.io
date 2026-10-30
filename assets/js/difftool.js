@@ -77,12 +77,18 @@
      and CJK Supplement radicals folded to the ideographs they stand for (Chrome-printed
      Japanese and Chinese PDFs map 日 大 行 目 to U+2F47 and its kin); with Ignore case on,
      Turkish dotted capital I and dotless i fold to I and i first, since "İ".toLowerCase()
-     is "i" plus a combining dot. Self-contained: it also runs inside the Worker. */
+     is "i" plus a combining dot. Text taken from a PDF often comes out in presentation
+     forms (Arabic letters in their joined shapes, U+FB50-FDFF and U+FE70-FEFF; ligatures
+     such as "ﬁ"): those take their NFKC letters, a ligature becoming several, and Farsi
+     yeh and heh doachashmee fold to Arabic yeh and heh, because a PDF's initial and medial
+     yeh and heh are the same glyphs for both. Self-contained: it also runs inside the Worker. */
   function normLine(line, o) {
     var s = line;
     if (/[^\x00-\x7F]/.test(s)) {
       if (s.normalize) s = s.normalize('NFC');
       s = s.replace(/[\u2E80-\u2EFF\u2F00-\u2FDF]/g, function (c) { var k = c.normalize ? c.normalize('NFKC') : c; return k.length === 1 ? k : c; });
+      if (s.normalize) s = s.replace(/[\uFB00-\uFDFF\uFE70-\uFEFE]/g, function (c) { return c.normalize('NFKC'); });
+      s = s.replace(/\u06CC/g, '\u064A').replace(/\u06BE/g, '\u0647');
     }
     if (o.allws) s = s.replace(/\s+/g, '');
     else if (o.trim) s = s.trim();
@@ -295,7 +301,8 @@
     return Array.from(s);
   }
   function foldSameLength(s, o) {
-    s = s.replace(/[\u2E80-\u2EFF\u2F00-\u2FDF]/g, function (c) { var k = c.normalize ? c.normalize('NFKC') : c; return k.length === 1 ? k : c; });
+    s = s.replace(/[\u2E80-\u2EFF\u2F00-\u2FDF\uFB00-\uFDFF\uFE70-\uFEFE]/g, function (c) { var k = c.normalize ? c.normalize('NFKC') : c; return k.length === 1 ? k : c; });
+    s = s.replace(/\u06CC/g, '\u064A').replace(/\u06BE/g, '\u0647');
     if (o.icase) s = s.replace(/\u0130/g, 'I').replace(/\u0131/g, 'i');
     return s;
   }
@@ -310,7 +317,8 @@
     wordBudget--;
     var parts;
     /* the word pass compares length-preserving folds of the two lines (radicals to
-       ideographs; Turkish I forms when ignoring case), so the segments still slice the
+       ideographs, one-letter presentation forms to their letters, Farsi yeh and heh
+       doachashmee; Turkish I forms when ignoring case), so the segments still slice the
        original strings */
     var fa = foldSameLength(oldLine, o), fb = foldSameLength(newLine, o);
     try {
@@ -348,6 +356,8 @@
 
   // ------------------------------------------------------------- rendering
 
+  /* Both views print the +/- sign in the gutter (side by side used to show a changed
+     line only as a tint); the unified view adds the second line-number column. */
   function rowEl(kind, num, content, extraGutter) {
     var r = document.createElement('div');
     r.className = 'df-row df-' + kind;
@@ -360,11 +370,11 @@
       g2.className = 'df-ln';
       g2.textContent = extraGutter == null ? '' : String(extraGutter);
       r.appendChild(g2);
-      var pre = document.createElement('span');
-      pre.className = 'df-pre';
-      pre.textContent = kind === 'add' ? '+' : (kind === 'del' ? '-' : ' ');
-      r.appendChild(pre);
     }
+    var pre = document.createElement('span');
+    pre.className = 'df-pre';
+    pre.textContent = kind === 'add' ? '+' : (kind === 'del' ? '-' : ' ');
+    r.appendChild(pre);
     var c = document.createElement('span');
     c.className = 'df-code';
     if (content == null) {
@@ -374,7 +384,7 @@
     } else {
       content.forEach(function (seg) {
         if (seg.mark) {
-          var m = document.createElement('mark');
+          var m = document.createElement(seg.mark === 'add' ? 'ins' : 'del');
           m.className = 'df-mk df-mk-' + seg.mark;
           m.textContent = seg.text;
           c.appendChild(m);
@@ -633,10 +643,35 @@
      an override character in it can reorder the words around it */
   function shownName(n) { return '\u2066' + String(n == null ? '' : n).replace(/[\u202A-\u202E\u2066-\u2069]/g, '') + '\u2069'; }
 
+  /* The name as an element for status lines and labels: marked translate="no" so a page
+     translator leaves it alone (the sentence around it still translates), and isolated
+     left to right by the element as well as by the isolate characters. */
+  function nameEl(n) {
+    var s = document.createElement('span');
+    s.className = 'notranslate df-name';
+    s.setAttribute('translate', 'no');
+    s.dir = 'ltr';
+    s.style.unicodeBidi = 'isolate';
+    s.textContent = shownName(n);
+    return s;
+  }
+  /* fill an element from parts: strings become text, elements are appended as they are */
+  function fillParts(el, parts) {
+    el.textContent = '';
+    (Array.isArray(parts) ? parts : [parts || '']).forEach(function (p) {
+      el.appendChild(typeof p === 'string' ? document.createTextNode(p) : p);
+    });
+  }
+
   function colHead(label, fname) {
     var head = document.createElement('div');
     head.className = 'df-colhead';
-    head.textContent = fname ? label + ': ' + shownName(fname) : label;
+    /* the diff output is translate="no" as a whole; its column label may translate */
+    var lab = document.createElement('span');
+    lab.setAttribute('translate', 'yes');
+    lab.textContent = fname ? label + ': ' : label;
+    head.appendChild(lab);
+    if (fname) head.appendChild(nameEl(fname));
     return head;
   }
 
@@ -747,17 +782,22 @@
      compare that the load itself triggers; everything else is cleared by the next
      compare so an old "Unified diff copied" can never describe a newer result. */
   var statusKeep = false;
+  var statusOwner = null;           // the file load whose progress line is showing, if any
   function setStatus(msg, keepOnce) {
-    statusEl.textContent = msg || '';
+    fillParts(statusEl, msg);
     statusKeep = !!keepOnce;
+    statusOwner = null;
   }
 
   function updateStats() {
     if (!lastMeta) { statsEl.textContent = ''; return; }
     if (lastMeta.adds === 0 && lastMeta.dels === 0) {
+      var o = opts();
       statsEl.textContent = lastMeta.rawEqual
         ? 'No differences.'
-        : 'No differences. (The inputs differ only in ways you chose to ignore.)';
+        : (o.trim || o.allws || o.icase)
+          ? 'No differences. (The inputs differ only in ways you chose to ignore.)'
+          : 'No differences. (The inputs differ only in how some characters are encoded, as in text taken from a PDF.)';
       return;
     }
     statsEl.textContent =
@@ -998,7 +1038,51 @@
     return lines;
   }
 
-  function extractPdfText(file) {
+  /* Password prompt: an in-page <dialog> with a masked field (window.prompt showed the
+     password as it was typed). Resolves with the password, or null for Skip / Escape.
+     Two panes asking at once take turns. */
+  var passQueue = Promise.resolve();
+  function askPassword(name, again) {
+    var dlg = $('df-pass-dialog');
+    if (!dlg || typeof dlg.showModal !== 'function') {
+      return Promise.resolve(window.prompt((again ? 'That password did not work. ' : '') +
+        'This PDF is password-protected. Enter the password to extract its text:'));
+    }
+    var turn = passQueue.then(function () {
+      return new Promise(function (resolve) {
+        var input = $('df-pass-input'), form = $('df-pass-form'), skip = $('df-pass-cancel');
+        fillParts($('df-pass-msg'), [again ? 'That password did not work. ' : '', nameEl(name),
+          ' is password-protected. Enter its password to extract the text, or skip this file.']);
+        input.value = '';
+        var opener = document.activeElement, answer = null;
+        function onSubmit(e) { e.preventDefault(); answer = input.value; dlg.close(); }
+        function onSkip() { answer = null; dlg.close(); }
+        function onClose() {
+          form.removeEventListener('submit', onSubmit);
+          skip.removeEventListener('click', onSkip);
+          dlg.removeEventListener('close', onClose);
+          input.value = '';
+          if (opener && opener.focus && document.contains(opener) && opener !== document.body) {
+            try { opener.focus(); } catch (e) { /* ignore */ }
+          }
+          resolve(answer);
+        }
+        form.addEventListener('submit', onSubmit);
+        skip.addEventListener('click', onSkip);
+        dlg.addEventListener('close', onClose);   // Escape closes the dialog too: same as Skip
+        dlg.showModal();
+        input.focus();
+      });
+    });
+    passQueue = turn.then(function () {}, function () {});
+    return turn;
+  }
+
+  /* isLive() is false once the pane was given something newer: then no password is asked
+     for and the extraction stops at the next page. */
+  function extractPdfText(file, isLive) {
+    isLive = isLive || function () { return true; };
+    function stale() { var e = new Error('superseded'); e.stale = true; return e; }
     return loadPdfJs().then(function (pdfjsLib) {
       return file.arrayBuffer().then(function (buf) {
         // pdf.js detaches the ArrayBuffer it is handed — give it a copy
@@ -1007,9 +1091,13 @@
              JavaScript (CVE-2024-4367: a crafted font could run script on this origin). */
           return pdfjsLib.getDocument({ data: buf.slice(0), password: password, isEvalSupported: false }).promise
             .catch(function (err) {
-              if (err && err.name === 'PasswordException' && password === undefined) {
-                var pw = window.prompt('This PDF is password-protected. Enter the password to extract its text:');
-                if (pw !== null) return attempt(pw);
+              if (err && err.name === 'PasswordException') {
+                if (!isLive()) throw stale();
+                return askPassword(file.name, password !== undefined).then(function (pw) {
+                  if (!isLive()) throw stale();
+                  if (pw === null) throw new Error('No password given');
+                  return attempt(pw);
+                });
               }
               throw err;
             });
@@ -1023,7 +1111,7 @@
       for (n = 1; n <= doc.numPages; n++) {
         (function (pageNum) {
           chain = chain
-            .then(function () { return doc.getPage(pageNum); })
+            .then(function () { if (!isLive()) throw stale(); return doc.getPage(pageNum); })
             .then(function (page) { return page.getTextContent(); })
             .then(function (tc) {
               pageTexts.push('=== Page ' + pageNum + ' ===\n' + pageLines(tc.items).join('\n'));
@@ -1034,19 +1122,29 @@
         var numPages = doc.numPages;
         try { doc.destroy(); } catch (e) { /* best effort */ }
         return { text: pageTexts.join('\n\n'), pages: numPages };
+      }, function (err) {
+        try { doc.destroy(); } catch (e) { /* best effort */ }
+        throw err;
       });
     });
   }
 
   // ------------------------------------------------------------ file input
 
-  function setPane(which, text, name, note) {
+  /* The pane label holds the name (untranslated) and the note (translatable) as siblings. */
+  function setPane(which, text, name, note, fromPdf) {
     var ta = which === 'a' ? taA : taB;
     ta.value = text;
     if (which === 'a') fileNameA = name || ''; else fileNameB = name || '';
-    $('df-file-' + which).textContent = (name ? shownName(name) : '') + (name && note ? ' (' + note + ')' : '');
+    fillParts($('df-file-' + which), name ? [nameEl(name), note ? ' (' + note + ')' : ''] : '');
+    pdfFrom[which] = !!fromPdf;
+    updatePdfNote();
     scheduleAuto();
   }
+
+  /* "A note on PDFs" shows while either pane holds text extracted from a PDF. */
+  var pdfFrom = { a: false, b: false };
+  function updatePdfNote() { pdfNoteEl.hidden = !(pdfFrom.a || pdfFrom.b); }
 
   /* file.text() decodes as UTF-8 and turns every invalid byte into U+FFFD. Files saved by
      older Windows programs are often Windows-1252, where an accented letter or the euro
@@ -1073,23 +1171,60 @@
        gets Windows-1252. When a language-specific candidate cannot explain the bytes,
        Windows-1252 gets one strict try of its own (a Japanese visitor's file saved by an
        English Windows program); if that fails too, keep the UTF-8 reading. */
-    var enc = legacyEncoding();
-    try {
-      return { text: new TextDecoder(enc[0], { fatal: true }).decode(buf), note: 'read as ' + enc[1] + (enc[2] ? ', the usual older encoding for your browser language' : '') };
-    } catch (e) { /* the language's encoding does not fit: Windows-1252 below */ }
-    if (enc[2]) {
+    /* A language with two common older encodings (Japanese: Shift_JIS and EUC-JP) tries
+       each strictly and keeps the reading with the fewest marks of a wrong guess:
+       private-use characters, and half-width katakana mixed in among full-width
+       characters (EUC-JP read as Shift_JIS gives that mix). A reading made only of
+       half-width katakana is a real Shift_JIS style, so it is not marked. On a tie the
+       first candidate stays unless a later reading is mostly kana and Japanese
+       punctuation (at least half of its non-ASCII characters, and a larger share than
+       the first): EUC-JP hiragana read as Shift_JIS is all half-width katakana, while
+       half-width Shift_JIS read as EUC-JP is mostly kanji with a stray kana where a
+       separator byte led a pair. A reading that still holds a private-use character
+       and no kana gives way to a clean Windows-1252 one. */
+    var enc = legacyEncoding(), best = null;
+    enc[0].forEach(function (c) {
+      var t;
+      try { t = new TextDecoder(c[0], { fatal: true }).decode(buf); } catch (e) { return; }
+      var pua = (t.match(/[\uE000-\uF8FF]/g) || []).length;
+      var hw = (t.match(/[\uFF61-\uFF9F]/g) || []).length;
+      var kana = (t.match(/[\u3040-\u30FF]/g) || []).length;
+      var wide = /[\u3000-\u9FFF\uF900-\uFAFF\uFF01-\uFF60\uFFE0-\uFFEF]/.test(t);
+      var odd = pua * 1000 + (wide ? hw : 0);
+      var non = (t.match(/[^\x00-\x7F]/g) || []).length;
+      var share = non ? (t.match(/[\u3000-\u30FF]/g) || []).length / non : 0;
+      if (!best || odd < best.odd || (odd === best.odd && share >= 0.5 && share > best.share)) best = { text: t, name: c[1], odd: odd, kana: kana, share: share };
+    });
+    if (best && !(enc[1] && best.odd >= 1000 && !best.kana && win1252(buf))) {
+      return { text: best.text, note: 'read as ' + best.name + (enc[1] ? ', the usual older encoding for your browser language' : '') };
+    }
+    if (enc[1]) {
       try {
         /* the browser's Windows-1252 never fails: it turns the five bytes Windows leaves
            undefined (81 8D 8F 90 9D) into invisible control characters, so a reading
            that contains one counts as failed */
-        var w = new TextDecoder('windows-1252', { fatal: true }).decode(buf);
-        if (!/[\u0081\u008D\u008F\u0090\u009D]/.test(w)) return { text: w, note: 'read as Windows-1252' };
+        var w = win1252(buf);
+        if (w !== null) return { text: w, note: 'read as Windows-1252' };
       } catch (e) { /* fall through to the UTF-8 reading */ }
     }
     return { text: utf8Text, note: 'some bytes are not valid UTF-8 and show as \uFFFD' };
   }
+  function win1252(buf) {
+    try {
+      var w = new TextDecoder('windows-1252', { fatal: true }).decode(buf);
+      return /[\u0081\u008D\u008F\u0090\u009D]/.test(w) ? null : w;
+    } catch (e) { return null; }
+  }
+  /* ISO-2022-JP is 7-bit, so it passes as valid UTF-8 and would show its escape codes:
+     its escape sequences (ESC $ @, ESC $ B, ESC ( J) give it away. */
+  function iso2022jp(buf, text) {
+    if (!/\x1b\$[@B]|\x1b\(J/.test(text) || typeof TextDecoder === 'undefined') return null;
+    try {
+      return { text: new TextDecoder('iso-2022-jp', { fatal: true }).decode(buf), note: 'read as ISO-2022-JP' };
+    } catch (e) { return null; }
+  }
   var LEGACY_ENC = [
-    [/^ja\b/, 'shift_jis', 'Shift_JIS'],
+    [/^ja\b/, 'shift_jis', 'Shift_JIS', 'euc-jp', 'EUC-JP'],
     [/^zh-(tw|hk|mo|hant)\b/, 'big5', 'Big5'],
     [/^zh\b/, 'gb18030', 'GBK (GB 18030)'],
     [/^ko\b/, 'euc-kr', 'EUC-KR'],
@@ -1103,10 +1238,10 @@
     [/^vi\b/, 'windows-1258', 'Windows-1258'],
     [/^th\b/, 'windows-874', 'Windows-874']
   ];
-  /* [TextDecoder label, shown name, language-specific?] for the FIRST browser language
-     only: its legacy encoding if the table has one (and this browser can decode it),
-     else Windows-1252 */
-  var WIN1252 = ['windows-1252', 'Windows-1252', false];
+  /* [[[TextDecoder label, shown name], ...], language-specific?] for the FIRST browser
+     language only: its legacy encodings if the table has them (and this browser can
+     decode them), else Windows-1252 */
+  var WIN1252 = [[['windows-1252', 'Windows-1252']], false];
   function legacyEncoding() {
     var l = '';
     try {
@@ -1114,9 +1249,13 @@
     } catch (e) { l = ''; }
     l = String(l || '').toLowerCase();
     for (var j = 0; j < LEGACY_ENC.length; j++) {
-      if (LEGACY_ENC[j][0].test(l)) {
-        try { new TextDecoder(LEGACY_ENC[j][1]); } catch (e) { return WIN1252; }
-        return [LEGACY_ENC[j][1], LEGACY_ENC[j][2], true];
+      var row = LEGACY_ENC[j];
+      if (row[0].test(l)) {
+        var cands = [];
+        for (var k = 1; k + 1 < row.length; k += 2) {
+          try { new TextDecoder(row[k]); cands.push([row[k], row[k + 1]]); } catch (e) { /* not decodable here */ }
+        }
+        return cands.length ? [cands, true] : WIN1252;
       }
     }
     return WIN1252;
@@ -1125,49 +1264,69 @@
   // Typing or pasting over a loaded file means the pane no longer shows that file —
   // drop the stale name (it also labels the diff columns and the copied patch).
   function clearFileName(which) {
+    pdfFrom[which] = false;
+    updatePdfNote();
     if (which === 'a') { if (!fileNameA) return; fileNameA = ''; }
     else { if (!fileNameB) return; fileNameB = ''; }
     $('df-file-' + which).textContent = '';
   }
 
+  /* Each pane's loads are numbered; a load (a slow PDF above all) that finishes after the
+     pane got a newer file or was typed into is dropped instead of overwriting it. */
+  var loadSeq = { a: 0, b: 0 };
+  function supersede(which) {
+    loadSeq[which]++;
+    if (statusOwner && statusOwner.which === which) setStatus('');
+  }
+
   function handleFile(which, file) {
     if (!file) return;
-    var isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+    var my = ++loadSeq[which];
+    function live() { return loadSeq[which] === my; }
+    var nm = file.name;
+    var isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(nm);
     if (isPdf) {
       if (file.size > PDF_FILE_MAX) {
-        setStatus(shownName(file.name) + ' is ' + fmtMB(file.size) + '; PDFs over ' + fmtMB(PDF_FILE_MAX) + ' are not handled here.');
+        setStatus([nameEl(nm), ' is ' + fmtMB(file.size) + '; PDFs over ' + fmtMB(PDF_FILE_MAX) + ' are not handled here.']);
         return;
       }
-      setStatus('Extracting text from ' + shownName(file.name) + '…');
-      extractPdfText(file).then(function (res) {
-        setPane(which, res.text, file.name);
-        pdfNoteEl.hidden = false;
-        setStatus('Extracted text from ' + num(res.pages) + (res.pages === 1 ? ' page' : ' pages') + ' of ' + shownName(file.name) + '.', true);
+      setStatus(['Extracting text from ', nameEl(nm), '…']);
+      statusOwner = { which: which, seq: my };
+      extractPdfText(file, live).then(function (res) {
+        if (!live()) return;
+        setPane(which, res.text, nm, null, true);
+        setStatus(['Extracted text from ' + num(res.pages) + (res.pages === 1 ? ' page' : ' pages') + ' of ', nameEl(nm), '.'], true);
       }).catch(function (err) {
-        setStatus('Could not read ' + shownName(file.name) + ' as a PDF' + (err && err.message ? ' (' + err.message + ')' : '') + '.');
+        if (!live() || (err && err.stale)) return;
+        setStatus(['Could not read ', nameEl(nm), ' as a PDF' + (err && err.message ? ' (' + err.message + ')' : '') + '.']);
       });
       return;
     }
     if (file.size > HARD_MAX) {
-      setStatus(shownName(file.name) + ' is ' + fmtMB(file.size) + '. This tool tops out around 5 MB of text, so the file was not loaded.');
+      setStatus([nameEl(nm), ' is ' + fmtMB(file.size) + '. This tool tops out around 5 MB of text, so the file was not loaded.']);
       return;
     }
     file.text().then(function (text) {
+      if (!live()) return null;
       if (text.indexOf('\u0000') !== -1) {
         /* Binary content (NUL bytes) is refused outright: rendering ~1MB of binary
            garbage in a textarea can freeze the tab, and diffing it as text has no
            real use. .docx/.xlsx land here too (they are binary zips). */
-        setStatus(shownName(file.name) + ' looks like a binary file, so it was not loaded. This tool compares text files and PDFs.');
+        setStatus([nameEl(nm), ' looks like a binary file, so it was not loaded. This tool compares text files and PDFs.']);
         return null;
+      }
+      if (/\x1b[$(]/.test(text) && typeof TextDecoder !== 'undefined') {
+        return file.arrayBuffer().then(function (buf) { return iso2022jp(buf, text) || (text.indexOf('\uFFFD') === -1 ? { text: text } : redecode(buf, text)); });
       }
       if (text.indexOf('\uFFFD') === -1 || typeof TextDecoder === 'undefined') return { text: text };
       return file.arrayBuffer().then(function (buf) { return redecode(buf, text); });
     }).then(function (r) {
-      if (!r) return;
-      setStatus('Loaded ' + shownName(file.name) + (r.note ? ' (' + r.note + ')' : '') + '.', true);
-      setPane(which, r.text, file.name, r.note);
+      if (!r || !live()) return;
+      setStatus(['Loaded ', nameEl(nm), (r.note ? ' (' + r.note + ')' : '') + '.'], true);
+      setPane(which, r.text, nm, r.note, false);
     }).catch(function () {
-      setStatus('Could not read ' + shownName(file.name) + '.');
+      if (!live()) return;
+      setStatus(['Could not read ', nameEl(nm), '.']);
     });
   }
 
@@ -1213,6 +1372,17 @@
 
   // ----------------------------------------------------------------- init
 
+  /* Under a coarse pointer (phones, tablets) the intro and the boxes' placeholders talk
+     about Choose file and the Compare button instead of dropping files and Ctrl+Enter. */
+  function touchWording() {
+    if (clickWord() !== 'tap') return;
+    var load = $('df-intro-load'), keys = $('df-intro-keys');
+    if (load) load.textContent = 'Paste into the boxes, or tap Choose file to load a text file or a PDF (its text is extracted locally, page by page).';
+    if (keys) keys.textContent = 'Tap Compare at any time.';
+    if (taA) taA.placeholder = 'Paste the original text, or tap Choose file to load a text file or PDF';
+    if (taB) taB.placeholder = 'Paste the changed text, or tap Choose file to load a text file or PDF';
+  }
+
   function init() {
     taA = $('df-text-a');
     taB = $('df-text-b');
@@ -1225,6 +1395,7 @@
     copyBtn = $('df-copy');
     wrapEl = $('df-wrapln');
     viewBtns = { side: $('df-view-side'), unified: $('df-view-unified') };
+    touchWording();
 
     if (!window.Diff) {
       setStatus('The diff library failed to load; the tool cannot run.');
@@ -1234,8 +1405,8 @@
     wirePane('a');
     wirePane('b');
 
-    taA.addEventListener('input', function () { clearFileName('a'); scheduleAuto(); });
-    taB.addEventListener('input', function () { clearFileName('b'); scheduleAuto(); });
+    taA.addEventListener('input', function () { supersede('a'); clearFileName('a'); scheduleAuto(); });
+    taB.addEventListener('input', function () { supersede('b'); clearFileName('b'); scheduleAuto(); });
     ['df-trim', 'df-allws', 'df-case'].forEach(function (id) {
       $(id).addEventListener('change', scheduleAuto);
     });

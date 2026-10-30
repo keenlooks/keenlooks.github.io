@@ -2,6 +2,7 @@
 layout: single
 title: "PDF Toolbench: merge, redact, sign, OCR & compress PDFs in your browser"
 permalink: /pdftools/
+search_keys: "white out whiteout ocr searchable compress password encrypt tools redaction"
 og_image: /images/og/pdftools.png
 author_profile: false
 excerpt: "Merge, split, reorder, redact, sign, add and format text, fill, OCR, copy clean text, watermark, compress, and password-protect PDFs privately, in your browser."
@@ -17,8 +18,7 @@ description: "Free private PDF tools that run entirely in your browser: merge an
     pull out a range, add text and format it, add a signature, fill in forms, white out part of a page, redact a page so the hidden text is
     actually gone, make a scanned PDF searchable with OCR, copy the text out cleaned up for pasting
     into an AI chat, add watermarks or page numbers, export pages as images, strip metadata, shrink
-    the file, or lock it with a password. Everything runs locally on your device, your PDFs are
-    never uploaded, and Ctrl+Z undoes mistakes.
+    the file, or lock it with a password. Ctrl+Z undoes mistakes.
   </p>
   <p class="pt-privacy">Everything runs locally in your browser. Your PDF is never uploaded and never leaves your device. (I use Google Analytics to see whether anyone visits this page, but it cannot see your files or anything you do with them.)</p>
   <p class="pt-privacy" style="margin-top:-0.55rem">A caveat: this is a personal side project and I have not tested it exhaustively. I make no guarantees; keep your originals and check the output before relying on it. Found a problem? <a href="mailto:{{ site.author.email }}?subject=PDF%20Toolbench%20problem">Tell me by email</a> (no need to send the file).</p>
@@ -32,10 +32,10 @@ description: "Free private PDF tools that run entirely in your browser: merge an
       <span class="pt-sep"></span>
       <button id="pt-selall" class="pt-btn" type="button" title="Select all / none">Select all</button>
       <button id="pt-rotate" class="pt-btn" type="button" disabled title="Rotate selected pages 90° clockwise">⟳ Rotate</button>
-      <button id="pt-rotccw" class="pt-btn" type="button" disabled title="Rotate selected pages 90° counterclockwise">⟲</button>
+      <button id="pt-rotccw" class="pt-btn" type="button" disabled title="Rotate selected pages 90° counterclockwise" aria-label="Rotate counterclockwise">⟲</button>
       <button id="pt-dup" class="pt-btn" type="button" disabled title="Duplicate selected pages">⧉ Duplicate</button>
       <button id="pt-blank" class="pt-btn" type="button" title="Insert a blank page (after the selection, or at the end)">▭ Blank page</button>
-      <button id="pt-delete" class="pt-btn" type="button" disabled title="Delete selected pages">🗑 Delete</button>
+      <button id="pt-delete" class="pt-btn" type="button" disabled title="Delete selected pages"><svg class="pt-btn__ico" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false"><path fill="currentColor" fill-rule="evenodd" d="M6 1h4a1 1 0 0 1 1 1v1h3v1.6H2V3h3V2a1 1 0 0 1 1-1zm.6 1.2v.8h2.8v-.8zM3.4 5.4h9.2l-.75 9.3a1 1 0 0 1-1 .9H5.15a1 1 0 0 1-1-.9zM5.3 7v6.6h.9V7zm2.25 0v6.6h.9V7zm2.25 0v6.6h.9V7z"/></svg> Delete</button>
       <span class="pt-sep"></span>
       <button id="pt-undo" class="pt-btn" type="button" disabled title="Undo (Ctrl+Z)">↶ Undo</button>
       <span class="pt-spacer"></span>
@@ -55,7 +55,7 @@ description: "Free private PDF tools that run entirely in your browser: merge an
       <button id="pt-shrink" class="pt-btn" type="button" data-pt-needs-pages disabled title="Shrink the file by rasterizing pages">⤓ Shrink…</button>
       <button id="pt-protect" class="pt-btn" type="button" data-pt-needs-pages disabled title="Encrypt the PDF with a password (AES-256)">Protect…</button>
       <span class="pt-spacer"></span>
-      <label class="pt-check" title="Remove the title, author, producer and dates on download. Photos you add never keep their location or camera details."><input type="checkbox" id="pt-stripmeta" checked> Strip metadata</label>
+      <label class="pt-check" title="On download, remove the title, author, producer and dates, and the hidden details pages and photos can carry (XMP data, camera make, location). Photos you add never keep their location or camera details."><input type="checkbox" id="pt-stripmeta" checked> Strip metadata</label>
     </div>
   </div>
 
@@ -66,7 +66,7 @@ description: "Free private PDF tools that run entirely in your browser: merge an
   <div id="pt-drop" class="pt-drop" tabindex="0" role="button" aria-label="Add PDF or image files">
     <input id="pt-file" type="file" accept="application/pdf,.pdf,image/*" multiple hidden style="display:none!important">
     <div class="pt-grid" id="pt-grid"></div>
-    <div class="pt-drop__hint" id="pt-hint"><strong>Drop PDFs or images here</strong><br>or click to choose</div>
+    <div class="pt-drop__hint" id="pt-hint"><strong>Drop PDFs or images here</strong><br>or <span class="pt-drop__verb">click</span> to choose</div>
   </div>
 
   <p class="pt-status" id="pt-status" role="status" aria-live="polite"></p>
@@ -147,6 +147,11 @@ description: "Free private PDF tools that run entirely in your browser: merge an
       dropped to plain text on purpose, so what you see in the box is what lands in the file. The text
       is turned into pixels only if the page itself is flattened, which happens for a redaction, a
       watermark, page numbers, OCR, or a rotation.</p>
+      <p>Those built-in fonts cover English and Western European letters only. Other letters (Polish
+      Ł, Turkish ı, Greek, Cyrillic, Arabic, Hebrew, Chinese, Japanese, Korean) and emoji cannot be
+      saved in a text box yet, so they are left out, and the editor tells you as soon as you type
+      one. A watermark can be in any language: when its letters are outside those fonts it is
+      drawn as an image instead.</p>
     </details>
     <details>
       <summary>What happens to my files?</summary>
@@ -289,6 +294,7 @@ description: "Free private PDF tools that run entirely in your browser: merge an
         <select id="pt-pn-fmt">
           <option value="n">1, 2, 3…</option>
           <option value="nofm">1 of 12</option>
+          <option value="slash">1 / 12</option>
         </select></label>
       <label class="pt-field"><span>Position</span>
         <select id="pt-pn-pos">
@@ -359,7 +365,7 @@ description: "Free private PDF tools that run entirely in your browser: merge an
         text becomes selectable, copyable, and searchable. Download afterwards to save the result.</p>
       <p class="pt-dialog__tradeoff">It reads <strong>printed text in 22 languages</strong> and works
         best on clean, straight scans. Handwriting usually does not work. The first use downloads about
-        <strong>6&nbsp;MB</strong> of OCR engine code from this site (no third-party servers), and each
+        <strong>4&nbsp;MB</strong> of OCR engine code from this site (no third-party servers), and each
         language you pick downloads its model once, when OCR starts; your browser keeps a copy for next
         time. Your pages are processed locally and never uploaded.</p>
       <label class="pt-field"><span>Language</span>
@@ -368,6 +374,7 @@ description: "Free private PDF tools that run entirely in your browser: merge an
       <p class="pt-modal__hint" id="pt-ocr-size"></p>
       <label class="pt-field"><span>Pages</span>
         <select id="pt-ocr-scope"></select></label>
+      <label class="pt-check pt-field--row" title="Pages that already have selectable text (not just an invisible OCR layer) are left as they are, so their text is not doubled"><input type="checkbox" id="pt-ocr-skip" checked> Skip pages that already have text</label>
     </div>
     <div class="pt-modal__foot">
       <button id="pt-ocr-cancel" class="pt-btn" type="button">Cancel</button>
@@ -449,8 +456,8 @@ description: "Free private PDF tools that run entirely in your browser: merge an
     </span>
     <span class="pt-spacer"></span>
     <span class="pt-ed__nav">
-      <button id="pt-ed-prev" class="pt-btn" type="button" title="Previous page">‹</button>
-      <button id="pt-ed-next" class="pt-btn" type="button" title="Next page">›</button>
+      <button id="pt-ed-prev" class="pt-btn" type="button" title="Previous page" aria-label="Previous page">‹</button>
+      <button id="pt-ed-next" class="pt-btn" type="button" title="Next page" aria-label="Next page">›</button>
     </span>
   </div>
 
@@ -523,7 +530,7 @@ description: "Free private PDF tools that run entirely in your browser: merge an
   </div>
   <button class="pt-ed__arrow pt-ed__arrow--left" id="pt-ed-arrow-left" type="button" aria-label="Previous page" title="Previous page">‹</button>
   <button class="pt-ed__arrow pt-ed__arrow--right" id="pt-ed-arrow-right" type="button" aria-label="Next page" title="Next page">›</button>
-  <div class="pt-ed__hintbar" id="pt-ed-hint"></div>
+  <div class="pt-ed__hintbar" id="pt-ed-hint" role="status" aria-live="polite"></div>
 </div>
 
 <style>
@@ -546,6 +553,7 @@ description: "Free private PDF tools that run entirely in your browser: merge an
 }
 .pt-btn:hover:not(:disabled) { background: rgba(127,127,127,0.26); }
 .pt-btn:disabled { opacity: 0.45; cursor: default; }
+.pt-btn__ico { vertical-align: -0.14em; }
 /* labels on the accent fill: dark on the dark theme's light-blue fill (#141414 on #82a6cc
    is 7.3:1; white was 2.5:1), white on the light theme's dark-blue fill (7.4:1) */
 .pt-btn--accent { background: #82a6cc; border-color: #82a6cc; color: #141414; }
@@ -1005,8 +1013,7 @@ html[data-theme="light"] .pt-anno--whiteout-tmp { border-color: #34568a; }
 }
 </script>
 
-<script defer src="{{ '/assets/js/pdflib/pdf-lib.min.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
-<script defer src="{{ '/assets/js/pdflib/pdfjs/pdf.min.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
+<!-- pdf-lib and pdf.js (assets/js/pdflib/) are loaded by pdftools.js after the page, at idle or on the first file -->
 <script defer src="{{ '/assets/js/pdftools.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/pdftools-tools.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/pdftools-editor.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>

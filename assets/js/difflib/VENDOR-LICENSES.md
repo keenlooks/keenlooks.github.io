@@ -1,4 +1,7 @@
-# Vendored third-party libraries (for /diff/)
+---
+title: "Vendored third-party libraries (for /diff/)"
+description: "Licenses and sources of the third-party library that Diff Checker serves from this site (jsdiff), plus the pdf.js copy it shares."
+---
 
 These are pinned, locally-served copies so the Diff Checker runs fully offline with no
 CDN/network calls (privacy + the site's no-external-deps ethos). Downloaded, not hotlinked.

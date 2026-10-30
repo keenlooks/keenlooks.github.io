@@ -16,6 +16,11 @@ description: "Your browser estimates where you are from nothing but round-trip t
 
 <p class="loc-honest">Nothing is sent to this site. Your browser times tiny requests to Amazon and Google cloud regions, which see your IP address the way any website does. The answer is a region, not an address.</p>
 
+<div class="loc-runrow">
+  <button type="button" id="loc-run" class="loc-btn loc-btn--primary" disabled>Loading...</button>
+  <p id="loc-progress" class="loc-progress">Nothing runs until you press the button. A run takes about 20 seconds and about 0.7 MB.</p>
+</div>
+
 <figure class="loc-mapfig">
   <div class="loc-maptools">
     <div class="loc-seg" role="group" aria-label="Map view">
@@ -35,10 +40,6 @@ description: "Your browser estimates where you are from nothing but round-trip t
   <figcaption id="loc-caption" class="loc-caption">Each dot is a cloud region. Point at a dot to read its numbers; the Measurements table below lists them all.</figcaption>
 </figure>
 
-<div class="loc-runrow">
-  <button type="button" id="loc-run" class="loc-btn loc-btn--primary" disabled>Loading...</button>
-  <p id="loc-progress" class="loc-progress">Nothing runs until you press the button. A run takes about 20 seconds and about 0.7 MB.</p>
-</div>
 <noscript><p class="loc-note">This page needs JavaScript: the timing happens in your browser.</p></noscript>
 <p id="loc-live" class="loc-sr" role="status" aria-live="polite"></p>
 
@@ -60,7 +61,7 @@ description: "Your browser estimates where you are from nothing but round-trip t
       <th scope="col" data-key="rtt" class="num" aria-sort="ascending"><button type="button">Round trip (ms)</button></th>
       <th scope="col" data-key="jitter" class="num" aria-sort="none"><button type="button">Jitter (ms)</button></th>
       <th scope="col" data-key="hard" class="num" aria-sort="none"><button type="button">Light in vacuum, max (km)</button></th>
-      <th scope="col" data-key="fibre" class="num" aria-sort="none"><button type="button">Fibre at fitted b (km)</button></th>
+      <th scope="col" data-key="fibre" class="num" aria-sort="none"><button type="button">Fiber at fitted b (km)</button></th>
       <th scope="col" data-key="dist" class="num" aria-sort="none"><button type="button">From estimate (km)</button></th>
       <th scope="col" data-key="resid" class="num" aria-sort="none"><button type="button">Residual (ms)</button></th>
       <th scope="col" data-key="role" aria-sort="none"><button type="button">Role</button></th>
@@ -75,7 +76,7 @@ description: "Your browser estimates where you are from nothing but round-trip t
 <p class="loc-eq notranslate" translate="no">d<sub>i</sub> &le; c &times; rtt<sub>i</sub> / 2</p>
 <p>away. A candidate point that breaks any one of these bounds is impossible. They are the faint dashed circles on the map. <span class="loc-live" id="lm-hard"></span></p>
 
-<p><strong>Glass is slower.</strong> In optical fibre, light is slowed by the glass's refractive index of 1.468 to v<sub>f</sub> = c / 1.468, about 204,218 km/s, roughly two thirds of c. If the first hop of your own connection (router, cable, radio, VPN tunnel) and the servers' own time to answer cost <var>b</var> milliseconds each way, light in glass can have covered at most</p>
+<p><strong>Glass is slower.</strong> In optical fiber, light is slowed by the glass's refractive index of 1.468 to v<sub>f</sub> = c / 1.468, about 204,218 km/s, roughly two thirds of c. If the first hop of your own connection (router, cable, radio, VPN tunnel) and the servers' own time to answer cost <var>b</var> milliseconds each way, light in glass can have covered at most</p>
 <p class="loc-eq notranslate" translate="no">d<sub>i</sub> &le; v<sub>f</sub> &times; (rtt<sub>i</sub> / 2 &minus; b)</p>
 <p>These are the solid circles. While the run is going they are drawn with b = 0, a true limit for light in glass. After the fit they are drawn with the fitted b, and then they are estimates, not limits: the page cannot measure b, it fits it (below), and the fitted b also absorbs how much more the short routes near you zigzag. It can even come out longer than half of your fastest round trip; a region that close gets no solid circle, and the table says "under b". Only the dashed circles are hard limits. <span class="loc-live" id="lm-fibre"></span></p>
 
@@ -104,12 +105,12 @@ description: "Your browser estimates where you are from nothing but round-trip t
 </div>
 
 <h2 class="loc-h">What if</h2>
-<p class="loc-p">Each button below takes the samples you just measured, changes them the way a VPN, a cellular link or a satellite would, and runs the same fit again. The map draws the simulated answer in a second colour over your real one. Every number here is modelled, not measured.</p>
+<p class="loc-p">Each button below takes the samples you just measured, changes them the way a VPN, a cellular link or a satellite would, and runs the same fit again. The map draws the simulated answer in a second color over your real one. Every number here is modeled, not measured.</p>
 <div class="loc-chips" id="loc-sims" role="group" aria-label="Simulations">
   <button type="button" class="loc-btn loc-chip" data-sim="vpn-frankfurt" aria-pressed="false" disabled>VPN exit in Frankfurt</button>
   <button type="button" class="loc-btn loc-chip" data-sim="vpn-ashburn" aria-pressed="false" disabled>VPN exit in Ashburn</button>
   <button type="button" class="loc-btn loc-chip" data-sim="vpn-singapore" aria-pressed="false" disabled>VPN exit in Singapore</button>
-  <button type="button" class="loc-btn loc-chip" data-sim="vpn-saopaulo" aria-pressed="false" disabled>VPN exit in Sao Paulo</button>
+  <button type="button" class="loc-btn loc-chip" data-sim="vpn-saopaulo" aria-pressed="false" disabled>VPN exit in São Paulo</button>
   <button type="button" class="loc-btn loc-chip" data-sim="vpn-nearest" aria-pressed="false" disabled>VPN exit nearest to me</button>
   <button type="button" class="loc-btn loc-chip" data-sim="cell" aria-pressed="false" disabled>Cellular (4G/5G)</button>
   <button type="button" class="loc-btn loc-chip" data-sim="hotspot" aria-pressed="false" disabled>Wi-Fi hotspot on a phone</button>
@@ -126,8 +127,8 @@ description: "Your browser estimates where you are from nothing but round-trip t
 
 <h2 class="loc-h">Notes and limits</h2>
 <ul class="loc-notes">
-  <li>How good is it? Tried on real round trips measured between 33 Amazon regions, each region in turn playing the visitor with its own server left out, the best point landed a median of about 260 km from the truth, and the shaded region held the true place in 27 of the 33 cases. The settings were tuned on these same cases, and links between data centres are cleaner than home ones, so expect it to do somewhat worse for you. Where no cloud region is within a few thousand km, as in South America or southern Africa with only Amazon's regions, it can miss by thousands.</li>
-  <li>The answer is a region. Fibre routes zigzag, Safari rounds timers to a millisecond, and cloud regions are metros, not buildings. A millisecond of round trip is about 100 km of fibre each way, so in Safari each light-in-vacuum bound is widened by 1 ms of round trip, about 150 km, to stay a true limit. Each region sits at the city that names or hosts it.</li>
+  <li>How good is it? Tried on real round trips measured between 33 Amazon regions, each region in turn playing the visitor with its own server left out, the best point landed a median of about 260 km from the truth, and the shaded region held the true place in 27 of the 33 cases. The settings were tuned on these same cases, and links between data centers are cleaner than home ones, so expect it to do somewhat worse for you. Where no cloud region is within a few thousand km, as in South America or southern Africa with only Amazon's regions, it can miss by thousands.</li>
+  <li>The answer is a region. Fiber routes zigzag, Safari rounds timers to a millisecond, and cloud regions are metros, not buildings. A millisecond of round trip is about 100 km of fiber each way, so in Safari each light-in-vacuum bound is widened by 1 ms of round trip, about 150 km, to stay a true limit. Each region sits at the city that names or hosts it.</li>
   <li>A VPN relocates the answer to its exit; a cellular or satellite link widens it; a geostationary satellite defeats it.</li>
   <li>The cloud regions pinged see your IP address, as every website does. This site receives nothing: no cookies, no storage, nothing in the address bar, no events beyond the site's ordinary page view.</li>
   <li>Endpoints come and go; an unanswered region is left out, and with fewer than 8 answers the page says so.</li>
@@ -135,7 +136,7 @@ description: "Your browser estimates where you are from nothing but round-trip t
 </ul>
 
 <h3 class="loc-h3">Credits</h3>
-<p class="loc-credit">Map: Natural Earth land polygons (public domain). Endpoints: the public health URLs of Amazon DynamoDB (<code class="notranslate" translate="no">dynamodb.&lt;region&gt;.amazonaws.com/ping</code>) and the Google Cloud Run ping services listed by gcping.com. The fibre index of 1.468 is the effective group index Corning publishes for its SMF-28 Ultra single-mode fibre (1.4676 at 1310 nm, 1.4682 at 1550 nm). The idea of turning delays into distance constraints comes from Gueye, Ziviani, Crovella and Fdida, "Constraint-Based Geolocation of Internet Hosts", IEEE/ACM Transactions on Networking, 2006; the shared first-hop fit is the same trick GPS uses for a receiver's clock error. The accuracy figures in the notes use the public matrix of round trips between AWS regions published by cloudping.co.</p>
+<p class="loc-credit">Map: Natural Earth land polygons (public domain). Endpoints: the public health URLs of Amazon DynamoDB (<code class="notranslate" translate="no">dynamodb.&lt;region&gt;.amazonaws.com/ping</code>) and the Google Cloud Run ping services listed by gcping.com. The fiber index of 1.468 is the effective group index Corning publishes for its SMF-28 Ultra single-mode fiber (1.4676 at 1310 nm, 1.4682 at 1550 nm). The idea of turning delays into distance constraints comes from Gueye, Ziviani, Crovella and Fdida, "Constraint-Based Geolocation of Internet Hosts", IEEE/ACM Transactions on Networking, 2006; the shared first-hop fit is the same trick GPS uses for a receiver's clock error. The accuracy figures in the notes use the public matrix of round trips between AWS regions published by cloudping.co.</p>
 
 </div>
 
@@ -158,7 +159,8 @@ description: "Your browser estimates where you are from nothing but round-trip t
 .loc-note { font-size: 0.9em; opacity: 0.85; }
 
 /* ---- the map ---- */
-/* Sized by the window's height too, so the title, the map and the button fit on one screen. */
+/* Sized by the window's height too, so the title, the button and the map fit on one screen
+   (the run row sits above the map, so the button is in view at every desktop size). */
 .loc-mapfig { display: block; margin: 0 0 0.6rem; max-width: min(100%, max(520px, calc((100vh - 540px) * 2))); }
 .loc-maptools { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; margin-bottom: 0.45rem; }
 .loc-seg { display: inline-flex; }
@@ -186,8 +188,8 @@ description: "Your browser estimates where you are from nothing but round-trip t
 .loc-btn--primary { background: #82a6cc; border-color: #82a6cc; color: #10161d; font-weight: 600; padding: 0.6em 1.3em; min-height: 44px; }
 .loc-btn--primary:hover { background: #a3c2e0; }
 .loc-btn--primary:disabled { opacity: 0.6; }
-.loc-runrow { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem 1rem; margin: 0.8rem 0 0.4rem; }
-.loc-progress { margin: 0; font-size: 0.92em; font-variant-numeric: tabular-nums; }
+.loc-runrow { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem 1rem; margin: 0 0 0.9rem; }
+.loc-runrow .loc-progress { margin: 0; font-size: 0.92em; font-variant-numeric: tabular-nums; }
 .loc-chips { display: flex; flex-wrap: wrap; gap: 0.45rem; margin: 0.6rem 0 0.8rem; }
 .loc-chip { font-size: 0.92em; }
 @media (pointer: coarse) {
@@ -195,9 +197,10 @@ description: "Your browser estimates where you are from nothing but round-trip t
   .loc-table th button { min-height: 44px; }
 }
 /* the fixed theme button sits at the bottom left (left 1.25rem, 2.6rem wide);
-   on phone heights and in windows narrower than 1280 px it can land on the run
-   button at load, so the run row starts to the right of it */
-@media (max-width: 1279px) {
+   the run row sits above the map (about 380 px down), so only short windows
+   narrower than 1280 px (phone landscape) can put it there: the row then starts
+   to the right of the button */
+@media (max-width: 1279px) and (max-height: 560px) {
   .loc-runrow { padding-left: 3.5rem; }
 }
 
@@ -221,6 +224,12 @@ description: "Your browser estimates where you are from nothing but round-trip t
 .loc-table th, .loc-table td { padding: 0.35em 0.6em; border-bottom: 1px solid rgba(127,127,127,0.2); text-align: left; white-space: nowrap; }
 .loc-table th { position: sticky; top: 0; z-index: 1; background: #1c1c1c; padding: 0; }
 .loc-table th button { font: inherit; font-weight: 600; color: inherit; background: none; border: 0; padding: 0.45em 0.6em; cursor: pointer; width: 100%; text-align: inherit; white-space: nowrap; }
+/* desktop: headings wrap (numbers stay on one line), so all ten columns fit from 1024 px up;
+   phones keep one-line headings and scroll the table sideways */
+@media (min-width: 769px) {
+  .loc-table th { white-space: normal; vertical-align: bottom; }
+  .loc-table th button { white-space: normal; }
+}
 .loc-table th[aria-sort="ascending"] button::after { content: " \2191"; }
 .loc-table th[aria-sort="descending"] button::after { content: " \2193"; }
 .loc-table .num { text-align: right; }
@@ -242,6 +251,8 @@ description: "Your browser estimates where you are from nothing but round-trip t
 .loc-simout { min-height: 2.5rem; }
 .loc-notes li { margin: 0.35rem 0; }
 .loc-credit { font-size: 0.88em; opacity: 0.9; }
+/* the theme sets p > code to 0.75em, under 12 px inside this 0.88em line */
+.loc-credit code { font-size: max(12px, 0.85em); }
 
 /* ---- light theme (manual and OS) ---- */
 html[data-theme="light"] .loc-btn[aria-pressed="true"], html[data-theme="light"] .loc-btn--primary { background: #34568a; border-color: #34568a; color: #fff; }

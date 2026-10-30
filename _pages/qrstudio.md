@@ -18,12 +18,12 @@ description: "A private, in-browser QR utility by Keane Lucas: generate static Q
   </p>
 
   <div class="qs-tabs" role="tablist" aria-label="QR Studio mode">
-    <button id="qs-tab-gen" class="qs-tab qs-tab--on" type="button" role="tab" aria-selected="true">Generate</button>
-    <button id="qs-tab-scan" class="qs-tab" type="button" role="tab" aria-selected="false">Scan</button>
+    <button id="qs-tab-gen" class="qs-tab qs-tab--on" type="button" role="tab" aria-selected="true" aria-controls="qs-gen">Generate</button>
+    <button id="qs-tab-scan" class="qs-tab" type="button" role="tab" aria-selected="false" aria-controls="qs-scan" tabindex="-1">Scan</button>
   </div>
 
   <!-- ===================== GENERATE ===================== -->
-  <section id="qs-gen" class="qs-panel" role="tabpanel">
+  <section id="qs-gen" class="qs-panel" role="tabpanel" aria-labelledby="qs-tab-gen">
     <div class="qs-grid">
       <div class="qs-left">
         <label class="qs-field"><span>What should the code contain?</span>
@@ -135,7 +135,7 @@ description: "A private, in-browser QR utility by Keane Lucas: generate static Q
   </section>
 
   <!-- ===================== SCAN ===================== -->
-  <section id="qs-scan" class="qs-panel" role="tabpanel" hidden>
+  <section id="qs-scan" class="qs-panel" role="tabpanel" aria-labelledby="qs-tab-scan" hidden>
     <div class="qs-grid">
       <div class="qs-left">
         <div id="qs-drop" class="qs-drop" tabindex="0" role="button">
@@ -147,16 +147,17 @@ description: "A private, in-browser QR utility by Keane Lucas: generate static Q
           <button id="qs-cam-stop" class="qs-btn" type="button" hidden>Stop camera</button>
         </div>
         <video id="qs-video" class="qs-video" muted playsinline hidden></video>
-        <p class="qs-camnote" id="qs-camnote"></p>
+        <p class="qs-camnote" id="qs-camnote" role="status" aria-live="polite"></p>
       </div>
       <div class="qs-right">
         <h2 class="qs-h">Result</h2>
-        <p class="qs-status" id="qs-scan-status">Nothing decoded yet.</p>
+        <p class="qs-status" id="qs-scan-status" role="status" aria-live="polite">Nothing decoded yet.</p>
         <div id="qs-result" hidden>
           <div id="qs-items">
             <div class="qs-item">
               <p class="qs-item__label" hidden></p>
-              <pre class="qs-code qs-code--result notranslate" translate="no"><code id="qs-decoded"></code></pre>
+              <pre class="qs-code qs-code--result notranslate" translate="no"><code id="qs-decoded" dir="ltr"></code></pre>
+              <p class="qs-item__host" hidden></p>
               <button id="qs-copy" class="qs-btn qs-copy" type="button">Copy text</button>
             </div>
           </div>
@@ -294,6 +295,9 @@ html[data-theme="light"] .qs-drop:focus-visible { border-color: #34568a; outline
 .qs-item__label { font-size: 0.85em; opacity: 0.8; margin: 0 0 0.3rem; font-variant-numeric: tabular-nums; }
 .qs-item .qs-code { margin-top: 0; }
 .qs-copy { margin-bottom: 0.2rem; }
+/* a hidden format character (bidi override, zero-width space) shown as a visible marker */
+.qs-cf { display: inline-block; font-size: 0.85em; padding: 0 0.2em; margin: 0 0.1em; border: 1px solid currentColor; border-radius: 3px; white-space: nowrap; }
+.qs-item__host { font-size: 0.9em; line-height: 1.5; margin: -0.3rem 0 0.6rem; overflow-wrap: anywhere; }
 #qs-linkwarn { margin-top: 0.8rem; }
 .qs-warn { font-size: 0.9em; opacity: 0.85; line-height: 1.55; border-left: 3px solid rgba(127,127,127,0.5); padding-left: 0.7em; margin: 0 0 0.8rem; }
 

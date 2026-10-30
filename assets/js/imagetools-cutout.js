@@ -1859,9 +1859,15 @@
     var stale = staleFor(eng);
     try {
       if (!engineReady) {
+        /* The status line is a live region: a line per megabyte read out about
+           a hundred announcements, so it moves in 10 MB steps (and at the end). */
+        var lastStep = -1;
         await eng.load(function (done, total) {
-          if (stale()) return;
-          if (total > 1) setStatus('Loading the cutter… ' + Math.round(done / 1048576) + ' of ' + Math.round(total / 1048576) + ' MB');
+          if (stale() || !(total > 1)) return;
+          var mb = Math.round(done / 1048576), all = Math.round(total / 1048576), step = done >= total ? Infinity : Math.floor(mb / 10);
+          if (step === lastStep) return;
+          lastStep = step;
+          setStatus('Loading the cutter… ' + mb + ' of ' + all + ' MB');
         });
         if (stale()) return bailEngine(eng) && undefined;
         engineReady = true;

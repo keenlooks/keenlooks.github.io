@@ -11,11 +11,12 @@
    the engines are served from this site and the PDF stays in the page.
 
    External file (never HTML-compressed) so // comments are fine here. */
-(function () {
+(function boot() {
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
   var PT = window.__PT;
-  if (!PT || !PT.PURE) return;
+  // the core starts once the PDF engines have loaded (after the page): wait for it
+  if (!PT || !PT.PURE) { if (!boot.waiting) { boot.waiting = true; window.addEventListener('pt-ready', function () { boot(); }, { once: true }); } return; }
   var PURE = PT.PURE;
 
   // ---------- small shared helpers ----------
@@ -156,7 +157,7 @@
       PT.closeDialog(pnDialog);
       if (!PT.pages().length || PT.isBusy()) return;
       var cfg = {
-        fmt: pnFmt.value === 'nofm' ? 'nofm' : 'n',
+        fmt: (pnFmt.value === 'nofm' || pnFmt.value === 'slash') ? pnFmt.value : 'n',
         pos: pnPos.value === 'br' ? 'br' : 'bc',
         start: Math.max(1, parseInt(pnStart.value, 10) || 1),
         skipFirst: !!pnSkip.checked,
@@ -348,7 +349,7 @@
   function ocrStore(v) {
     try { if (window.localStorage) window.localStorage.setItem(OCR_KEY, v); } catch (e) { /* private mode */ }
   }
-  function mb(n) { return (n / 1e6).toFixed(1) + '\u00a0MB'; }
+  function mb(n) { return (PT.fmtNum ? PT.fmtNum(n / 1e6, 1) : (n / 1e6).toFixed(1)) + '\u00a0MB'; }
 
   function loadTesseract() {
     if (window.Tesseract) return Promise.resolve(window.Tesseract);
@@ -381,7 +382,53 @@
     return out;
   }
 
-  function runOcr(idxs, langs) {
+  // Does this page already carry real text? Counts the glyphs pdf.js would PAINT: text
+  // drawn invisibly (render mode 3 or 7, a fill opacity of 0, or inside this tool's own
+  // OCRText marked content: an earlier OCR layer, ours or another tool's) does not count,
+  // so a scan with a junk OCR layer can be read again. A flattened or blank page has none.
+  // 32 glyphs, so a scanner's stamp or a page number alone does not stop a scan from
+  // being read.
+  var TEXT_MIN_GLYPHS = 32;
+  function pageHasText(pg) {
+    if (pg.raster || pg.blank || pg.docIndex < 0 || !PT.pdfjsPage) return Promise.resolve(false);
+    var OPS = window.pdfjsLib && window.pdfjsLib.OPS;
+    if (!OPS) return Promise.resolve(false);
+    return PT.pdfjsPage(pg).then(function (page) { return page.getOperatorList(); }).then(function (ol) {
+      var mode = 0, alpha = 1, stack = [], mc = [], n = 0, fa = ol.fnArray, aa = ol.argsArray;
+      var ocrTag = PURE.OCR_TAG || 'OCRText';
+      for (var i = 0; i < fa.length && n < TEXT_MIN_GLYPHS; i++) {
+        var fn = fa[i];
+        if (fn === OPS.save || fn === OPS.paintFormXObjectBegin) stack.push([mode, alpha]);
+        else if (fn === OPS.restore || fn === OPS.paintFormXObjectEnd) { if (stack.length) { var sv = stack.pop(); mode = sv[0]; alpha = sv[1]; } }
+        else if (fn === OPS.setTextRenderingMode) mode = aa[i] && aa[i][0];
+        else if (fn === OPS.setGState) {
+          ((aa[i] && aa[i][0]) || []).forEach(function (kv) { if (kv && kv[0] === 'ca' && typeof kv[1] === 'number') alpha = kv[1]; });
+        }
+        else if (fn === OPS.beginMarkedContent || fn === OPS.beginMarkedContentProps) { var tg = aa[i] && aa[i][0]; mc.push(tg && tg.name ? tg.name : tg); }
+        else if (fn === OPS.endMarkedContent) mc.pop();
+        else if (fn === OPS.showText || fn === OPS.showSpacedText || fn === OPS.nextLineShowText || fn === OPS.nextLineSetSpacingShowText) {
+          if (mode === 3 || mode === 7 || alpha < 0.01 || mc.indexOf(ocrTag) >= 0) continue;
+          var gl = aa[i] && aa[i][fn === OPS.nextLineSetSpacingShowText ? 2 : 0];
+          if (!gl || !gl.length) continue;
+          for (var g = 0; g < gl.length; g++) {
+            var u = gl[g] && typeof gl[g] === 'object' ? gl[g].unicode : null;
+            if (u && /\S/.test(u)) n++;
+          }
+        }
+      }
+      return n >= TEXT_MIN_GLYPHS;
+    }).catch(function () { return false; });   // unreadable: read it with OCR as before
+  }
+
+  // the status when every page in scope already has text (nothing to read)
+  function allHaveText(n) {
+    return (n === 1 ? 'This page already has' : (n === 2 ? 'Both' : 'All ' + n) + ' pages already have') +
+      ' text, so nothing was read. Uncheck “Skip pages that already have text” in the Make searchable dialog to read ' + (n === 1 ? 'it' : 'them') + ' anyway.';
+  }
+
+  // skippedText: pages of the picked scope left out because they already carry text (the
+  // check runs before this, in the dialog's Go handler; it only names them in the status)
+  function runOcr(idxs, langs, skippedText) {
     if (!idxs.length || PT.isBusy()) return;
     if (typeof WebAssembly !== 'object') { PT.setStatus('OCR needs WebAssembly, which this browser does not support.', 'err'); return; }
     langs = langs || 'eng';
@@ -390,7 +437,7 @@
     PT.setBusy(true);
     ocrCurPage = -1; ocrTotal = idxs.length;
     PT.progress(0, idxs.length, pick.code === 'eng' ? 'Loading the OCR engine (about 6 MB on first use, then cached)…'
-      : 'Loading the OCR engine and the ' + lang.en + ' model (about ' + mb(6e6 + lang.gz + (pick.eng ? ocrLang('eng').gz : 0)) + ' on first use, then cached)…');
+      : 'Loading the OCR engine and the ' + lang.en + ' model (about ' + mb(4.1e6 + lang.gz + (pick.eng ? ocrLang('eng').gz : 0)) + ' on first use, then cached)…');
     var worker = null, totalWords = 0, okPages = 0, failedPages = 0, ocrFlat = 0, dpiCapped = 0, dpiFloor = 300;
     loadTesseract().then(function (T) {
       return T.createWorker(langs, 1, {
@@ -467,11 +514,12 @@
       ocrCurPage = -1;
       PT.renderGrid(); PT.updateToolbar();
       var msg;
+      var skipNote = skippedText ? ' Skipped ' + skippedText + ' page' + (skippedText === 1 ? '' : 's') + ' that already ' + (skippedText === 1 ? 'has' : 'have') + ' text (uncheck “Skip pages that already have text” to read ' + (skippedText === 1 ? 'it' : 'them') + ' anyway).' : '';
       if (totalWords) {
-        msg = 'Added a searchable text layer: ' + totalWords + ' words across ' + okPages + ' page' + (okPages === 1 ? '' : 's') + '. Download to save the result.';
+        msg = 'Added a searchable text layer: ' + totalWords + ' words across ' + okPages + ' page' + (okPages === 1 ? '' : 's') + '. Download to save the result.' + skipNote;
       } else {
         msg = 'No text was recognized. OCR read the pages as ' + (pick.code === 'eng' ? 'English' : lang.en + (pick.eng ? ' and English' : '')) +
-          ' (the language is picked in the Make searchable dialog) and works best on clean printed scans; handwriting usually does not work.';
+          ' (the language is picked in the Make searchable dialog) and works best on clean printed scans; handwriting usually does not work.' + skipNote;
       }
       if (ocrFlat) msg += ' ' + ocrFlat + ' rotated page' + (ocrFlat > 1 ? 's were' : ' was') + ' flattened upright first (Ctrl+Z undoes it).';
       if (dpiCapped) msg += ' ' + dpiCapped + ' page' + (dpiCapped > 1 ? 's were' : ' was') + ' too large for 300 DPI and read at about ' + Math.round(dpiFloor) + ' DPI instead.';
@@ -535,10 +583,27 @@
     });
     wireCancel(ocrDialog, 'pt-ocr-cancel');
     $('pt-ocr-go').addEventListener('click', function () {
-      var idxs = scopeIdx(ocrScope), langs = ocrPicked();
+      var idxs = scopeIdx(ocrScope), langs = ocrPicked(), skip = $('pt-ocr-skip');
       ocrStore(langs);
       PT.closeDialog(ocrDialog);
-      runOcr(idxs, langs);
+      if (!idxs.length || PT.isBusy()) return;
+      if (skip && !skip.checked) { runOcr(idxs, langs, 0); return; }
+      // pages that already carry text are left out BEFORE anything is read or flattened (a
+      // rotated text page is not flattened only to be skipped), and when every page has
+      // text the OCR engine is not even downloaded
+      PT.setBusy(true);
+      var keep = [], chain = Promise.resolve();
+      idxs.forEach(function (pi, k) {
+        chain = chain.then(function () {
+          return idxs.length > 3 ? PT.progress(k, idxs.length, 'Checking page ' + (k + 1) + ' of ' + idxs.length + ' for text…') : null;
+        }).then(function () { return pageHasText(PT.pages()[pi]); })
+          .then(function (has) { if (!has) keep.push(pi); });
+      });
+      chain.then(function () {
+        PT.setBusy(false);
+        if (keep.length) runOcr(keep, langs, idxs.length - keep.length);
+        else PT.setStatus(allHaveText(idxs.length));
+      });
     });
   }
 

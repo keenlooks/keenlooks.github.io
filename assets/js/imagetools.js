@@ -43,6 +43,8 @@
   }
   function restore(c) { work.width = c.width; work.height = c.height; wctx.setTransform(1, 0, 0, 1, 0, 0); wctx.clearRect(0, 0, c.width, c.height); wctx.drawImage(c, 0, 0); editSeq++; }
   function undo() {
+    /* a keyboard turn still being previewed is not a history step yet: Undo drops it */
+    if (keyRotTimer) { clearTimeout(keyRotTimer); keyRotTimer = 0; fineAngle = 0; render(); return; }
     if (!history.length) return;
     if (fmtSwitch && fmtSwitch.depth === history.length) {
       if (elFmt) { elFmt.value = fmtSwitch.from; syncModeUI(); }
@@ -151,19 +153,63 @@
   }
 
   /* ---------- load ---------- */
+  /* Pixel size from the file header (PNG IHDR, JPEG SOF, GIF, WebP VP8X), read
+     before decoding: a valid image past the browser's canvas limit fails to
+     decode, and "corrupt" would be the wrong thing to tell the visitor. */
+  function headerDims(u) {
+    function be16(i) { return (u[i] << 8) | u[i + 1]; }
+    function le24(i) { return u[i] | (u[i + 1] << 8) | (u[i + 2] << 16); }
+    if (u.length >= 24 && u[0] === 0x89 && u[1] === 0x50 && u[2] === 0x4E && u[3] === 0x47) {
+      return { w: ((u[16] << 24) >>> 0) + (u[17] << 16) + be16(18), h: ((u[20] << 24) >>> 0) + (u[21] << 16) + be16(22) };
+    }
+    if (u.length >= 10 && u[0] === 0x47 && u[1] === 0x49 && u[2] === 0x46) return { w: u[6] | (u[7] << 8), h: u[8] | (u[9] << 8) };
+    if (u.length >= 30 && u[0] === 0x52 && u[8] === 0x57 && u[12] === 0x56 && u[13] === 0x50 && u[14] === 0x38 && u[15] === 0x58) {
+      return { w: 1 + le24(24), h: 1 + le24(27) };
+    }
+    if (u.length >= 4 && u[0] === 0xFF && u[1] === 0xD8) {
+      var i = 2;
+      while (i + 9 < u.length) {
+        if (u[i] !== 0xFF) return null;
+        var m = u[i + 1];
+        if (m === 0xFF) { i++; continue; }
+        if (m === 0x01 || (m >= 0xD0 && m <= 0xD8)) { i += 2; continue; }
+        if (m >= 0xC0 && m <= 0xCF && m !== 0xC4 && m !== 0xC8 && m !== 0xCC) return { w: be16(i + 7), h: be16(i + 5) };
+        i += 2 + be16(i + 2);
+      }
+    }
+    return null;
+  }
+  /* Chrome's and Safari's canvas cap (Firefox's is about the same): 32,767 px
+     a side, 268 million pixels in all */
+  function tooBig(d) { return !!d && (d.w > 32767 || d.h > 32767 || d.w * d.h > 268435456); }
+  function tooBigLine(d) { return 'This image is ' + wxh(d.w, d.h, ' × ') + ' px, larger than your browser can open. Resize it first.'; }
   var srcName = '';                  /* the loaded file's name, for the export name */
   function loadFile(file) {
     var st = id('it-status');
     var fname = (file && file.name) || '';
     /* some systems give HEIC/AVIF files an empty type; let the extension vouch for them */
-    var isHeic = /\.(heic|heif)$/i.test(fname) || /heic|heif/i.test((file && file.type) || '');
     if (!file || !(/^image\//.test(file.type) || /\.(heic|heif|avif)$/i.test(fname))) { if (st) st.textContent = 'That doesn’t look like an image file.'; return; }
+    /* the first 512 KB holds the header even behind a large EXIF block */
+    var head = file.slice(0, 524288);
+    (head.arrayBuffer ? head.arrayBuffer() : Promise.reject())
+      .then(function (ab) { return headerDims(new Uint8Array(ab)); }, function () { return null; })
+      .then(function (d) {
+        if (tooBig(d)) { if (st) st.textContent = tooBigLine(d); return; }
+        decodeFile(file, d);
+      });
+  }
+  function decodeFile(file, hdr) {
+    var st = id('it-status');
+    var fname = (file && file.name) || '';
+    var isHeic = /\.(heic|heif)$/i.test(fname) || /heic|heif/i.test((file && file.type) || '');
     var url = URL.createObjectURL(file);
     var im = new Image();
     im.onerror = function () {
       URL.revokeObjectURL(url);
       if (st) st.textContent = isHeic
         ? 'This browser cannot open HEIC photos (Safari can). Save the photo as a JPEG first, then choose that.'
+        /* a valid header with a big pixel count: the decoder ran out of room, the file is fine */
+        : (hdr && hdr.w * hdr.h > 100e6) ? tooBigLine(hdr)
         : 'Could not read that image (unsupported or corrupt).';
     };
     im.onload = function () {
@@ -188,7 +234,10 @@
       loaded = true; cropRect = null; cropping = false; fineAngle = 0; history = []; fmtSwitch = null; editSeq++;
       srcName = fname;
       if (disp) disp.classList.remove('it-canvas--crop');
-      var cbt = id('it-crop'); if (cbt) cbt.classList.remove('it-btn--on');
+      var cbt = id('it-crop'); if (cbt) { cbt.classList.remove('it-btn--on'); cbt.setAttribute('aria-pressed', 'false'); }
+      if (cropRow) cropRow.hidden = true;
+      /* after a load the preview is focusable, so the arrow keys can rotate it (see keyRotate) */
+      if (disp) { disp.tabIndex = 0; disp.setAttribute('aria-label', 'Image preview. The left and right arrow keys rotate it by 1 degree, or 10 with Shift.'); }
       if (st) st.textContent = '';
       var ch = id('it-choose'); if (ch) ch.textContent = 'Choose another image';
       /* the drop zone is a "choose a file" button only while it is empty; after
@@ -310,7 +359,7 @@
         var p = dispToWork(px, py);
         var x1 = Math.max(0, Math.min(work.width, p.x)), y1 = Math.max(0, Math.min(work.height, p.y));
         cropRect = { x: Math.min(cdrag.x0, x1), y: Math.min(cdrag.y0, y1), w: Math.abs(x1 - cdrag.x0), h: Math.abs(y1 - cdrag.y0) };
-        render();
+        fieldsFromRect(cropRect); render();
       } else if (rotating && centerPos) {
         var a = Math.atan2(py - centerPos.y, px - centerPos.x) * 180 / Math.PI + 90;   /* handle straight up = 0° */
         while (a > 180) a -= 360; while (a < -180) a += 360;
@@ -325,13 +374,7 @@
         render(); updateInfo(); return;
       }
       /* crop applies immediately on release — no separate "apply" step (Undo reverts it) */
-      if (cropping && cropRect && cropRect.w > 4 && cropRect.h > 4) {
-        pushHistory();
-        var c = document.createElement('canvas'); c.width = Math.round(cropRect.w); c.height = Math.round(cropRect.h);
-        c.getContext('2d').drawImage(work, cropRect.x, cropRect.y, cropRect.w, cropRect.h, 0, 0, c.width, c.height);
-        restore(c);
-        setCropping(false); updateInfo();
-      }
+      if (cropping && cropRect && cropRect.w > 4 && cropRect.h > 4) applyCrop(cropRect);
     });
     disp.addEventListener('pointercancel', function () {
       cdrag = null;
@@ -354,14 +397,65 @@
       disp.style.cursor = (Math.hypot(e.clientX - r.left - handlePos.x, e.clientY - r.top - handlePos.y) < 18) ? 'grab' : 'default';
     });
   }
+  function applyCrop(r) {
+    pushHistory();
+    var c = document.createElement('canvas'); c.width = Math.round(r.w); c.height = Math.round(r.h);
+    c.getContext('2d').drawImage(work, r.x, r.y, r.w, r.h, 0, 0, c.width, c.height);
+    restore(c);
+    setCropping(false); updateInfo();
+  }
   function setCropping(on) {
     cropping = on; if (disp) { disp.style.cursor = on ? 'crosshair' : 'default'; disp.classList.toggle('it-canvas--crop', on); }
-    var cb = id('it-crop'); if (cb) cb.classList.toggle('it-btn--on', on);
+    var cb = id('it-crop'); if (cb) { cb.classList.toggle('it-btn--on', on); cb.setAttribute('aria-pressed', on ? 'true' : 'false'); }
+    if (on && keyRotTimer) commitKeyRotation();   /* a pending keyboard turn becomes its own undo step */
     if (on) bakeRotation();          /* crop works on the un-rotated (baked) image */
     else cropRect = null;
+    if (cropRow) {
+      cropRow.hidden = !on;
+      if (on) {
+        fieldsFromRect({ x: 0, y: 0, w: work.width, h: work.height });
+        cropF[0].max = cropF[2].max = work.width; cropF[1].max = cropF[3].max = work.height;
+      }
+    }
     render();
   }
-  id('it-crop').addEventListener('click', function () { if (loaded) setCropping(!cropping); });
+  /* Crop by numbers, the keyboard path: while Crop is on, Left / Top / Width /
+     Height fields (image pixels) follow the dragged box and can be typed
+     instead; the box previews as they change, and Apply crop or Enter in a
+     field crops. Escape leaves crop mode. */
+  var cropRow = id('it-crop-row'), cropF = ['x', 'y', 'w', 'h'].map(function (k) { return id('it-crop-' + k); });
+  if (!cropF[0] || !cropF[1] || !cropF[2] || !cropF[3]) cropRow = null;
+  function fieldsFromRect(r) { if (!cropRow) return; [r.x, r.y, r.w, r.h].forEach(function (v, i) { cropF[i].value = Math.round(v); }); }
+  function rectFromFields() {
+    var W = work.width, H = work.height;
+    function num(el, d) { var n = Math.round(parseFloat(el.value)); return isFinite(n) ? n : d; }
+    var x = Math.max(0, Math.min(W - 1, num(cropF[0], 0))), y = Math.max(0, Math.min(H - 1, num(cropF[1], 0)));
+    return { x: x, y: y, w: Math.max(1, Math.min(W - x, num(cropF[2], W - x))), h: Math.max(1, Math.min(H - y, num(cropF[3], H - y))) };
+  }
+  function applyCropFields() {
+    if (!loaded || !cropping || !cropRow) return;
+    var r = rectFromFields(), cb = id('it-crop'), st = id('it-status');
+    if (r.x === 0 && r.y === 0 && r.w === work.width && r.h === work.height) { setCropping(false); if (cb) cb.focus(); return; }
+    applyCrop(r);
+    if (cb) cb.focus();
+    if (st) st.textContent = 'Cropped to ' + wxh(work.width, work.height, ' × ') + ' px.';
+  }
+  if (cropRow) {
+    cropF.forEach(function (el) {
+      el.addEventListener('input', function () { if (cropping) { cropRect = rectFromFields(); render(); } });
+      el.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); applyCropFields(); }
+        else if (e.key === 'Escape') { e.preventDefault(); setCropping(false); var cb = id('it-crop'); if (cb) cb.focus(); }
+      });
+    });
+    var applyBtn = id('it-crop-apply'); if (applyBtn) applyBtn.addEventListener('click', applyCropFields);
+  }
+  id('it-crop').addEventListener('click', function (e) {
+    if (!loaded) return;
+    setCropping(!cropping);
+    /* turned on from the keyboard (a click with no pointer behind it): go to the fields */
+    if (cropping && e.detail === 0 && cropRow) cropF[0].focus();
+  });
   id('it-undo').addEventListener('click', undo);
 
   /* ---------- rotate / flip (90° + free-angle slider) ---------- */
@@ -380,6 +474,29 @@
   }
   /* free-angle rotation is done by dragging the on-image handle (see the pointer
      handlers above); the 90° buttons are still here for quick quarter turns. */
+  /* The keyboard path to the same rotation: with the preview focused, Left and
+     Right turn it 1° (10° with Shift), previewed live like a drag; the turn is
+     baked as ONE undo step once the keys rest for 700 ms or focus leaves, so a
+     held key does not resample the image on every repeat. */
+  var keyRotTimer = 0;
+  function commitKeyRotation() {
+    clearTimeout(keyRotTimer); keyRotTimer = 0;
+    if (!loaded || Math.abs(fineAngle) < 0.001) return;
+    var a = Math.round(fineAngle);
+    pushHistory(); bakeRotation(); render(); updateInfo();
+    var st = id('it-status'); if (st) st.textContent = 'Rotated ' + px(a) + '°.';
+  }
+  if (disp) {
+    disp.addEventListener('keydown', function (e) {
+      if (!loaded || cropping || rotating || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+      e.preventDefault();
+      var a = fineAngle + (e.key === 'ArrowRight' ? 1 : -1) * (e.shiftKey ? 10 : 1);
+      while (a > 180) a -= 360; while (a < -180) a += 360;
+      fineAngle = a; render();
+      clearTimeout(keyRotTimer); keyRotTimer = setTimeout(commitKeyRotation, 700);
+    });
+    disp.addEventListener('blur', function () { if (keyRotTimer) commitKeyRotation(); });
+  }
   window.addEventListener('keydown', function (e) {
     if (!(e.ctrlKey || e.metaKey) || (e.key !== 'z' && e.key !== 'Z')) return;
     /* inside a field, Ctrl+Z belongs to the field's own text undo */
@@ -436,35 +553,65 @@
     var x = c.getContext('2d'); x.fillStyle = '#ffffff'; x.fillRect(0, 0, c.width, c.height); x.drawImage(scaled, 0, 0);
     return c;
   }
-  async function encodeToTarget(src, type, targetBytes) {
+  /* Smallest longest side the size search will shrink to before it reports
+     that a target cannot be reached. */
+  var MIN_SIDE = 64;
+  async function encodeToTarget(src, type, targetBytes, live) {
     /* toBlob can return null (not throw) when the canvas is too big for the
        browser to encode — guard every result so one null doesn't crash the
        search or clobber an earlier usable blob. */
     /* Returns { blob, w, h }: the size of the canvas actually encoded, which
-       is smaller than the source whenever the search had to downscale. */
-    var scale = 1, best = null;
-    for (var attempt = 0; attempt < 7; attempt++) {
+       is smaller than the source whenever the search had to downscale.
+       `live` (optional) is asked between encodes; once it says the request was
+       superseded the search stops and returns { stale: true }. */
+    /* JPEG/WebP: when even the lowest quality is over the target, the next
+       scale comes from the measured size (file size goes roughly with the
+       pixel count), so a 12 MP photo can still reach 20 KB; it gives up only
+       once the longest side is down to MIN_SIDE pixels. PNG keeps its seven
+       0.8 steps (down to about a quarter): shrinking a photo to a thumbnail to
+       make PNG fit is worse than saying plainly that JPEG or WebP would. */
+    var longest = Math.max(src.width, src.height);
+    var floor = Math.min(1, MIN_SIDE / longest);
+    var scale = 1, best = null, smallest;
+    function gone() { return live && !live(); }
+    for (var attempt = 0; attempt < 16; attempt++) {
+      if (gone()) return { stale: true };
       var c = scaledCanvas(src, scale);
       if (type === 'image/png') {
         var p = await toBlob(c, type);                /* png: quality not adjustable → downscale only */
         if (p) { best = { blob: p, w: c.width, h: c.height }; if (p.size <= targetBytes) return best; }
+        if (attempt >= 6) return best;
+        scale *= 0.8; continue;
       } else {
+        /* a null blob means this canvas is too big to encode: step down and retry */
         var lo = 0.25, hi = 0.95, b = await toBlob(c, type, hi);
-        if (b && b.size <= targetBytes) return { blob: b, w: c.width, h: c.height };
-        if (b) {
-          for (var it = 0; it < 8; it++) { var mid = (lo + hi) / 2; b = await toBlob(c, type, mid); if (b && b.size <= targetBytes) { best = { blob: b, w: c.width, h: c.height }; lo = mid; } else hi = mid; }
-          if (best && best.blob.size <= targetBytes) return best;
+        if (!b) { scale *= 0.8; continue; }
+        if (b.size <= targetBytes) return { blob: b, w: c.width, h: c.height };
+        if (gone()) return { stale: true };
+        var low = await toBlob(c, type, lo);           /* lowest quality first: no point searching if it is over */
+        if (!low) { scale *= 0.8; continue; }
+        if (low.size <= targetBytes) {
+          best = { blob: low, w: c.width, h: c.height };
+          for (var it = 0; it < 7; it++) {
+            if (gone()) return { stale: true };
+            var mid = (lo + hi) / 2; b = await toBlob(c, type, mid);
+            if (b && b.size <= targetBytes) { best = { blob: b, w: c.width, h: c.height }; lo = mid; } else hi = mid;
+          }
+          return best;
         }
+        smallest = low.size;
       }
-      scale *= 0.8;
+      if (scale <= floor + 1e-9) break;               /* already at the smallest size allowed */
+      scale = Math.max(floor, scale * Math.min(0.8, Math.sqrt(targetBytes / smallest) * 0.9));
     }
-    return best;   /* PNG only: the smallest it got, still over the target (the caller says so) */
+    return null;
   }
-  async function buildExport() {
+  async function buildExport(live) {
     var src = exportSource(), type = typeStr(), blob = null, w = src.width, h = src.height, encodeFailed = false, targetBytes = 0;
     if (elMode.value === 'target') {
       targetBytes = (+elTarget.value) * 1000;   /* 1 KB = 1,000 bytes: passes a "max 100 KB" check either way */
-      var hit = await encodeToTarget(src, type, targetBytes);
+      var hit = await encodeToTarget(src, type, targetBytes, live);
+      if (hit && hit.stale) return { stale: true };
       if (hit) { blob = hit.blob; w = hit.w; h = hit.h; }
       /* Distinguish "couldn't reach the target size" from "the browser refused
          to encode this canvas at all" (typically an image beyond canvas limits):
@@ -505,15 +652,17 @@
       : 'Saved ' + wxh(r.w, r.h) + ' · ' + fmtBytes(r.blob.size) + ' (metadata stripped).';
   });
 
-  var infoSeq = 0;
+  var infoSeq = 0, infoTimer = 0;
   async function updateInfo() {
     if (!loaded) return;
+    clearTimeout(infoTimer);
     id('it-dims').textContent = wxh(work.width, work.height, ' × ') + ' px';
-    /* live estimate of the export size — guard against overlapping async runs (slider drag) */
+    /* live estimate of the export size — guard against overlapping async runs (slider drag);
+       a superseded run also stops encoding between attempts instead of finishing its search */
     var my = ++infoSeq;
     var r;
-    try { r = await buildExport(); } catch (err) { r = null; }
-    if (my !== infoSeq) return;   /* a newer request superseded this one */
+    try { r = await buildExport(function () { return my === infoSeq; }); } catch (err) { r = null; }
+    if (my !== infoSeq || (r && r.stale)) return;   /* a newer request superseded this one */
     /* a failed encode must overwrite the line too — a stale estimate from the
        previous settings reads as if the current target were reachable */
     if (r && r.blob) id('it-estimate').textContent = r.missed ? missLine(r, false) : 'Output: ' + wxh(r.w, r.h) + ' · ~' + fmtBytes(r.blob.size);
@@ -521,9 +670,16 @@
       : r.encodeFailed ? 'This image is too large for your browser to re-encode.'
       : 'Cannot reach ' + fmtN(NF_INT, +elTarget.value) + ' KB even at lowest quality.';
   }
-  /* recompute the estimate when controls change */
+  /* recompute the estimate when controls change, once the control rests for
+     250 ms: a slider drag fires dozens of input events, and each estimate is a
+     full encode search. Bumping infoSeq right away stops the run in flight. */
+  function scheduleInfo() {
+    if (!loaded) return;
+    infoSeq++; clearTimeout(infoTimer);
+    infoTimer = setTimeout(updateInfo, 250);
+  }
   ['it-format', 'it-mode', 'it-qual', 'it-maxdim', 'it-target'].forEach(function (k) {
-    var e = id(k); if (e) e.addEventListener('input', function () { if (loaded) updateInfo(); });
+    var e = id(k); if (e) e.addEventListener('input', scheduleInfo);
   });
 
   /* ---------- favicon pack ---------- */
@@ -542,16 +698,40 @@
     return await toBlob(c, 'image/png');
   }
   async function blobBytes(b) { return new Uint8Array(await b.arrayBuffer()); }
+  /* favicon.ico, the file browsers and crawlers still ask the site root for:
+     an ICO directory whose entries are the 16, 32 and 48 px PNGs as they are
+     (PNG-in-ICO, read by every current browser and Windows since Vista) */
+  function icoFrom(imgs) {
+    var head = 6 + 16 * imgs.length, total = head, i;
+    for (i = 0; i < imgs.length; i++) total += imgs[i].data.length;
+    var out = new Uint8Array(total), dv = new DataView(out.buffer), off = head;
+    dv.setUint16(0, 0, true); dv.setUint16(2, 1, true); dv.setUint16(4, imgs.length, true);
+    for (i = 0; i < imgs.length; i++) {
+      var e = 6 + 16 * i, sz = imgs[i].size >= 256 ? 0 : imgs[i].size;
+      out[e] = sz; out[e + 1] = sz;                  /* width, height; color count and reserved stay 0 */
+      dv.setUint16(e + 4, 1, true); dv.setUint16(e + 6, 32, true);
+      dv.setUint32(e + 8, imgs[i].data.length, true); dv.setUint32(e + 12, off, true);
+      out.set(imgs[i].data, off); off += imgs[i].data.length;
+    }
+    return out;
+  }
   id('it-favicon').addEventListener('click', async function () {
     if (!loaded) return;
     var st = id('it-status'); st.textContent = 'Building favicon pack…';
     var sq = squareSource(), files = [], i, b;
-    for (i = 0; i < FAV_PNG.length; i++) { b = await iconBlob(sq, FAV_PNG[i]); files.push({ name: 'favicon-' + FAV_PNG[i] + 'x' + FAV_PNG[i] + '.png', data: await blobBytes(b) }); }
+    var ico = [];
+    for (i = 0; i < FAV_PNG.length; i++) {
+      b = await iconBlob(sq, FAV_PNG[i]); var d = await blobBytes(b);
+      files.push({ name: 'favicon-' + FAV_PNG[i] + 'x' + FAV_PNG[i] + '.png', data: d });
+      if (FAV_PNG[i] <= 48) ico.push({ size: FAV_PNG[i], data: d });
+    }
+    files.push({ name: 'favicon.ico', data: icoFrom(ico) });
     for (i = 0; i < APPLE.length; i++) { b = await iconBlob(sq, APPLE[i]); files.push({ name: 'apple-touch-icon.png', data: await blobBytes(b) }); }
     var enc = new TextEncoder();
     var manifest = { name: 'My Site', icons: [{ src: '/favicon-192x192.png', sizes: '192x192', type: 'image/png' }, { src: '/favicon-512x512.png', sizes: '512x512', type: 'image/png' }] };
     files.push({ name: 'site.webmanifest', data: enc.encode(JSON.stringify(manifest, null, 2)) });
     var html = [
+      '<link rel="icon" href="/favicon.ico" sizes="any">',
       '<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">',
       '<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">',
       '<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">',
@@ -560,7 +740,7 @@
     ].join('\n');
     files.push({ name: 'snippet.html', data: enc.encode(html) });
     downloadBlob(zipStore(files), 'favicon-pack.zip');
-    st.textContent = 'Favicon pack saved: ' + files.length + ' files (PNGs, manifest, and the <link> snippet).';
+    st.textContent = 'Favicon pack saved: ' + files.length + ' files (PNGs, favicon.ico, manifest, and the <link> snippet).';
   });
 
   function downloadBlob(blob, name) {

@@ -1,4 +1,7 @@
-# Vendored third-party libraries (for /pdftools/)
+---
+title: "Vendored third-party libraries (for /pdftools/)"
+description: "Licenses and sources of the third-party libraries PDF Toolbench serves from this site: pdf.js, pdf-lib, tesseract.js and qpdf."
+---
 
 These are pinned, locally-served copies so the PDF toolbench runs fully offline with no
 CDN/network calls (privacy + the site's no-external-deps ethos). Downloaded, not hotlinked.
@@ -27,7 +30,7 @@ This file is the registry for all of them, including the sibling directories
   picks the SIMD one when the browser supports it — only the two LSTM cores are vendored
   because the toolbench always runs OEM 1 / LSTM-only)
 - License: **Apache License 2.0** — copies kept in the directory as
-  `LICENSE-tesseract.js.md` and `LICENSE-tesseract.js-core.txt`
+  `LICENSE-tesseract.js.txt` and `LICENSE-tesseract.js-core.txt`
   (https://github.com/naptha/tesseract.js and https://github.com/naptha/tesseract.js-core)
 - Language data: `lang/eng.traineddata.gz` — the **tessdata_fast 4.0.0** English model,
   from https://github.com/naptha/tessdata (gh-pages, `4.0.0_fast/`), Apache License 2.0

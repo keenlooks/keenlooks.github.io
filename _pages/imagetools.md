@@ -31,14 +31,21 @@ description: "Resize an image to an exact file size in your browser, like under 
       </div>
       <div class="it-tools">
         <button id="it-choose" class="it-btn" type="button">Choose image</button>
-        <button id="it-rot-l" class="it-btn" type="button" title="Rotate 90° left">⟲</button>
-        <button id="it-rot-r" class="it-btn" type="button" title="Rotate 90° right">⟳</button>
-        <button id="it-flip-h" class="it-btn" type="button" title="Flip horizontal">⇋</button>
-        <button id="it-flip-v" class="it-btn" type="button" title="Flip vertical">⇅</button>
-        <button id="it-crop" class="it-btn" type="button" title="Drag a box on the image to crop">Crop</button>
+        <button id="it-rot-l" class="it-btn" type="button" title="Rotate 90° left" aria-label="Rotate 90° left">⟲</button>
+        <button id="it-rot-r" class="it-btn" type="button" title="Rotate 90° right" aria-label="Rotate 90° right">⟳</button>
+        <button id="it-flip-h" class="it-btn" type="button" title="Flip horizontal" aria-label="Flip horizontal">⇋</button>
+        <button id="it-flip-v" class="it-btn" type="button" title="Flip vertical" aria-label="Flip vertical">⇅</button>
+        <button id="it-crop" class="it-btn" type="button" title="Drag a box on the image to crop, or type the box in pixels" aria-pressed="false">Crop</button>
         <button id="it-cutout" class="it-btn" type="button" title="Brush what to keep and what to remove" disabled>Cut out background</button>
         <button id="it-undo" class="it-btn" type="button" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
         <button id="it-reset" class="it-btn" type="button">Reset</button>
+      </div>
+      <div id="it-crop-row" class="it-crop-row" role="group" aria-label="Crop box in pixels" hidden>
+        <label class="it-field"><span>Left</span><input id="it-crop-x" type="number" min="0" step="1" inputmode="numeric"></label>
+        <label class="it-field"><span>Top</span><input id="it-crop-y" type="number" min="0" step="1" inputmode="numeric"></label>
+        <label class="it-field"><span>Width</span><input id="it-crop-w" type="number" min="1" step="1" inputmode="numeric"></label>
+        <label class="it-field"><span>Height</span><input id="it-crop-h" type="number" min="1" step="1" inputmode="numeric"></label>
+        <button id="it-crop-apply" class="it-btn it-btn--accent" type="button">Apply crop</button>
       </div>
       <p class="it-dims"><span id="it-dims" class="notranslate" translate="no">–</span> <span class="it-hint" id="it-rot-hint"></span></p>
     </div>
@@ -73,7 +80,7 @@ description: "Resize an image to an exact file size in your browser, like under 
       <button id="it-download" class="it-btn it-btn--accent it-wide" type="button">Download image</button>
 
       <h2 class="it-h it-h--gap">Favicon pack</h2>
-      <p class="it-note">Generate every common favicon size, a <code>site.webmanifest</code>, and the
+      <p class="it-note">Generate every common favicon size, a <code>favicon.ico</code>, a <code>site.webmanifest</code>, and the
       <code>&lt;link&gt;</code> snippet, bundled as a <code>.zip</code>. A square center-crop is used.</p>
       <button id="it-favicon" class="it-btn it-wide" type="button">Generate favicon pack (.zip)</button>
 
@@ -97,8 +104,8 @@ description: "Resize an image to an exact file size in your browser, like under 
     </details>
     <details>
       <summary>What's in the favicon pack?</summary>
-      <p>PNG icons at 16, 32, 48, 96, 192, and 512 pixels, an <code>apple-touch-icon.png</code> at
-      180 pixels, a starter <code>site.webmanifest</code>, and a <code>snippet.html</code> with the
+      <p>PNG icons at 16, 32, 48, 96, 192, and 512 pixels, a <code>favicon.ico</code> holding the
+      16, 32, and 48 pixel sizes, an <code>apple-touch-icon.png</code> at 180 pixels, a starter <code>site.webmanifest</code>, and a <code>snippet.html</code> with the
       <code>&lt;link&gt;</code> tags to paste into your page's head, all in one .zip. The icons are
       cut from a square center-crop of your image.</p>
     </details>
@@ -129,7 +136,7 @@ description: "Resize an image to an exact file size in your browser, like under 
     <details>
       <summary>Why do the cutout edges look soft?</summary>
       <p>The model works on a smaller copy of the image, so its mask is scaled back up, and the
-      Feather slider then blends the edge along the colours in the photo. That keeps a hard cut
+      Feather slider then blends the edge along the colors in the photo. That keeps a hard cut
       from looking like scissor work, but fine detail like flyaway hair comes out approximate. Set
       Feather to 0 for a hard edge, or raise it for a softer one.</p>
     </details>
@@ -226,7 +233,7 @@ description: "Resize an image to an exact file size in your browser, like under 
       "name": "What is in the favicon pack?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "PNG icons at 16, 32, 48, 96, 192, and 512 pixels, an apple-touch-icon.png at 180 pixels, a starter site.webmanifest, and a snippet.html with the link tags to paste into your page's head, all in one .zip. The icons are cut from a square center-crop of your image."
+        "text": "PNG icons at 16, 32, 48, 96, 192, and 512 pixels, a favicon.ico holding the 16, 32, and 48 pixel sizes, an apple-touch-icon.png at 180 pixels, a starter site.webmanifest, and a snippet.html with the link tags to paste into your page's head, all in one .zip. The icons are cut from a square center-crop of your image."
       }
     },
     {
@@ -258,7 +265,7 @@ description: "Resize an image to an exact file size in your browser, like under 
       "name": "Why do the cutout edges look soft?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "The model works on a smaller copy of the image, so its mask is scaled back up, and the Feather slider then blends the edge along the colours in the photo. That keeps a hard cut from looking like scissor work, but fine detail like flyaway hair comes out approximate. Set Feather to 0 for a hard edge, or raise it for a softer one."
+        "text": "The model works on a smaller copy of the image, so its mask is scaled back up, and the Feather slider then blends the edge along the colors in the photo. That keeps a hard cut from looking like scissor work, but fine detail like flyaway hair comes out approximate. Set Feather to 0 for a hard edge, or raise it for a softer one."
       }
     }
   ]
@@ -303,6 +310,16 @@ description: "Resize an image to an exact file size in your browser, like under 
 .it-drop__hint { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; opacity: 0.7; pointer-events: none; line-height: 1.6; }
 
 .it-tools { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.7rem; }
+/* Crop by numbers (shown while Crop is on); `hidden` alone loses to the display rule */
+.it-crop-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.4rem 0.6rem; margin-top: 0.6rem; }
+.it-crop-row[hidden] { display: none !important; }
+.it-crop-row .it-field { margin: 0; flex: 1 1 4.2rem; max-width: 5.6rem; font-size: 0.9em; }   /* four to a line on a phone */
+.it-crop-row .it-field input { width: 100%; min-width: 0; margin: 0; }
+.it-crop-row .it-btn { padding: 0.55em 0.9em; }
+/* inside the edge: the drop zone's overflow: hidden clips an outer ring */
+#it-canvas:focus-visible { outline: 2px solid #82a6cc; outline-offset: -2px; }
+html[data-theme="light"] #it-canvas:focus-visible { outline-color: #34568a; }
+@media (prefers-color-scheme: light) { html:not([data-theme="dark"]) #it-canvas:focus-visible { outline-color: #34568a; } }
 .it-dims { font-size: 0.85em; opacity: 0.7; margin: 0.5rem 0 0; font-variant-numeric: tabular-nums; }
 .it-hint { opacity: 1; }   /* stacked on .it-dims' 0.7 it fell below AA in light */
 
@@ -350,6 +367,8 @@ html[data-theme="light"] .it-rotfield input[type="range"] { accent-color: #34568
 .it-wide { width: 100%; padding: 0.6em; margin-top: 0.3rem; }
 .it-estimate { font-size: 0.9em; opacity: 0.85; min-height: 1.2em; margin: 0.15rem 0 0.4rem; font-variant-numeric: tabular-nums; }
 .it-note { font-size: 0.85em; opacity: 0.8; line-height: 1.5; margin: 0 0 0.6rem; }
+/* the theme sets p > code to 0.75em, under 12 px inside this 0.85em note */
+.it-note code { font-size: max(12px, 0.75em); }
 .it-status { font-size: 0.88em; opacity: 0.9; min-height: 1.2em; margin: 0.8rem 0 0.4rem; }
 .it-privacy { font-size: 0.82em; opacity: 0.7; margin: 0; }
 /* The caveat carries the "Tell me" link, and opacity would fade the link below

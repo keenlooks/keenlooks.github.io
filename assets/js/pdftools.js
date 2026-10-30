@@ -14,11 +14,48 @@
      ================================================================================== */
   var PURE = {};
 
+  // every decimal-digit block a visitor's keyboard may type, mapped to ASCII 0-9 (NFKC
+  // already folds the full-width digits): Arabic-Indic, Persian, N'Ko, Devanagari,
+  // Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada, Malayalam, Sinhala, Thai,
+  // Lao, Tibetan, Myanmar, Khmer, Mongolian, full-width
+  var DIGIT_ZEROS = [0x0660, 0x06F0, 0x07C0, 0x0966, 0x09E6, 0x0A66, 0x0AE6, 0x0B66, 0x0BE6, 0x0C66, 0x0CE6,
+    0x0D66, 0x0DE6, 0x0E50, 0x0ED0, 0x0F20, 0x1040, 0x17E0, 0x1810, 0xFF10];
+  PURE.asciiDigits = function (s) {
+    var out = '', i, k, j, z;
+    s = String(s == null ? '' : s);
+    for (i = 0; i < s.length; i++) {
+      k = s.charCodeAt(i);
+      if (k > 0x7F) for (j = 0; j < DIGIT_ZEROS.length; j++) { z = DIGIT_ZEROS[j]; if (k >= z && k <= z + 9) { k = 48 + k - z; break; } }
+      out += String.fromCharCode(k);
+    }
+    return out;
+  };
+  // a typed page range as the parser reads it: NFKC (full-width digits, comma, hyphen and
+  // tilde), native digits to ASCII, the list marks a CJK or Arabic keyboard types
+  // (、 ， ､ ; ； ، ؛) to ',', and every dash, minus and wave dash to '-'
+  PURE.normalizeRange = function (str) {
+    var s = String(str == null ? '' : str);
+    try { s = s.normalize('NFKC'); } catch (e) {}
+    return PURE.asciiDigits(s)
+      .replace(/[\u3001\uFF64\u060C\u061B;]/g, ',')
+      .replace(/[\u2010-\u2015\u2212\uFE58\uFE63~\u301C\u3030]/g, '-');
+  };
+  // a number typed in the visitor's own way ("1,5", "١٫٥", "２．５") read as a decimal; for
+  // small values that never carry a thousands mark (line spacing). NaN when unreadable.
+  PURE.parseDecimal = function (str) {
+    var s = String(str == null ? '' : str);
+    try { s = s.normalize('NFKC'); } catch (e) {}
+    s = PURE.asciiDigits(s).trim().replace(/[,\u066B]/g, '.');
+    return /^[-+]?(\d+\.?\d*|\.\d+)$/.test(s) ? parseFloat(s) : NaN;
+  };
+
   // "1-5, 9, 12-" -> array of 0-based page indices (deduped, in the order given),
-  // or null if the string is invalid for a document with `total` pages.
+  // or null if the string is invalid for a document with `total` pages. A range that
+  // runs past the last page stops at it ("5-9" on a 5-page file is page 5); a part that
+  // STARTS past the last page is unreadable.
   PURE.parsePageRange = function (str, total) {
     if (str == null || !total) return null;
-    var s = String(str).trim();
+    var s = PURE.normalizeRange(str).trim();
     if (!s) return null;
     var out = [], seen = {}, parts = s.split(',');
     for (var i = 0; i < parts.length; i++) {
@@ -33,6 +70,7 @@
       if (!dash) { if (a == null) return null; b = a; }  // single number
       if (a == null) a = 1;                              // "-5" == "1-5"
       if (b == null) b = total;                          // "12-" == "12-last"
+      if (b > total && a <= total) b = total;            // "5-9" on 5 pages == "5-5"
       if (a < 1 || b > total || a > b) return null;
       for (var n = a; n <= b; n++) { if (!seen[n]) { seen[n] = 1; out.push(n - 1); } }
     }
@@ -67,6 +105,35 @@
   // second download) must not ride into exports that are no longer protected.
   PURE.dropProtectedSuffix = function (name) {
     return String(name || '').replace(/-protected(?=(?: \(\d+\))?(?:\.pdf)?$)/i, '');
+  };
+
+  // the pixel size a PNG or JPEG file declares in its header, without decoding it:
+  // { w, h } or null (not a PNG/JPEG, or no readable header)
+  PURE.imageHeaderSize = function (b) {
+    if (!b || b.length < 24) return null;
+    if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4E && b[3] === 0x47 && b[12] === 0x49 && b[13] === 0x48 && b[14] === 0x44 && b[15] === 0x52) {
+      return { w: b[16] * 16777216 + (b[17] << 16) + (b[18] << 8) + b[19], h: b[20] * 16777216 + (b[21] << 16) + (b[22] << 8) + b[23] };
+    }
+    if (b[0] === 0xFF && b[1] === 0xD8) {
+      var i = 2, n = b.length;
+      while (i + 9 < n) {
+        if (b[i] !== 0xFF) return null;
+        var m = b[i + 1];
+        if (m === 0xFF) { i++; continue; }
+        if (m === 0xD8 || m === 0x01 || (m >= 0xD0 && m <= 0xD7)) { i += 2; continue; }
+        if (m === 0xD9 || m === 0xDA) return null;
+        var len = (b[i + 2] << 8) | b[i + 3];
+        if (len < 2) return null;
+        if ((m >= 0xC0 && m <= 0xCF) && m !== 0xC4 && m !== 0xC8 && m !== 0xCC) return { w: (b[i + 7] << 8) | b[i + 8], h: (b[i + 5] << 8) | b[i + 6] };
+        i += 2 + len;
+      }
+    }
+    return null;
+  };
+  // larger than a browser can decode into a canvas: Chrome's canvas area limit (16384 x
+  // 16384 pixels) or a side past 32767
+  PURE.imageTooLarge = function (sz) {
+    return !!(sz && (sz.w > 32767 || sz.h > 32767 || sz.w * sz.h > 268435456));
   };
 
   // MS-DOS date and time words for a ZIP entry: local time, two-second resolution, and
@@ -777,13 +844,31 @@
     }
   };
 
+  // place a watermark IMAGE (text the standard fonts cannot encode, drawn by the browser):
+  // im = { wPt, hPt, basePt } is the image's size in points and, for the footer form, the
+  // distance from its top to the text's baseline. Same geometry as drawMarks (the
+  // previews): the diagonal form is centred on the page and turned along its diagonal; the
+  // footer form is centred with its baseline 34 pt above the bottom edge.
+  PURE.placeWatermarkImage = function (P, page, img, im, wm, W, H, ox, oy) {
+    ox = ox || 0; oy = oy || 0;
+    var op = wm.opacity == null ? 0.15 : wm.opacity;
+    if (wm.pos === 'foot') {
+      page.drawImage(img, { x: ox + W / 2 - im.wPt / 2, y: oy + 34 - (im.hPt - im.basePt), width: im.wPt, height: im.hPt, opacity: op });
+      return;
+    }
+    var rad = Math.atan2(H, W), c = Math.cos(rad), s = Math.sin(rad);
+    var x = W / 2 - (im.wPt / 2) * c + (im.hPt / 2) * s;
+    var y = H / 2 - (im.wPt / 2) * s - (im.hPt / 2) * c;
+    page.drawImage(img, { x: ox + x, y: oy + y, width: im.wPt, height: im.hPt, rotate: P.degrees(rad * 180 / Math.PI), opacity: op });
+  };
+
   // page-number label for output page i (0-based) of `total`, or null to skip
   PURE.pageNumText = function (cfg, i, total) {
     if (cfg.skipFirst && i === 0) return null;
     var start = cfg.start || 1;
     var n = start + i - (cfg.skipFirst ? 1 : 0);
     var m = start + total - (cfg.skipFirst ? 1 : 0) - 1;
-    return cfg.fmt === 'nofm' ? (n + ' of ' + m) : String(n);
+    return cfg.fmt === 'nofm' ? (n + ' of ' + m) : cfg.fmt === 'slash' ? (n + ' / ' + m) : String(n);
   };
 
   PURE.drawPageNum = function (P, page, font, cfg, i, total, W, H, ox, oy) {
@@ -2011,10 +2096,82 @@
      Browser app
      ================================================================================== */
   var $ = function (id) { return document.getElementById(id); };
-  if (!window.PDFLib || !window.pdfjsLib) {
-    var s0 = $('pt-status'); if (s0) s0.textContent = 'Could not load the PDF engine.';
-    return;
+  /* "tap" on touch screens, "click" otherwise */
+  (function () {
+    var v = document.querySelector('#pt-hint .pt-drop__verb');
+    try { if (v && window.matchMedia && window.matchMedia('(pointer: coarse)').matches) v.textContent = 'tap'; } catch (e) {}
+  })();
+
+  // ---- the PDF engines load AFTER the page ----
+  // pdf-lib and pdf.js used to be deferred <script>s, so they were downloaded and run before
+  // DOMContentLoaded (about 1.7 s of it on a slow phone) for a page nobody can use before
+  // choosing a file. They are fetched when the browser is idle after load, or at once when
+  // the drop zone is used or a file is chosen or dropped; the app below starts when both
+  // have run (or at once when the page still carries them as <script> tags). Files that
+  // arrive before that wait in `early`; the tools and editor modules wait for 'pt-ready'.
+  var selfSrc = (document.currentScript && document.currentScript.src) || ((document.querySelector('script[src*="pdftools.js"]') || {}).src) || '';
+  var enginesBase = selfSrc ? selfSrc.replace(/pdftools\.js.*$/, '') : '/assets/js/';
+  var enginesQuery = (selfSrc.match(/\?.*$/) || [''])[0];   // the page's cache-buster
+  var enginesP = null, appUp = false, early = [];
+  function loadEngines() {
+    if (enginesP) return enginesP;
+    if (window.PDFLib && window.pdfjsLib) return (enginesP = Promise.resolve());
+    // fetched in parallel, run in order (async = false), like the deferred tags were
+    enginesP = Promise.all(['pdflib/pdf-lib.min.js', 'pdflib/pdfjs/pdf.min.js'].map(function (f) {
+      return new Promise(function (res, rej) {
+        var s = document.createElement('script');
+        s.src = enginesBase + f + enginesQuery; s.async = false;
+        s.onload = res; s.onerror = function () { rej(new Error('could not load ' + f)); };
+        document.head.appendChild(s);
+      });
+    }));
+    return enginesP;
   }
+  function engineFailed() {
+    var s0 = $('pt-status'); if (s0) s0.textContent = 'Could not load the PDF engine.';
+    var n0 = $('pt-engine'); if (n0) n0.hidden = true;
+  }
+  function startApp() {
+    if (appUp) return;
+    if (!window.PDFLib || !window.pdfjsLib) { engineFailed(); return; }
+    appUp = true;
+    app();
+  }
+  function enginesNow(files) {
+    if (files && files.length) {
+      early.push(Array.prototype.slice.call(files));
+      var n0 = $('pt-engine'); if (n0) n0.hidden = false;
+    }
+    loadEngines().then(startApp, engineFailed);
+  }
+  if (window.PDFLib && window.pdfjsLib) { startApp(); return; }
+  (function () {
+    var dropEl = $('pt-drop'), fileEl = $('pt-file');
+    // until the app is up these stand in for its own handlers (registered later, and then
+    // these stand aside): the file chooser opens inside the click that asked for it
+    if (dropEl && fileEl) {
+      dropEl.addEventListener('click', function () { if (appUp) return; fileEl.click(); enginesNow(); });
+      dropEl.addEventListener('keydown', function (e) {
+        if (appUp || (e.key !== 'Enter' && e.key !== ' ')) return;
+        e.preventDefault(); fileEl.click(); enginesNow();
+      });
+      fileEl.addEventListener('change', function () { if (appUp) return; enginesNow(fileEl.files); fileEl.value = ''; });
+    }
+    document.addEventListener('dragover', function (e) { if (!appUp) e.preventDefault(); });
+    document.addEventListener('drop', function (e) {
+      if (appUp) return;
+      e.preventDefault();   // never let a drop navigate the tab to the file
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) enginesNow(e.dataTransfer.files);
+    });
+    function idle() {
+      if (window.requestIdleCallback) window.requestIdleCallback(function () { loadEngines().then(startApp, engineFailed); }, { timeout: 2000 });
+      else setTimeout(function () { loadEngines().then(startApp, engineFailed); }, 200);
+    }
+    if (document.readyState === 'complete') idle(); else window.addEventListener('load', idle);
+  })();
+  return;
+
+  function app() {
   var PDFLib = window.PDFLib, pdfjsLib = window.pdfjsLib;
 
   // The MINIFIED pdf-lib mangles class names, so constructor.name is useless — detect
@@ -2046,10 +2203,11 @@
   // ---- state ----
   var docs = [];             // { name, bytes:Uint8Array (for pdf-lib), js:pdfjsDoc (for rendering), formValues, pw (until decrypted) }
   var pages = [];            // page model — see newPage()
-  var pageNums = null;       // { fmt:'n'|'nofm', pos:'bc'|'br', start, skipFirst, size } or null
+  var pageNums = null;       // { fmt:'n'|'nofm'|'slash', pos:'bc'|'br', start, skipFirst, size } or null
   var lastFlattenedRot = 0;  // pages the last build rasterized because overlays sat on a rotated page
   var lastFlattenedSrc = 0;  // pages the last build rasterized because the source was encrypted/damaged
   var lastDropped = 0;       // added texts/watermarks that lost characters (not WinAnsi-encodable)
+  var lastWmImage = 0;       // watermarks drawn as an image because the standard fonts cannot encode them
   var lastSigFailed = 0;     // placed signatures that could not be embedded into the output
   var lastFormFailed = 0;    // filled form field values that could not be applied
   var lastFlattenedForm = 0; // pages the last build rasterized to keep form text the standard fonts cannot encode
@@ -2261,7 +2419,7 @@
     var beforeLen = pages.length, beforeDocs = docs.length;
     snapshot('add ' + arr.length + ' file' + (arr.length > 1 ? 's' : ''));
     var addSeq = snapSeq;   // guards the trailing dropSnapshot below (top-of-stack check)
-    var failed = [], skipped = [];
+    var failed = [], skipped = [], tooLarge = [];
     var chain = Promise.resolve();
     arr.forEach(function (f, fi) {
       chain = chain.then(function () {
@@ -2272,7 +2430,9 @@
         // one bad file must not abort the rest — isolate each with its own catch
         return bytesP.then(function (bytes) { return addPdfBytes(bytes, nm); })
           .catch(function (e) {
-            if (e && e.__ptSkip) skipped.push(nm); else failed.push(nm);
+            if (e && e.__ptSkip) skipped.push(nm);
+            else if (e && e.__ptTooLarge) tooLarge.push({ name: nm, w: e.__ptTooLarge.w, h: e.__ptTooLarge.h });
+            else failed.push(nm);
             if (window.console) console.warn('pdftools: could not add ' + nm, e);
           })
           .then(function () {
@@ -2295,11 +2455,14 @@
       var msg = [];
       if (added > 0) msg.push('Added ' + added + ' page' + (added > 1 ? 's' : '') + '.');
       if (failed.length) msg.push('Couldn’t read: ' + failed.join(', ') + ' (the file may be corrupted or an unsupported format).');
+      tooLarge.forEach(function (t) {
+        msg.push(t.name + ' is ' + fmtN(NF_INT, t.w) + ' × ' + fmtN(NF_INT, t.h) + ' pixels, larger than your browser can open. Resize it first.');
+      });
       if (skipped.length) msg.push('Skipped (password not provided): ' + skipped.join(', ') + '.');
       if (badType.length) msg.push('Skipped ' + badType.map(function (f) { return f.name; }).join(', ') + ' (not a PDF or image).');
-      var addKind = added === 0 ? 'err' : (failed.length || skipped.length || badType.length) ? 'warn' : undefined;
+      var addKind = added === 0 ? 'err' : (failed.length || skipped.length || badType.length || tooLarge.length) ? 'warn' : undefined;
       var base = msg.join(' ');
-      var names = failed.concat(skipped, badType.map(function (f) { return f.name; }));
+      var names = failed.concat(skipped, badType.map(function (f) { return f.name; }), tooLarge.map(function (t) { return t.name; }));
       setStatus(base, addKind, names);
       // a form PDF looks like any other one in the grid until you open the editor — say so
       if (added > 0) hasFillableFields(beforeDocs).then(function (yes) {
@@ -2415,6 +2578,12 @@
   function imageToPdfBytes(file) {
     return file.arrayBuffer().then(function (buf) {
       var bytes = new Uint8Array(buf);
+      // a valid but enormous picture can fail to decode, and "corrupted" would be the
+      // wrong reason then. The header size is read up front but only used once a decode
+      // has failed: embedJpg never decodes (a 33000 x 600 JPEG embeds and exports fine)
+      // and embedPng decodes in JS with no canvas limit, so refusing on size alone would
+      // turn away pictures that work. The canvas path checks the decoded size itself.
+      var hs = PURE.imageHeaderSize(bytes);
       return PDFLib.PDFDocument.create().then(function (doc) {
         function pageSize(W, H) {
           var maxSide = 1100, s = Math.min(1, maxSide / Math.max(W, H));
@@ -2443,6 +2612,9 @@
           return blobToImageBytes(file, 'image/jpeg', 0.92).then(function (jpg) { return doc.embedJpg(jpg).then(place); });
         }
         return blobToPngBytes(file).then(function (png) { return doc.embedPng(png).then(place); });   // webp/gif/bmp via canvas
+      }).catch(function (e) {
+        if (e && !e.__ptTooLarge && PURE.imageTooLarge(hs)) { var big = new Error('image too large'); big.__ptTooLarge = hs; throw big; }
+        throw e;
       });
     });
   }
@@ -2454,6 +2626,8 @@
       var url = URL.createObjectURL(file), im = new Image();
       im.onload = function () {
         URL.revokeObjectURL(url);
+        var nsz = { w: im.naturalWidth, h: im.naturalHeight };
+        if (PURE.imageTooLarge(nsz)) { var big = new Error('image too large'); big.__ptTooLarge = nsz; rej(big); return; }
         // everything in here must settle the promise — a dropped canvasToBytes rejection
         // (toBlob → null past the browser canvas size limit, e.g. a 20000px WebP) or a
         // drawImage throw would leave addFiles stuck busy forever with the toolbar inert
@@ -2629,6 +2803,39 @@
     });
   }
 
+  // a watermark whose text the standard fonts cannot encode, rendered by the browser at
+  // about 4 px per point into a transparent PNG (the same font stack and grey as the
+  // previews below), embedded ONCE per export and shared by every page that carries it.
+  // Resolves { img, wPt, hPt, basePt }.
+  function watermarkImage(out, wm, cache) {
+    var size = wm.size || 48, foot = wm.pos === 'foot';
+    var key = 'wmimg|' + (foot ? 'f' : 'd') + '|' + size + '|' + wm.text;
+    if (cache[key]) return cache[key];
+    cache[key] = new Promise(function (res, rej) {
+      var c = document.createElement('canvas'), x = c.getContext('2d');
+      var FONT = 'px Arial, Helvetica, sans-serif';
+      x.font = size + FONT;
+      var w1 = x.measureText(wm.text).width;
+      var k = Math.max(0.5, Math.min(4, 6000 / Math.max(1, w1 + size)));
+      var pad = size * 0.25;
+      c.width = Math.max(1, Math.ceil((w1 + 2 * pad) * k)); c.height = Math.max(1, Math.ceil(size * 1.6 * k));
+      x = c.getContext('2d');
+      x.font = (size * k) + FONT; x.fillStyle = '#808080'; x.textAlign = 'center';
+      var basePx = c.height / 2;
+      if (foot) { x.textBaseline = 'alphabetic'; basePx = Math.round(size * 1.15 * k); }
+      else x.textBaseline = 'middle';
+      x.fillText(wm.text, c.width / 2, basePx);
+      var cw = c.width, ch = c.height;
+      canvasToBytes(c, 'image/png').then(function (png) {
+        c.width = 0;
+        return out.embedPng(png);
+      }).then(function (img) {
+        res({ img: img, wPt: cw / k, hPt: ch / k, basePt: basePx / k });
+      }, rej);
+    });
+    return cache[key];
+  }
+
   // watermarks + page numbers only (also used by the editor preview, which shows
   // texts/sigs as live DOM elements instead)
   function drawMarks(ctx, pg, tw, th, Wpt, Hpt, gridIdx) {
@@ -2718,8 +2925,10 @@
       var acts = document.createElement('div');
       acts.className = 'pt-thumb__acts';
       var eb = document.createElement('button'); eb.className = 'pt-thumb__act'; eb.type = 'button'; eb.title = 'Edit page (text, signature, redact, white-out, form)'; eb.textContent = '✎';
+      eb.setAttribute('aria-label', 'Edit page ' + (idx + 1));
       eb.addEventListener('click', function (e) { e.stopPropagation(); if (!busy && window.__PT.openEditor) window.__PT.openEditor(idx); });
       var rb = document.createElement('button'); rb.className = 'pt-thumb__act'; rb.type = 'button'; rb.title = 'Rotate 90°'; rb.textContent = '⟳';
+      rb.setAttribute('aria-label', 'Rotate page ' + (idx + 1) + ' 90° clockwise');
       rb.addEventListener('click', function (e) {
         e.stopPropagation(); if (busy) return;
         setBusy(true);
@@ -2738,6 +2947,7 @@
         }).then(function () { setBusy(false); });
       });
       var db = document.createElement('button'); db.className = 'pt-thumb__act'; db.type = 'button'; db.title = 'Delete page'; db.textContent = '×';
+      db.setAttribute('aria-label', 'Delete page ' + (idx + 1));
       db.addEventListener('click', function (e) {
         e.stopPropagation(); if (busy) return;
         snapshot('delete page ' + (idx + 1));
@@ -2904,7 +3114,7 @@
     else if (st.idx) { rangeInfo.textContent = '→ ' + st.idx.length + ' page' + (st.idx.length > 1 ? 's' : ''); rangeInfo.title = ''; rangeInfo.classList.remove('pt-range-info--bad'); }
     else {
       rangeInfo.textContent = 'not a valid range';
-      rangeInfo.title = 'This range could not be read, so the buttons use the pages selected in the grid instead. Try something like 1-5, 9, 12-';
+      rangeInfo.title = 'This range could not be read (the document has ' + pages.length + ' page' + (pages.length === 1 ? '' : 's') + '), so the buttons use the pages selected in the grid instead. Try something like 1-5, 9, 12-';
       rangeInfo.classList.add('pt-range-info--bad');
     }
   }
@@ -2954,8 +3164,9 @@
         ? 'Download ONLY those pages as their own PDF. The document here stays as it is.'
         : 'Select pages (or type a range in the Pages box) first, then download just those as their own PDF.';
     }
-    // Split always has a fallback (the typed range, else the whole document), so an
-    // invalid range must not disable it — only having zero pages at all should
+    // Split always has a fallback (the typed range; an unreadable one falls back to the
+    // grid selection, else the whole document), so an invalid range must not disable it —
+    // only having zero pages at all should
     if (btnSplit) btnSplit.disabled = !has || busy;
     if (btnDownload) {
       btnDownload.disabled = !has || busy;
@@ -3282,6 +3493,18 @@
     }
     (pg.wms || []).forEach(function (wm) {
       chain = chain.then(function () {
+        // characters outside WinAnsi (Cyrillic, CJK, Arabic, Polish or Turkish letters):
+        // drawn by the browser into a transparent image, placed and rotated exactly where
+        // the text would go, at the same grey and opacity; the page stays vector
+        if (!PURE.winAnsiOk(wm.text)) {
+          return watermarkImage(out, wm, fontCache).then(function (im) {
+            PURE.placeWatermarkImage(PDFLib, info.page, im.img, im, wm, vb.w, vb.h, vb.x, vb.y);
+            lastWmImage++;
+          }).catch(function (e) {
+            if (window.console) console.warn('pdftools: the watermark image could not be drawn; drawing its encodable characters.', e);
+            return helv().then(function (font) { if (PURE.drawWatermark(PDFLib, info.page, font, wm, vb.w, vb.h, vb.x, vb.y)) lastDropped++; });
+          }).catch(function (e2) { lastDropped++; if (window.console) console.warn('pdftools: a watermark could not be drawn.', e2); });
+        }
         return helv().then(function (font) {
           // drawWatermark falls back to the WinAnsi-encodable remainder itself and
           // reports whether characters had to be dropped — surface that in the status
@@ -3610,8 +3833,10 @@
   function buildPdf(pageList, onTick, numMap, sharedCache) {
     var cache = sharedCache || {}, fontCache = {}, failures = 0;
     lastFlattenedRot = 0; lastFlattenedSrc = 0; lastDropped = 0;
-    lastSigFailed = 0; lastFormFailed = 0; lastDpiCapped = 0; lastDpiFloor = 0; lastFlattenedForm = 0;
-    return PDFLib.PDFDocument.create().then(function (out) {
+    lastSigFailed = 0; lastFormFailed = 0; lastDpiCapped = 0; lastDpiFloor = 0; lastFlattenedForm = 0; lastWmImage = 0;
+    // Strip metadata: no Info dictionary at all (pdf-lib would write its producer and the
+    // time; emptied keys and 1970 dates read as "Created 1/1/1970" in viewers)
+    return PDFLib.PDFDocument.create(chkStrip && chkStrip.checked ? { updateMetadata: false } : undefined).then(function (out) {
       var routes = new Array(pageList.length);
 
       // ---- pass one, part A: route every page. No page is added to `out` yet.
@@ -3747,11 +3972,63 @@
     return out.sort(function (a, b) { return a - b; });
   }
 
+  // Strip metadata, beyond the document Info (which a stripped export never gets: buildPdf
+  // creates it with updateMetadata false, so there are no empty keys and no 1970 dates):
+  // the XMP packets, PieceInfo and LastModified that copied pages, images and form
+  // XObjects carry, and the camera data (EXIF with GPS, XMP, IPTC, comments) inside JPEG
+  // images already in the PDF, through the same PURE.cleanJpeg the photos you add go
+  // through. The pixels are untouched. Objects only those entries pointed to are deleted
+  // (pdf-lib writes every registered object); anything still reachable stays.
+  function stripHidden(out) {
+    var P = PDFLib, ctx = out.context, N = function (n) { return P.PDFName.of(n); };
+    try {
+      var ir = ctx.trailerInfo.Info;
+      if (ir) { ctx.trailerInfo.Info = undefined; if (ir instanceof P.PDFRef) ctx.delete(ir); }
+    } catch (e0) {}
+    var KEYS = ['Metadata', 'PieceInfo', 'LastModified'], dropped = [];
+    var PAGE = N('Page'), IMG = N('Image'), FORM = N('Form'), DCT = N('DCTDecode');
+    ctx.enumerateIndirectObjects().forEach(function (e) {
+      var ref = e[0], obj = e[1], dict = null, st = null;
+      try {
+        if (obj instanceof P.PDFStream) { st = obj.dict.get(N('Subtype')); if (st === IMG || st === FORM) dict = obj.dict; }
+        else if (obj instanceof P.PDFDict && obj.get(N('Type')) === PAGE) dict = obj;
+        if (!dict) return;
+        KEYS.forEach(function (k) { var v = dict.get(N(k)); if (v !== undefined) { dropped.push(v); dict.delete(N(k)); } });
+        if (st === IMG && obj instanceof P.PDFRawStream) {
+          var fl = dict.get(N('Filter'));
+          if (fl instanceof P.PDFArray && fl.size() === 1) fl = fl.get(0);
+          if (fl === DCT) {
+            var cj = PURE.cleanJpeg(obj.contents);
+            if (cj && cj.bytes && cj.bytes.length < obj.contents.length) ctx.assign(ref, P.PDFRawStream.of(dict, cj.bytes));
+          }
+        }
+      } catch (e1) { if (window.console) console.warn('pdftools: could not strip an object.', e1); }
+    });
+    if (!dropped.length) return;
+    try {
+      var seen = {};
+      var walk = function (o, mark) {
+        var stack = [o];
+        while (stack.length) {
+          var x = stack.pop();
+          if (!x) continue;
+          if (x instanceof P.PDFRef) { var k = x.tag || String(x); if (mark[k]) continue; mark[k] = x; stack.push(ctx.lookup(x)); }
+          else if (x instanceof P.PDFDict) x.entries().forEach(function (en) { stack.push(en[1]); });
+          else if (x instanceof P.PDFArray) x.asArray().forEach(function (v) { stack.push(v); });
+          else if (x instanceof P.PDFStream) stack.push(x.dict);
+        }
+      };
+      var cand = {};
+      dropped.forEach(function (v) { walk(v, cand); });
+      walk(ctx.trailerInfo.Root, seen);
+      if (ctx.trailerInfo.Encrypt) walk(ctx.trailerInfo.Encrypt, seen);
+      Object.keys(cand).forEach(function (k) { if (!seen[k]) ctx.delete(cand[k]); });
+    } catch (e2) { if (window.console) console.warn('pdftools: could not drop the stripped objects.', e2); }
+  }
+
   function applyMetadata(out, cache, list) {
     if (chkStrip.checked) {
-      out.setTitle(''); out.setAuthor(''); out.setSubject(''); out.setKeywords([]);
-      out.setProducer(''); out.setCreator('');
-      try { out.setCreationDate(new Date(0)); out.setModificationDate(new Date(0)); } catch (e) {}
+      stripHidden(out);
       return Promise.resolve();
     }
     // not stripping: carry over title/author/subject from the first source doc that
@@ -3803,9 +4080,12 @@
       .then(function () { lastDlDone = Date.now(); setBusy(false); });
   });
 
+  // a range typed but unreadable: the buttons fall back to the grid selection, and the
+  // status line says so (a range silently ignored saved pages nobody asked for)
+  function rangeIgnored() { var st = rangeState(); return !st.empty && !(st.idx && st.idx.length); }
   btnExtract.addEventListener('click', function () {
     if (busy) return;
-    var idxs = extractIdx();
+    var idxs = extractIdx(), ignored = rangeIgnored();
     if (!idxs.length) return;
     setBusy(true);
     var list = idxs.map(function (i) { return pages[i]; });
@@ -3813,15 +4093,15 @@
     buildPdf(list, buildTick('Downloading'), { idx: idxs, total: pages.length }).then(function (bytes) {
       var name = exportName('extract', list);
       downloadBytes(bytes, name);
-      setStatus('Saved ' + name + ' (' + list.length + ' page' + (list.length > 1 ? 's' : '') + ', ' + fmtSize(bytes.length) + ').' + flattenNote(), flattenKind(), [name, fmtSize(bytes.length)]);
+      setStatus((ignored ? 'Range ignored (it could not be read), so the selected pages were used. ' : '') + 'Saved ' + name + ' (' + list.length + ' page' + (list.length > 1 ? 's' : '') + ', ' + fmtSize(bytes.length) + ').' + flattenNote(), ignored ? 'warn' : flattenKind(), [name, fmtSize(bytes.length)]);
     }).catch(function (e) { setStatus('Error: ' + (e && e.message || e), 'err'); })
       .then(function () { setBusy(false); });
   });
 
   btnSplit.addEventListener('click', function () {
     if (!pages.length || busy) return;
-    var st = rangeState();
-    var idxs = (st.idx && st.idx.length) ? st.idx : pages.map(function (_, i) { return i; });
+    var st = rangeState(), ignored = rangeIgnored(), sel = selectedIdx();
+    var idxs = (st.idx && st.idx.length) ? st.idx : (ignored && sel.length) ? sel : pages.map(function (_, i) { return i; });
     if (!idxs.length) return;
     setBusy(true);
     var list = idxs.map(function (i) { return pages[i]; });
@@ -3848,14 +4128,28 @@
       var zip = storeZip(files);
       var name = exportName('split', list);
       downloadBytes(zip, name, 'application/zip');
-      var msg = 'Saved ' + name + ' (' + files.length + ' files, ' + fmtSize(zip.length) + ').';
+      var msg = 'Saved ' + name + ' (' + files.length + ' file' + (files.length === 1 ? '' : 's') + ', ' + fmtSize(zip.length) + ').';
       if (splitFailed) msg = 'Split ' + files.length + ' page' + (files.length === 1 ? '' : 's') + '; ' + splitFailed + ' could not be processed. ' + msg;
-      setStatus(msg, splitFailed ? 'warn' : undefined, [name, fmtSize(zip.length)]);
+      if (ignored) msg = 'Range ignored (it could not be read), so ' + (sel.length ? 'the selected pages were split. ' : 'every page was split. ') + msg;
+      setStatus(msg, (splitFailed || ignored) ? 'warn' : undefined, [name, fmtSize(zip.length)]);
     }).catch(function (e) { setStatus('Error: ' + (e && e.message || e), 'err'); })
       .then(function () { setBusy(false); });
   });
 
-  function fmtSize(n) { return n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(0) + ' KB' : (n / 1048576).toFixed(2) + ' MB'; }
+  // sizes in the visitor's number format with Latin digits (en-US for right-to-left
+  // languages, whose Latin-digit forms still carry direction marks), KB = 1,000 bytes
+  // like Image Studio; the status line keeps each size untranslated (keepUntranslated)
+  var NUM_LOC = (function () {
+    try {
+      var l = new Intl.NumberFormat().resolvedOptions().locale;
+      if (/^(ar|fa|ur|he|iw|yi|ps|sd|ug|ckb|dv|ks|syr)(-|$)/i.test(l)) return 'en-US';
+      return l.replace(/-u-.*$/i, '') + '-u-nu-latn';
+    } catch (e) { return undefined; }
+  })();
+  function nf(o) { try { return new Intl.NumberFormat(NUM_LOC, o); } catch (e) { return null; } }
+  var NF_INT = nf({ maximumFractionDigits: 0 }), NF_D2 = nf({ minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  function fmtN(f, v, digits) { return f ? f.format(digits == null ? v : +v.toFixed(digits)) : (digits == null ? String(v) : v.toFixed(digits)); }
+  function fmtSize(n) { return n < 1000 ? fmtN(NF_INT, n) + ' B' : n < 999500 ? fmtN(NF_INT, n / 1000, 0) + ' KB' : fmtN(NF_D2, n / 1e6, 2) + ' MB'; }
   // per-cause notes, so the status never blames the wrong thing (an intrinsically-
   // rotated source page with page numbers on is neither "rotated by you" nor "damaged")
   function flattenNote() {
@@ -3864,6 +4158,7 @@
     if (lastFlattenedSrc) parts.push(lastFlattenedSrc + ' page(s) from an encrypted or damaged PDF were flattened to images');
     if (lastFlattenedForm) parts.push(lastFlattenedForm + ' page(s) were flattened to images to keep form text the built-in PDF fonts can’t encode (like non-Latin scripts)');
     if (lastDropped) parts.push(lastDropped + ' added text/watermark item(s) contained characters the built-in PDF fonts can’t encode (like emoji or non-Latin scripts), so those characters were left out');
+    if (lastWmImage) parts.push('The watermark on ' + lastWmImage + ' page' + (lastWmImage > 1 ? 's' : '') + ' uses characters the built-in PDF fonts can’t encode, so it was drawn as an image (it looks the same but is not selectable text)');
     if (lastSigFailed) parts.push(lastSigFailed + ' signature' + (lastSigFailed > 1 ? 's' : '') + ' could not be embedded');
     if (lastFormFailed) parts.push(lastFormFailed + ' form field' + (lastFormFailed > 1 ? 's' : '') + ' could not be filled');
     if (lastDpiCapped) parts.push(lastDpiCapped + ' page(s) were too large to flatten at the requested quality and were rendered smaller instead (about ' + Math.round(lastDpiFloor) + ' DPI)');
@@ -3976,12 +4271,60 @@
     });
   }
 
+  // does the widget's STORED appearance show something the new value replaces? pdf.js
+  // draws that appearance (the value the file was saved with) on every render, so a
+  // pre-filled "John Smith" edited to "Jane Doe" printed both names on top of each other
+  function storedShows(a) {
+    var fv = a.fieldValue;
+    if (a.fieldType === 'Btn') {
+      if (a.radioButton) return fv != null && String(fv) === String(a.buttonValue);
+      return fv != null && fv !== '' && fv !== 'Off' && fv !== false;
+    }
+    if (Array.isArray(fv)) return fv.some(function (x) { return x != null && String(x) !== ''; });
+    return fv != null && String(fv) !== '';
+  }
+  // the page rendered WITHOUT its form widgets (pdf.js ENABLE_FORMS leaves them to the
+  // HTML layer), at exactly the viewport of the canvas being painted: the pixels under an
+  // edited widget come from here, so the old value goes and the page content under the
+  // field (a printed line, a box) stays
+  function renderWithoutWidgets(page, vp, w, h) {
+    var c = document.createElement('canvas'); c.width = w; c.height = h;
+    var mode = pdfjsLib.AnnotationMode ? pdfjsLib.AnnotationMode.ENABLE_FORMS : 2;
+    return page.render({ canvasContext: c.getContext('2d'), viewport: vp, annotationMode: mode }).promise.then(function () { return c; });
+  }
   function paintFormValues(canvas, pg) {
     if (pg.docIndex < 0 || pg.raster || pg.blank) return Promise.resolve();
     var d = docs[pg.docIndex];
     if (!d || !d.formValues || !Object.keys(d.formValues).length) return Promise.resolve();
     return d.js.getPage(pg.pageIndex + 1).then(function (page) {
       return page.getAnnotations().then(function (annots) {
+        var rot = totalRotation(page, pg.rot);
+        var v1 = page.getViewport({ scale: 1, rotation: rot });
+        var vp = page.getViewport({ scale: canvas.width / v1.width, rotation: rot });
+        var stale = annots.filter(function (a) {
+          return a.subtype === 'Widget' && a.fieldName && (a.fieldName in d.formValues) && a.rect && storedShows(a);
+        });
+        if (!stale.length) return annots;
+        return renderWithoutWidgets(page, vp, canvas.width, canvas.height).then(function (clean) {
+          var cx = canvas.getContext('2d');
+          stale.forEach(function (a) {
+            var r = vp.convertToViewportRectangle(a.rect);
+            var x0 = Math.max(0, Math.floor(Math.min(r[0], r[2]))), y0 = Math.max(0, Math.floor(Math.min(r[1], r[3])));
+            var x1 = Math.min(canvas.width, Math.ceil(Math.max(r[0], r[2]))), y1 = Math.min(canvas.height, Math.ceil(Math.max(r[1], r[3])));
+            if (x1 <= x0 || y1 <= y0) return;
+            // the clean render is opaque (pdf.js paints the page white first), so a plain
+            // source-over copy replaces the widget's pixels completely
+            cx.save(); cx.setTransform(1, 0, 0, 1, 0, 0); cx.globalAlpha = 1; cx.globalCompositeOperation = 'source-over';
+            cx.drawImage(clean, x0, y0, x1 - x0, y1 - y0, x0, y0, x1 - x0, y1 - y0);
+            cx.restore();
+          });
+          clean.width = 0;
+          return annots;
+        }, function (e) {
+          if (window.console) console.warn('pdftools: could not clear the stored form values.', e);
+          return annots;
+        });
+      }).then(function (annots) {
         var rot = totalRotation(page, pg.rot);
         var v1 = page.getViewport({ scale: 1, rotation: rot });
         var vp = page.getViewport({ scale: canvas.width / v1.width, rotation: rot });
@@ -4069,7 +4412,7 @@
 
   // ---------- compress (rasterize every page to JPEG) ----------
   function compress(dpi, quality, onTick) {
-    return PDFLib.PDFDocument.create().then(function (out) {
+    return PDFLib.PDFDocument.create({ updateMetadata: false }).then(function (out) {
       var chain = Promise.resolve();
       pages.forEach(function (pg, i) {
         chain = chain.then(function () {
@@ -4094,11 +4437,7 @@
           }).then(function () { return onTick ? onTick(i + 1, pages.length) : null; });
         });
       });
-      return chain.then(function () {
-        out.setProducer(''); out.setCreator('');
-        try { out.setCreationDate(new Date(0)); out.setModificationDate(new Date(0)); } catch (e) {}
-        return out.save();
-      });
+      return chain.then(function () { return out.save(); });   // created with no Info dictionary
     });
   }
   function inputSize() { return docs.reduce(function (a, d) { return a + (d.bytes ? d.bytes.length : 0); }, 0); }
@@ -4168,6 +4507,7 @@
     liveDocIndices: liveDocIndices,
     downloadBytes: downloadBytes,
     fmtSize: fmtSize,
+    fmtNum: function (v, digits) { return fmtN(nf({ minimumFractionDigits: digits, maximumFractionDigits: digits }), v, digits); },
     getPageNums: function () { return pageNums; },
     setPageNums: function (cfg) { pageNums = cfg; },
     rangeState: rangeState
@@ -4254,5 +4594,11 @@
   Array.prototype.forEach.call(document.querySelectorAll('.pt-modal, #pt-ed'), function (el) { document.body.appendChild(el); });
   updateToolbar();
   updateRangeInfo();
-  if (engineNote) engineNote.hidden = true;   // libs already loaded (defer order guarantees it)
+  if (engineNote) engineNote.hidden = true;   // the engines have run
+  // the tools and editor modules wait for this when they ran before the engines did
+  try { window.dispatchEvent(new Event('pt-ready')); } catch (e) {}
+  // files chosen or dropped while the engines were still loading, as one batch
+  var waiting = [].concat.apply([], early.splice(0));
+  if (waiting.length) addFiles(waiting);
+  }   // app()
 })();

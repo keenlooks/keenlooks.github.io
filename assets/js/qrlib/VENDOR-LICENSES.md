@@ -1,4 +1,7 @@
-# Vendored third-party libraries (for /qr/)
+---
+title: "Vendored third-party libraries (for /qr/)"
+description: "Licenses and sources of the third-party libraries QR Studio serves from this site: qrcode-generator and jsQR."
+---
 
 These are pinned, locally-served copies so QR Studio runs fully offline with no
 CDN/network calls (privacy + the site's no-external-deps ethos). Downloaded, not hotlinked.

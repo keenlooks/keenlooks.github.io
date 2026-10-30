@@ -1,6 +1,9 @@
-# Vendored third-party code in this directory
+---
+title: "Vendored third-party code in this directory"
+description: "License and source of marked, the Markdown parser this site serves to format the research chat's replies."
+---
 
-| File | Library | Version | Licence | Source |
+| File | Library | Version | License | Source |
 |---|---|---|---|---|
 | `marked.min.js` | marked (Markdown parser) | 12.0.1 | MIT (see `LICENSE.md`) | npm tarball `https://registry.npmjs.org/marked/-/marked-12.0.1.tgz`, file `package/marked.min.js`, unmodified |
 

@@ -1,4 +1,7 @@
-# Vendored: tesseract.js and its language models (for /pdftools/ OCR)
+---
+title: "Vendored: tesseract.js and its language models (for /pdftools/ OCR)"
+description: "Licenses and sources of tesseract.js and the OCR language models that PDF Toolbench serves from this site."
+---
 
 Served from this site, lazy-loaded only when "Make searchable (OCR)" runs; nothing is fetched
 from a third-party server. The registry of every vendored library for the toolbench is
@@ -10,7 +13,7 @@ from a third-party server. The registry of every vendored library for the toolbe
 - tesseract.js-core **5.1.1**: `tesseract-core-simd-lstm.wasm.js`, `tesseract-core-lstm.wasm.js`
   (single-file builds with the wasm embedded; only the two LSTM cores are vendored because the
   toolbench always runs OEM 1, LSTM only)
-- License: **Apache License 2.0**, copies kept here as `LICENSE-tesseract.js.md` and
+- License: **Apache License 2.0**, copies kept here as `LICENSE-tesseract.js.txt` and
   `LICENSE-tesseract.js-core.txt` (https://github.com/naptha/tesseract.js,
   https://github.com/naptha/tesseract.js-core)
 
