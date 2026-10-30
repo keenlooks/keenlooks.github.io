@@ -7,3 +7,8 @@
 # the built site as a static file.)
 url: ""
 baseurl: ""
+# No analytics in CI builds: the smoke test opens every page in Chromium, and with
+# _config.yml's provider each of those visits would load gtag.js and send a real
+# page view from the runner (ci/smoke.js also aborts analytics hosts).
+analytics:
+  provider: false

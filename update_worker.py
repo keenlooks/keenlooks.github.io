@@ -62,10 +62,14 @@ const BUCKET_SIZE = 20;                  // about 20 requests ...
 const BUCKET_WINDOW_MS = 10 * 60 * 1000; // ... per 10 minutes per IP
 const BUCKET_MAX_IPS = 5000;
 const DAILY_SOFT_CAP = 500;              // upstream calls per isolate per UTC day
+const IP_DAILY_CAP = 40;                 // upstream calls per IP per isolate per UTC day, so one
+                                         // client pacing itself under the bucket cannot use up
+                                         // DAILY_SOFT_CAP for everyone else
 
 const buckets = new Map();               // ip -> { tokens, t }
 let dayKey = '';
 let dayCount = 0;
+const ipDayCount = new Map();            // ip -> upstream calls today; at most DAILY_SOFT_CAP entries
 
 // Resolved model for this isolate: id (null until the first successful list),
 // t (when it was resolved), next (when the list may be fetched again).
@@ -236,11 +240,18 @@ export default {
       if (checked.error) return reply(checked.status || 400, { error: checked.error }, origin);
 
       const today = new Date(now).toISOString().slice(0, 10);
-      if (today !== dayKey) { dayKey = today; dayCount = 0; }
+      if (today !== dayKey) { dayKey = today; dayCount = 0; ipDayCount.clear(); }
+      const ipToday = ipDayCount.get(ip) || 0;
+      if (ipToday >= IP_DAILY_CAP) {
+        const untilMidnight = Math.max(1, Math.ceil((Date.parse(today + 'T00:00:00Z') + 86400000 - now) / 1000));
+        return reply(429, { error: 'You have asked a lot of questions today. Please try again tomorrow.' },
+          origin, { 'Retry-After': String(untilMidnight) });
+      }
       if (dayCount >= DAILY_SOFT_CAP) {
         return reply(503, { error: 'The assistant has answered a lot of questions today. Please try again tomorrow.' }, origin);
       }
       dayCount++;
+      ipDayCount.set(ip, ipToday + 1);
 
       const model = await resolveModel(env, now);
       const systemPrompt = [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
@@ -256,7 +267,7 @@ export default {
         body: JSON.stringify({
           model,
           max_tokens: MAX_TOKENS,
-          // Haiku 5.5 thinks by default; low effort keeps answers quick and cheap for a site FAQ bot, and the widget only renders text blocks (assets/js/chat-widget.js, sendMessage, keeps only item.type === 'text').
+          // Haiku 5.5 thinks by default; low effort keeps answers quick and cheap for a site FAQ bot. Only text blocks are returned to the browser (see below).
           output_config: { effort: 'low' },
           system: systemPrompt,
           messages: checked.messages
@@ -272,7 +283,12 @@ export default {
       }
 
       const data = await upstream.json();
-      return reply(200, { content: Array.isArray(data.content) ? data.content : [], stop_reason: data.stop_reason || null, model }, origin);
+      // Only the text blocks go back to the browser (the widget renders nothing else);
+      // thinking blocks and their signatures stay here.
+      const content = (Array.isArray(data.content) ? data.content : [])
+        .filter(b => b && b.type === 'text' && typeof b.text === 'string')
+        .map(b => ({ type: 'text', text: b.text }));
+      return reply(200, { content, stop_reason: data.stop_reason || null, model }, origin);
     } catch (error) {
       console.error('worker error', error && error.message);
       return reply(500, { error: 'Something went wrong on the server. Please try again later.' }, origin);

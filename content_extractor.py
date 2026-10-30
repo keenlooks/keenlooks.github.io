@@ -1,9 +1,7 @@
 # content_extractor.py
 import os
 import json
-import requests
-from bs4 import BeautifulSoup
-import PyPDF2
+import pypdf
 from urllib.parse import urljoin
 import yaml
 import frontmatter
@@ -12,6 +10,10 @@ import re
 
 # Placeholder files shipped with the academicpages template, never Keane's work
 TEMPLATE_SAMPLE_PDFS = {'paper1.pdf', 'paper2.pdf', 'paper3.pdf'}
+
+# The only _config.yml keys the bot needs (the rest is theme plumbing: comment
+# providers, staticman, the exclude list, the analytics id)
+CONFIG_KEYS = ('name', 'description', 'author')
 
 
 class ContentExtractor:
@@ -56,7 +58,21 @@ class ContentExtractor:
                         
                         # Add main content
                         full_text += content
-                        
+
+                        # The paper's own BibTeX file (front matter `bibtex: /files/x.bib`),
+                        # read as it is at build time so the bot quotes it instead of composing one
+                        bibtex_path = str(metadata.get('bibtex') or '').strip()
+                        bibtex_text = ''
+                        if bibtex_path.startswith('/') and bibtex_path.endswith('.bib'):
+                            bib_file = self.repo_path / bibtex_path.lstrip('/')
+                            if bib_file.is_file():
+                                bibtex_text = bib_file.read_text(encoding='utf-8').strip()
+                            else:
+                                print(f"BibTeX file not found for {md_file.name}: {bibtex_path}")
+                                bibtex_path = ''
+                        else:
+                            bibtex_path = ''
+
                         self.content["publications"].append({
                             "title": metadata.get("title", ""),
                             "content": full_text,
@@ -66,7 +82,9 @@ class ContentExtractor:
                             "permalink": metadata.get("permalink", ""),
                             "paperurl": metadata.get("paperurl", ""),
                             "authors": metadata.get("authors", ""),
-                            "abstract": metadata.get("abstract", "")
+                            "abstract": metadata.get("abstract", ""),
+                            "bibtex_path": bibtex_path,
+                            "bibtex": bibtex_text
                         })
                         print(f"Processed publication: {metadata.get('title', '')}")
                     except Exception as e:
@@ -153,10 +171,10 @@ class ContentExtractor:
                         continue
                     try:
                         with open(pdf_file, 'rb') as file:
-                            pdf_reader = PyPDF2.PdfReader(file)
+                            pdf_reader = pypdf.PdfReader(file)
                             text = ""
                             for page in pdf_reader.pages:
-                                text += page.extract_text() + "\n"
+                                text += (page.extract_text() or "") + "\n"
                             
                             # Clean and normalize the text
                             text = re.sub(r'\s+', ' ', text).strip()
@@ -176,8 +194,16 @@ class ContentExtractor:
         if config_path.exists():
             try:
                 with open(config_path, 'r', encoding='utf-8') as file:
-                    config = yaml.safe_load(file)
-                    self.content["personal"]["config"] = config
+                    config = yaml.safe_load(file) or {}
+                    # Keep only the keys the bot needs, minus empty values
+                    kept = {}
+                    for key in CONFIG_KEYS:
+                        value = config.get(key)
+                        if isinstance(value, dict):
+                            value = {k: v for k, v in value.items() if v not in (None, '')}
+                        if value not in (None, '', {}):
+                            kept[key] = value
+                    self.content["personal"]["config"] = kept
                     print("Processed _config.yml")
             except Exception as e:
                 print(f"Error processing _config.yml: {e}")
@@ -189,11 +215,13 @@ class ContentExtractor:
         publications = "\n\n".join([
             f"Title: {pub['title']}\n" + \
             (f"URL: {self.website_url}{pub['permalink']}\n" if pub.get('permalink') else "") + \
-            (f"Paper PDF: {self.website_url}{pub['paperurl']}\n" if pub.get('paperurl') else "") + \
+            (f"Paper PDF: {urljoin(self.website_url, pub['paperurl'])}\n" if pub.get('paperurl') else "") + \
+            (f"BibTeX file: {urljoin(self.website_url, pub['bibtex_path'])}\n" if pub.get('bibtex_path') else "") + \
             (f"Authors: {pub['authors']}\n" if pub.get('authors') else "") + \
             (f"Venue: {pub['venue']}\n" if pub.get('venue') else "") + \
             (f"Date: {pub['date']}\n" if pub.get('date') else "") + \
             (f"Abstract: {pub['abstract']}\n" if pub.get('abstract') else "") + \
+            (f"BibTeX entry (exact):\n{pub['bibtex']}\n" if pub.get('bibtex') else "") + \
             f"Content: {pub['content']}"
             for pub in self.content["publications"]
         ])
@@ -352,6 +380,8 @@ class ContentExtractor:
         4. When discussing papers, use their actual titles and provide detailed information (but be concise)
         5. Always maintain a professional, academic tone appropriate for a research website
         6. Answer in the language the visitor writes in. Keep page names, URLs, paper titles and code exactly as they are.
+        7. When asked for BibTeX, copy the paper's "BibTeX entry (exact)" from this context character for character inside a code block, followed by its "BibTeX file" link. Never compose, shorten or correct an entry; a paper with no entry here has none on this site, so say so and give its citation instead
+        8. Each request carries the earlier turns of this chat (the widget sends what the visitor sees). Use them to understand follow-up questions such as "where can I watch it?", but this context stays authoritative: if an earlier answer in the conversation disagrees with it, follow this context
 
         Remember: You are representing an academic website. Keep responses focused on research, publications, professional topics and this site's own pages and tools, and keep them concise."""
 

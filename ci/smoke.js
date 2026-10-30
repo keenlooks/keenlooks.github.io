@@ -4,7 +4,7 @@
 /*
  * smoke.js [siteDir]   (default: _site)
  *
- * Serves the built site on :8080 and opens each page in ci/pages.json with
+ * Serves the built site on :8080 (SMOKE_PORT to change it) and opens each page in ci/pages.json with
  * headless Chromium. For each page it waits SETTLE_MS, collecting:
  *   - pageerror events (uncaught exceptions)  -> FAIL
  *   - console errors (minus a benign allowlist) -> reported, not fatal
@@ -21,10 +21,14 @@ const path = require('path');
 const siteDir = path.resolve(process.cwd(), process.argv[2] || '_site');
 const pagesFile = path.join(__dirname, 'pages.json');
 
-const PORT = 8080;
+const PORT = Number(process.env.SMOKE_PORT) || 8080;
 const HOST = '127.0.0.1';
 const SETTLE_MS = 4000;
 const NAV_TIMEOUT_MS = 30000;
+
+/* Analytics hosts: every request to them is aborted, so a smoke run never sends a
+ * page view (ci/_config.ci.yml also builds without the analytics tag). */
+const ANALYTICS_HOSTS = /google-analytics|googletagmanager|gtag|doubleclick|analytics\.google/i;
 
 /* Benign console-error substrings (matched case-insensitively). Keep this
  * list tight: a generic entry like "failed to load resource" would mask real
@@ -94,6 +98,7 @@ function canvasProbe() {
 
   for (const p of pages) {
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    await page.route(ANALYTICS_HOSTS, r => r.abort());
     const pageErrors = [];
     const consoleErrors = [];
     page.on('pageerror', err => pageErrors.push(String((err && err.message) || err)));

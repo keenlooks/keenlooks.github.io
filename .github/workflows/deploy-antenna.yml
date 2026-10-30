@@ -13,7 +13,7 @@ name: Deploy Observatory Antenna Worker
 # Mirrors .github/workflows/update-claude-context.yml (the chat widget's Worker deploy,
 # checked 2026-10-04): the same two repository secrets, CLOUDFLARE_API_TOKEN and
 # CLOUDFLARE_ACCOUNT_ID (read by wrangler from the environment; the chat workflow writes
-# account_id into a generated wrangler.toml instead, same effect), npm install -g wrangler,
+# account_id into a generated wrangler.toml instead, same effect), npm install -g wrangler (pinned),
 # a `wrangler whoami` check, then `wrangler deploy`. No token is ever stored locally or in
 # the repo. Optional secrets FAA_CLIENT_ID / FAA_CLIENT_SECRET are pushed to the Worker only
 # when they exist. So is the optional GH_DISPATCH_TOKEN (2026-10-11): Keane's fine-grained
@@ -54,10 +54,17 @@ jobs:
       FAA_CLIENT_SECRET: ${{ secrets.FAA_CLIENT_SECRET }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # Pinned, the same version as update-claude-context.yml; bump both deliberately.
       - name: Install Wrangler
         run: |
-          npm install -g wrangler
+          npm install -g wrangler@4.154.0
           wrangler --version
 
       - name: Verify Wrangler sees the account (same check as the chat widget deploy)

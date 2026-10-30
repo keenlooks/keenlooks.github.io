@@ -33,7 +33,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 <button class="minimize-button" aria-label="Open chat" aria-expanded="false" aria-controls="chat-content">+</button>
             </div>
             <div class="chat-content" id="chat-content" inert aria-hidden="true">
-                <div id="chat-messages"></div>
+                <div id="chat-messages" tabindex="-1" aria-label="Conversation"></div>
                 <div id="suggestion-chips" class="suggestion-chips">
                     <button class="suggestion-chip">Recent work summary</button>
                     <button class="suggestion-chip">Write a 50-word bio</button>
@@ -65,7 +65,7 @@ document.addEventListener('DOMContentLoaded', function() {
             transition: all 0.3s ease;
             display: flex;
             flex-direction: column;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
+            font-family: inherit; /* the site's Source Sans 3, like the rest of the page */
         }
 
         .chat-widget-container.closed {
@@ -75,6 +75,17 @@ document.addEventListener('DOMContentLoaded', function() {
 
         .chat-widget-container.open {
             height: 600px;
+            /* a short window (phone landscape, a 600 px desktop) keeps the
+               header and its close button on screen */
+            height: min(600px, calc(100vh - 40px));
+            height: min(600px, calc(100dvh - 40px));
+        }
+
+        /* Reset only on the open panel: on the collapsed bar it read as a
+           page refresh and erased the conversation unseen. Hidden, not
+           removed, so the title keeps its place. */
+        .chat-widget-container.closed .reset-button {
+            visibility: hidden;
         }
 
         .chat-widget-container.fullscreen {
@@ -200,8 +211,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
         #send-button {
             padding: 8px 16px;
-            background: #4a9eff;
-            color: white;
+            background: #82a6cc;
+            color: #141414;
             border: none;
             border-radius: 4px;
             cursor: pointer;
@@ -211,11 +222,12 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         #send-button:hover {
-            background: #357abd;
+            background: #a3c0de;
         }
 
         #send-button:disabled {
             background: #2d2d2d;
+            color: #a8a8a8;
             cursor: not-allowed;
         }
 
@@ -448,6 +460,20 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
 
+        /* Short windows (phone landscape): the suggestions take one row that
+           scrolls sideways, so the conversation keeps most of the panel. */
+        @media (max-height: 500px) {
+            .suggestion-chips {
+                flex-wrap: nowrap;
+                overflow-x: auto;
+                padding: 8px 12px;
+            }
+
+            .suggestion-chip {
+                flex: none;
+            }
+        }
+
         /* Touch: header buttons get 40 x 40 targets; the header padding shrinks
            so the closed bar keeps its 48 px height. */
         @media (pointer: coarse) {
@@ -489,7 +515,14 @@ document.addEventListener('DOMContentLoaded', function() {
     const LOG_KEY = 'claudeChatLog';          // JSON: { v: 2, log: [{ role, text }] }
     const LEGACY_KEY = 'claudeChatHistory';   // pre-2026-10 rendered HTML: never rendered again, dropped
     const LOG_MAX = 60;                       // messages kept in storage
+    // The Worker's caps (update_worker.py validate(): MAX_TURNS, MAX_CHARS_PER_MESSAGE,
+    // MAX_CHARS_TOTAL, MAX_BODY_BYTES); keep these in step with it.
+    const SEND_MAX_MESSAGES = 12;
+    const SEND_MAX_CHARS = 2000;
+    const SEND_MAX_TOTAL = 12000;
+    const SEND_MAX_BYTES = 60000;
     let isLoading = false;
+    let inflight = null;                      // AbortController of the question being answered
     let chatLog = [];                         // [{ role: 'user' | 'assistant', text }]
 
     const widget = document.getElementById('chat-widget');
@@ -559,6 +592,65 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function saveLog() {
         storeSet(LOG_KEY, JSON.stringify({ v: 2, log: chatLog.slice(-LOG_MAX) }));
+    }
+
+    // ---- the conversation sent with each question ----
+    // The bot sees the conversation the visitor sees: the newest complete
+    // exchanges of chatLog (a question followed by a non-empty answer; an
+    // orphan turn or an empty stored answer is skipped, so the roles always
+    // alternate), then the new question. Trimmed from the oldest end to the
+    // Worker's caps; a message longer than the per-message cap is cut short.
+    // The greeting and error bubbles are not in chatLog, so they are never sent.
+    // The Worker deletes tag characters and every other Unicode format (Cf)
+    // character before it checks for empty messages, so a text made only of
+    // them (a zero-width space, say) counts as empty here too.
+    const FORMAT_CHARS = /[\u{E0000}-\u{E007F}]|\p{Cf}/gu;
+    function hasVisibleText(text) {
+        return String(text).replace(FORMAT_CHARS, '').trim() !== '';
+    }
+
+    function clipForSend(text) {
+        const t = String(text).trim();
+        if (t.length <= SEND_MAX_CHARS) return t;
+        let cut = SEND_MAX_CHARS - 6;
+        const c = t.charCodeAt(cut - 1);
+        if (c >= 0xD800 && c <= 0xDBFF) cut--;    // never split a surrogate pair
+        return t.slice(0, cut) + '\n[...]';
+    }
+
+    function buildRequestMessages(question) {
+        const pairs = [];
+        for (let i = 0; i + 1 < chatLog.length; i++) {
+            const u = chatLog[i], a = chatLog[i + 1];
+            if (u.role === 'user' && a.role === 'assistant' && hasVisibleText(u.text) && hasVisibleText(a.text)) {
+                pairs.push([clipForSend(u.text), clipForSend(a.text)]);
+                i++;
+            }
+        }
+        const out = [];
+        let total = question.length;
+        for (let k = pairs.length - 1; k >= 0 && out.length + 3 <= SEND_MAX_MESSAGES; k--) {
+            const n = pairs[k][0].length + pairs[k][1].length;
+            if (total + n > SEND_MAX_TOTAL) break;
+            total += n;
+            out.unshift({ role: 'user', content: pairs[k][0] }, { role: 'assistant', content: pairs[k][1] });
+        }
+        out.push({ role: 'user', content: question });
+        return out;
+    }
+
+    function requestBody(question) {
+        const messages = buildRequestMessages(question);
+        const lang = browserLang();
+        let body = JSON.stringify({ messages, lang });
+        // Escaped characters can make the JSON longer than its text: keep it
+        // under the Worker's body limit by dropping the oldest exchange.
+        const size = str => (typeof TextEncoder === 'function' ? new TextEncoder().encode(str).length : str.length * 3);
+        while (messages.length > 1 && size(body) > SEND_MAX_BYTES) {
+            messages.splice(0, 2);
+            body = JSON.stringify({ messages, lang });
+        }
+        return body;
     }
 
     // ---- Markdown rendering ----
@@ -733,6 +825,14 @@ document.addEventListener('DOMContentLoaded', function() {
         return div;
     }
 
+    // The messages area becomes a polite live log once the stored conversation
+    // has been put back, so restoring it is not read out; from then on each
+    // question, "Thinking", reply and error is announced as it is added.
+    function markLive() {
+        messagesDiv.setAttribute('role', 'log');
+        messagesDiv.setAttribute('aria-live', 'polite');
+    }
+
     function showWelcomeMessage() {
         const welcomeDiv = document.createElement('div');
         welcomeDiv.className = 'message claude-message';
@@ -756,7 +856,9 @@ document.addEventListener('DOMContentLoaded', function() {
             showWelcomeMessage();
             chatLog.forEach(m => appendMessage(m.role, m.text));
             suggestionsDiv.style.display = chatLog.length ? 'none' : '';
-            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            // a restored conversation opens at its newest message, a new one at the greeting
+            messagesDiv.scrollTop = chatLog.length ? messagesDiv.scrollHeight : 0;
+            markLive();
         })();
         return restorePromise;
     }
@@ -819,6 +921,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function resetChat() {
         resetCount++;
+        // A question still being answered belongs to the old conversation:
+        // drop it (sendMessage sees the new resetCount and stays quiet).
+        if (inflight) { try { inflight.abort(); } catch (e) { /* already settled */ } inflight = null; }
         chatLog = [];
         restorePromise = Promise.resolve();
         messagesDiv.textContent = '';
@@ -826,22 +931,51 @@ document.addEventListener('DOMContentLoaded', function() {
         suggestionsDiv.style.display = '';
         storeRemove(LOG_KEY);
         storeRemove(LEGACY_KEY);
+        markLive();
+    }
+
+    // Keyboard and screen reader focus stays in the chat after a send: the
+    // Send button is disabled and a chip is hidden while a question is
+    // answered, and either would otherwise drop focus to the page body. It
+    // goes to the box, except after a tap on a phone that did not start in
+    // the box: there it goes to the messages so no keyboard pops up.
+    function keepFocusInChat(wasInside, fromInput) {
+        if (!wasInside || !widget.classList.contains('open')) return;
+        const a = document.activeElement;
+        if (a && a !== document.body) {
+            if (!widget.contains(a)) return;                          // the visitor moved on
+            if (!a.disabled && a.getClientRects().length) return;     // still on a live control
+        }
+        const fine = window.matchMedia('(min-width: 769px)').matches &&
+            !window.matchMedia('(pointer: coarse)').matches;
+        if (fromInput || fine) userInput.focus({ preventScroll: true });
+        else messagesDiv.focus({ preventScroll: true });
     }
 
     async function sendMessage(text = null) {
         const messageText = (text || userInput.value).trim();
-        if (isLoading || !messageText) return;
+        if (isLoading || !hasVisibleText(messageText)) return;
 
+        const gen = resetCount;
+        const active = document.activeElement;
+        const focusWasInside = !!(active && widget.contains(active));
+        const fromInput = active === userInput;
         isLoading = true;
         sendButton.disabled = true;
-        if (!text) userInput.disabled = true;
+        // readOnly, not disabled: a disabled box loses focus (and a phone its keyboard)
+        if (!text) userInput.readOnly = true;
+        keepFocusInChat(focusWasInside, fromInput);
 
         // Declared outside the try so the catch can remove it on fetch failure
         let loadingMessage = null;
+        const controller = typeof AbortController === 'function' ? new AbortController() : null;
         try {
             await restoreOnce();
+            if (gen !== resetCount) return;   // reset before the question went out
             suggestionsDiv.style.display = 'none';
+            keepFocusInChat(focusWasInside, fromInput);
 
+            const body = requestBody(messageText);
             appendMessage('user', messageText);
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
 
@@ -860,19 +994,15 @@ document.addEventListener('DOMContentLoaded', function() {
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
 
             let response;
+            inflight = controller;
             try {
                 response = await fetch(WORKER_URL, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({
-                        messages: [{
-                            role: 'user',
-                            content: messageText
-                        }],
-                        lang: browserLang()
-                    })
+                    body,
+                    signal: controller ? controller.signal : undefined
                 });
             } catch (e) {
                 throw new Error('Could not reach the assistant. Check your connection and try again.');
@@ -895,11 +1025,16 @@ document.addEventListener('DOMContentLoaded', function() {
             } else {
                 throw new Error('Unexpected response format from Claude');
             }
+            // Thinking only (stopped at max_tokens) or a refusal: say so, store nothing
+            if (!hasVisibleText(claudeResponseText)) {
+                throw new Error('The assistant could not finish an answer. Please try again.');
+            }
 
             await ensureMarked();
+            if (gen !== resetCount) return;   // the chat was reset while this was answered
 
             // Remove loading indicator
-            messagesDiv.removeChild(loadingMessage);
+            loadingMessage.remove();
             loadingMessage = null;
 
             appendMessage('assistant', claudeResponseText);
@@ -908,25 +1043,27 @@ document.addEventListener('DOMContentLoaded', function() {
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
 
         } catch (error) {
+            // A reset cleared the panel and owns it now: no error bubble for the old question
+            if (gen !== resetCount) return;
             console.error('Error:', error);
 
             // Remove loading indicator if it exists
-            if (loadingMessage && loadingMessage.parentNode) {
-                messagesDiv.removeChild(loadingMessage);
-            }
+            if (loadingMessage) loadingMessage.remove();
 
             const errorMessage = document.createElement('div');
             errorMessage.className = 'message error-message';
             errorMessage.textContent = 'Error: ' + (error && error.message ? error.message : String(error));
             messagesDiv.appendChild(errorMessage);
         } finally {
+            if (inflight === controller) inflight = null;
             isLoading = false;
             sendButton.disabled = false;
             if (!text) {
-                userInput.disabled = false;
+                userInput.readOnly = false;
                 userInput.value = '';
                 userInput.setAttribute('dir', 'auto');
             }
+            keepFocusInChat(focusWasInside, fromInput);
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
     }
@@ -940,6 +1077,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     resetButton.addEventListener('click', (e) => {
         e.stopPropagation();
+        if (chatLog.length && !window.confirm('Clear this conversation?')) return;
         resetChat();
     });
 
