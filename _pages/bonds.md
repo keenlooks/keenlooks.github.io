@@ -53,7 +53,21 @@ future-dollars are worth fewer now-dollars. Drag the rate to see the effect on t
           <input id="bond-coupon" type="range" min="0" max="12" step="0.1" value="5">
         </label>
       </div>
-      <p class="bond-hint">In coupon mode: <strong>click a year</strong> to add a payout, click a payout to edit it (× or 0 deletes), and <strong>drag</strong> it to a different time. <strong>Click an x-axis year</strong> to anchor the timeline to a calendar date. &ldquo;Standard bond&rdquo; rebuilds the default, as do the face, coupon, and maturity sliders, so payouts you placed by hand are replaced when you move them.</p>
+      <p class="bond-hint" id="bond-hint">In coupon mode: <strong>click a year</strong> to add a payout, click a payout to edit it (× or 0 deletes), and <strong>drag</strong> it to a different time. <strong>Click an x-axis year</strong> to anchor the timeline to a calendar date. &ldquo;Standard bond&rdquo; rebuilds the default, as do the face, coupon, and maturity sliders, so payouts you placed by hand are replaced when you move them. You can also type payouts and the start year below.</p>
+      <form class="bond-type__form" id="bond-pay-form" novalidate>
+        <span class="bond-type__lead">Payout:</span>
+        <label class="bond-type__field">$ <input id="bond-pay-amt" type="text" inputmode="decimal" autocomplete="off" value="100" aria-label="$ amount of the payout"></label>
+        <label class="bond-type__field">at year <input id="bond-pay-yr" type="text" inputmode="decimal" autocomplete="off" value="5" aria-label="at year (of the payout, counted from today)"></label>
+        <button class="bond-btn" type="submit">Add or change</button>
+      </form>
+    </div>
+
+    <div class="bond-type">
+      <form class="bond-type__form" id="bond-cal-form" novalidate>
+        <label class="bond-type__field">Timeline starts in <input id="bond-cal" type="text" inputmode="numeric" autocomplete="off" placeholder="year" aria-label="Timeline starts in (a calendar year; leave it empty for years from today)"></label>
+        <button class="bond-btn" type="submit">Set</button>
+      </form>
+      <p class="bond-type__status" id="bond-type-status" role="status"></p>
     </div>
 
     <label class="bond-check">
@@ -120,6 +134,23 @@ If you have a bond (which is again really just a future payout of a specific amo
 .bond-coupon-controls[hidden] { display: none; }
 .bond-hint { font-size: 0.88rem; opacity: 0.78; margin: 0; }
 .bond-btn[hidden] { display: none; }
+
+/* the chart's click actions by typing (keyboard and screen-reader visitors; also handy on a phone):
+   a payout at a time (the same time again changes it, 0 deletes it) and the calendar anchor */
+.bond-type { display: flex; flex-direction: column; gap: 0.3rem; }
+.bond-type__form { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.5rem; margin: 0; font-size: 0.9rem; }
+.bond-type__lead { opacity: 0.85; }
+.bond-type__field { display: inline-flex; align-items: center; gap: 0.45rem; margin: 0; color: inherit; cursor: default; }
+.bond-type__field input {
+  width: 5.2em; margin: 0; padding: 0.35em 0.5em; font: inherit; font-variant-numeric: tabular-nums;
+  border: 1px solid rgba(127,127,127,0.45); border-radius: 6px; box-shadow: none;
+  background: #1d1d1d; color: #e8e8e8;
+}
+.bond-type__form .bond-btn { padding: 0.45em 0.75em; }
+.bond-type__status { font-size: 0.88rem; opacity: 0.85; min-height: 1.3em; margin: 0; }
+@media (pointer: coarse) { .bond-type__field input, .bond-type__form .bond-btn { min-height: 44px; } .bond-type__field input { font-size: 16px; } }
+html[data-theme="light"] .bond-type__field input { background: #ffffff; color: #262626; }
+@media (prefers-color-scheme: light) { html:not([data-theme="dark"]) .bond-type__field input { background: #ffffff; color: #262626; } }
 html[data-theme="light"] .bond-modes input { accent-color: #34568a; }
 @media (prefers-color-scheme: light) { html:not([data-theme="dark"]) .bond-modes input { accent-color: #34568a; } }
 

@@ -342,11 +342,20 @@
     /* Search index: planets first, then stars by brightness (plus HIP
        aliases), then exoplanets, then the far tier. Matching is prefix-first
        then substring. */
+    /* a52: palette.js's fold. Turkish dotted capital I and dotless i first
+       ("İ".toLowerCase() is "i" plus a combining dot, so "SİRİUS" found
+       nothing), then lower case with accents dropped, so "Bételgeuse" finds
+       Betelgeuse. Index and query go through the same fold. */
+    function searchFold(s) {
+      s = String(s || '').replace(/\u0130/g, 'I').replace(/\u0131/g, 'i').toLowerCase();
+      return s.normalize ? s.normalize('NFD').replace(/[\u0300-\u036f]/g, '') : s;
+    }
+
     function buildSearchEntries(data, planetNames) {
       var entries = [], i;
       for (i = 0; i < planetNames.length; i++) {
         entries.push({ label: planetNames[i], kind: 'p', idx: i,
-                       lower: planetNames[i].toLowerCase() });
+                       lower: searchFold(planetNames[i]) });
       }
       if (data && data.stars) {
         var st = data.stars, n = st.name.length;
@@ -360,11 +369,11 @@
         for (var k = 0; k < n; k++) {
           i = order[k];
           var nm = st.name[i];
-          entries.push({ label: nm, kind: 's', idx: i, lower: nm.toLowerCase() });
+          entries.push({ label: nm, kind: 's', idx: i, lower: searchFold(nm) });
           if (st.hip[i]) {
             var alias = 'HIP ' + st.hip[i];
             if (alias !== nm) {
-              entries.push({ label: alias, kind: 's', idx: i, lower: alias.toLowerCase() });
+              entries.push({ label: alias, kind: 's', idx: i, lower: searchFold(alias) });
             }
           }
         }
@@ -372,7 +381,7 @@
           var pl = data.planets;
           for (i = 0; i < pl.name.length; i++) {
             entries.push({ label: pl.name[i], kind: 'x', idx: i,
-                           lower: pl.name[i].toLowerCase() });
+                           lower: searchFold(pl.name[i]) });
           }
         }
       }
@@ -385,14 +394,14 @@
           if (!fr || !fr.name) continue;
           entries.push({ label: fr.name, kind: 'f', idx: i,
                          sub: farWord(fr.cls),
-                         lower: (fr.name + ' ' + farWord(fr.cls)).toLowerCase() });
+                         lower: searchFold(fr.name + ' ' + farWord(fr.cls)) });
         }
       }
       return entries;
     }
 
     function searchQuery(entries, q, max) {
-      q = (q || '').trim().toLowerCase();
+      q = searchFold((q || '').trim());
       var out = [];
       if (!q) return out;
       var i, e;
@@ -3487,7 +3496,8 @@
     }
     if (!sel) {
       elTarget.textContent =
-        'Pick a destination: tap a planet or a star, or search above.' + ship;
+        'Pick a destination: ' + (coarsePointer ? 'tap' : 'click') +
+        ' a planet or a star, or search above.' + ship;
       return;
     }
     if (sel.kind === 'p') {
@@ -12146,8 +12156,14 @@
   layout();
 
   if (window.GadgetUI) {
-    var hint = GadgetUI.firstRunHint('voyage',
-      'Tap any planet or star, or search for one, and plan the trip.');
+    /* a117/a118: "Click" on a fine pointer; and where the panel starts
+       folded (initPanel's rule below, plus the 520 px one) the search box is
+       inside it, so the hint says how to reach it */
+    var verb = coarsePointer ? 'Tap' : 'Click';
+    var folded = window.innerWidth < 600 || window.innerHeight < 520;
+    var hint = GadgetUI.firstRunHint('voyage', folded ?
+      verb + ' any planet or star, or ' + verb.toLowerCase() + ' + to search for one.' :
+      verb + ' any planet or star, or search for one, and plan the trip.');
     firstHint = hint;                  /* A2-11: the wheel dismisses it too */
     /* m1: and so does any key but Tab (and the bare modifiers that go with
        it), so a keyboard visitor who starts typing or steering retires it

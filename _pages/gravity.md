@@ -39,7 +39,7 @@ description: "An interactive full-screen 2D gravity sandbox by Keane Lucas: pick
         <button id="grav-eight" class="grav-btn" type="button" title="The Chenciner–Montgomery figure-8: three equal masses chasing each other along one shared orbit">Figure-8</button>
         <button id="grav-clear" class="grav-btn" type="button">Clear</button>
         <button id="grav-resetview" class="grav-btn" type="button" title="Re-center the camera and reset the zoom">Reset view</button>
-        <button id="grav-share" class="grav-btn" type="button" title="Copy a link to this exact scene">Share</button>
+        <button id="grav-share" class="grav-btn" type="button" title="Copy a link to this exact scene">Share link</button>
         <button id="grav-snap" class="grav-btn" type="button" title="Download the scene as a PNG">Save image</button>
       </div>
 

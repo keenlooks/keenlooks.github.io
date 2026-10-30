@@ -26,6 +26,10 @@ exclude list.
 | `GET /notams/gps` | KV `notams:gps` | `s-maxage=900` | FAA NOTAM API, needs secrets |
 | `GET /health` | computed | `no-store` | per route KV ages (the `/tfrs` entry also `checked`, its age counted from it), tile coverage, the last collector dispatch `{t, status, why}` once there is one (`why` is `visit`; `cron` only in a record from before the fourth pass), and the last visit `{t}` |
 
+The "Edge cache" column is the `Cache-Control` each answer declares. Cloudflare's edge cache and
+Cache API do not apply to a `*.workers.dev` Worker (two GETs of `/tfrs` on 2026-10-29 came back with
+no `cf-cache-status`), so the Worker keeps its own copy instead; see "Politeness" below.
+
 Every response carries `Access-Control-Allow-Origin: *` (public data, no credentials), and
 `OPTIONS` is answered with 204. Nothing here ever returns a 500: if an upstream or KV read
 fails, the route serves the last stored value with `stale: true` and an `ageMs`, or answers
@@ -43,6 +47,39 @@ Two extras on `/planes` that the page uses to stay polite:
   whole tile set.
 - `?min_alt=<feet>` trims the rows to the altitudes an instrument actually uses (the winds
   instrument only looks above 27,000 ft).
+
+## Politeness (2026-10-29, site audit item 77)
+
+Every route was open to any client at any rate, and nothing was cached, so a request loop could
+spend the free plan's 100,000 KV reads a day, which the chat Worker shares (`/planes` reads up to 3
+keys a request, `/health` 7). Two guards, both only in the Workers fetch handler (the node dev
+server, the collector and every harness that builds its own deps behave exactly as before):
+
+- **The isolate's answer cache** (`ANSWER_CACHE` in `worker.js`). Each cacheable 200 answer (its
+  `Cache-Control` is public: never `/health`, a 503, or an answer carrying `refresh`) is kept for the
+  route's `s-maxage`, keyed by the path alone, or for `/planes` the path plus `min_alt`, so a junk
+  parameter cannot bust it. An entry is the answer's JSON text without its trailing `ageMs` (and
+  `stale`), plus the snapshot's `t`. A hit reads no KV, carries `X-Antenna-Cache: hit`, and appends
+  `ageMs` as the kept age plus the time since (with `stale` recomputed), so the age the page reads
+  stays true. On `/planes`, `since` is answered from the entry exactly as the handler would: equal to
+  its `t` gives the few-byte `unchanged` answer, newer than its `t` (a copy another isolate read) goes
+  to KV, anything else gets the kept full answer. `since` is never part of the key: the first version
+  keyed on it, so 64 junk values held 64 full snapshots (about 2 MB of heap each, against the 128 MB
+  isolate limit). The cache holds at most 64 keys and 3,000,000 characters of kept text in all
+  (`ANSWER_CACHE_MAX`, `ANSWER_CACHE_MAX_BYTES`). When it is full a new answer is simply not kept
+  (evicting for it would let junk `min_alt` values churn kept snapshots into garbage that waits for
+  a full collection); entries leave when they expire, and at worst the routes read KV as before. A
+  `/planes` poll carrying `loading=1` never reads or fills it. As with the `s-maxage` these routes
+  always declared, a `/planes` hit records no visit and starts no dispatch; the next request that
+  misses does, so a due dispatch can wait up to 90 s while others poll, and up to a lone visitor's
+  next poll (180 s apart). Best effort: each isolate keeps its own copy.
+- **A per address limit**: the Workers Rate Limiting binding `ANTENNA_LIMIT` in `wrangler.toml`
+  (`[[ratelimits]]`, 60 requests a minute per `CF-Connecting-IP`, counted per Cloudflare location;
+  `RATE_LIMIT_PER_MIN` in `worker.js` must match), checked on every cache miss. Over it the answer
+  is `429` with `Retry-After: 60` (exposed through `Access-Control-Expose-Headers`, which the page's
+  fetcher reads, obs-core.js) and `{ok: false, offline: true, rateLimited: true}`. A page polls a few
+  times a minute at most. No binding (a wrangler older than 4.36.0, which does not know the table),
+  no address, or a limiter error: the request goes through.
 
 ## Deploying
 
@@ -301,6 +338,12 @@ Prerequisites: node and a Cloudflare account. No install step: `npx` fetches wra
 
 ### Local development
 
+`wrangler dev` (checked with wrangler 4.151.3 and 4.156.0 on 2026-10-29) refuses to start on
+`worker.js` itself: local workerd rejects its named `export const` values ("Incorrect type for map
+entry 'ADSB_FI_BASE'"), although the deployed Worker runs them. Point `main` at a two-line entry that
+re-exports only the default (`import W from './worker.js'; export default W;`) in a scratch copy,
+or use the node dev server above.
+
 ```
 cd antenna
 npx wrangler dev --port 8788
@@ -323,6 +366,7 @@ no wrangler. The suite lives outside the repo, in the run directory:
 node _tests/observatory/run1/tests/node/t-antenna.js
 ANT_BREAK=1 node _tests/observatory/run1/tests/node/t-antenna.js   (proves the assertions bite: this run must fail)
 node _tests/site-fixes-2026-10-20/B9-antenna/tests/t-m31.mjs   (the KV write cap: the fetch handler's dispatch memory)
+node _tests/audit-fixes-2026-10-29/B15-antenna/tests/t-item77.mjs   (the answer cache and the per address limit)
 ```
 
 ## Upstream politeness, licensing and credit

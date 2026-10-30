@@ -174,6 +174,12 @@
       probeTn: 'A benign event, no alert.'
     }
   };
+  // On a touch screen there is no hover: the probe line says "Tap" (a tap on a dot
+  // shows its result through the same pointerdown handler).
+  if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) {
+    TXT.medical.probeDefault = "Tap a dot to see one person's result.";
+    TXT.security.probeDefault = "Tap a dot to see one event's outcome.";
+  }
   function countsHtml() {
     var a = d.sick, b = d.tp, c = d.fp;
     if (s.mode === 'security') {
@@ -398,7 +404,10 @@
   }
   canvas.addEventListener('pointermove', onProbe);
   canvas.addEventListener('pointerdown', onProbe);
-  canvas.addEventListener('pointerleave', function () {
+  canvas.addEventListener('pointerleave', function (e) {
+    // a finger lifting off fires pointerleave right after the tap: keep the tapped
+    // dot's result on screen; only a mouse leaving the chart resets the line
+    if (e.pointerType && e.pointerType !== 'mouse') return;
     probe.textContent = TXT[s.mode].probeDefault;
   });
 

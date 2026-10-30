@@ -30,7 +30,7 @@ description: "A full-screen, interactive version of Conway's Game of Life: draw 
         <button id="life-step" class="life-btn" type="button">Step</button>
         <button id="life-rand" class="life-btn" type="button">Randomize</button>
         <button id="life-clear" class="life-btn" type="button">Clear</button>
-        <button id="life-share" class="life-btn" type="button" title="Copy a link to this exact board">Share</button>
+        <button id="life-share" class="life-btn" type="button" title="Copy a link to this exact board">Share link</button>
       </div>
 
       <div class="life-presets">

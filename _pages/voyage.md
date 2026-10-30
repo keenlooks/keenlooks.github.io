@@ -2,6 +2,7 @@
 layout: single
 title: "Mission to Anywhere"
 permalink: /voyage/
+search_keys: "planets stars space travel relativity exoplanets"
 og_image: /images/og/voyage.png
 author_profile: false
 excerpt: "Pick any planet or any real star in the sky, and see what the trip honestly takes, including what relativity does to the clocks."
@@ -16,7 +17,7 @@ description: "An interactive full-screen trip planner by Keane Lucas: real JPL p
 (function(){try{if(!localStorage.getItem('theme')){document.documentElement.setAttribute('data-theme','dark');}}catch(e){}})();</script>
   <div class="voy-topfade" aria-hidden="true"></div>
   <canvas id="voy-canvas" class="voy-canvas"
-          aria-label="A 3D view of the solar system and the real night sky. Planets sit on their true orbits for today, and every star is a real star at its true position and color. Tap a planet or a star, or use the search box, to plan a trip to it."></canvas>
+          aria-label="A 3D view of the solar system and the real night sky. Planets sit on their true orbits for today, and every star is a real star at its true position and color. Click a planet or a star, or use the search box, to plan a trip to it." data-tap-label="A 3D view of the solar system and the real night sky. Planets sit on their true orbits for today, and every star is a real star at its true position and color. Tap a planet or a star, or use the search box, to plan a trip to it."></canvas>
   <p id="voy-loading" class="voy-loading" role="status">Loading the sky (under 1 MB)...</p>
 
   <div class="voy-panel" id="voy-panel">
@@ -29,7 +30,7 @@ description: "An interactive full-screen trip planner by Keane Lucas: real JPL p
       <p class="voy-blurb">
         The planets here sit where they really are today, and every star is a real star
         from the AT-HYG catalog, in its true position, distance and color. Pick a destination
-        by tapping it or searching for it: planets get a real transfer-orbit map, stars get
+        <span data-tap="by tapping it">by clicking it</span> or searching for it: planets get a real transfer-orbit map, stars get
         the honest relativity of a constant-acceleration ship. Nobody knows how to build
         that ship, and the numbers show why. Somewhere out there your ship is waiting in
         orbit.
@@ -60,8 +61,8 @@ description: "An interactive full-screen trip planner by Keane Lucas: real JPL p
       </div>
 
       <div class="voy-row">
-        <button id="voy-share" class="voy-btn" type="button" disabled data-voy-boot>Share link</button>
-        <button id="voy-save" class="voy-btn" type="button" disabled data-voy-boot>Save image</button>
+        <button id="voy-share" class="voy-btn" type="button" disabled data-voy-boot title="Copy a link to this exact view">Share link</button>
+        <button id="voy-save" class="voy-btn" type="button" disabled data-voy-boot title="Download the view as a PNG">Save image</button>
       </div>
 
       <details class="voy-details" id="voy-window-details" hidden>
@@ -526,7 +527,7 @@ body.voy-sheet-open .voy-return { display: none !important; }
 .gadget-hint { top: 58vh; }
 
 .voy-target-line { margin: 0; font-size: 0.88em; opacity: 0.85; }
-.voy-legend { margin: 0; font-size: 0.8em; opacity: 0.55; }
+.voy-legend { margin: 0; font-size: max(12px, 0.8em); opacity: 0.55; }
 
 .voy-row { display: flex; flex-wrap: wrap; gap: 0.4rem; }
 .voy-row[hidden] { display: none !important; }
@@ -552,14 +553,17 @@ html[data-theme="light"] .voy-btn--primary:hover { background: rgba(52,86,138,0.
 .voy-details p { margin: 0.4em 0 0; opacity: 0.8; line-height: 1.5; }
 
 .voy-status-line { margin: 0; font-size: 0.85em; opacity: 0.8; font-variant-numeric: tabular-nums; min-height: 1.2em; }
-.voy-credit { margin: 0; font-size: 0.78em; opacity: 0.6; line-height: 1.45; }
-.voy-verify { margin: 0; font-size: 0.78em; opacity: 0.55; font-variant-numeric: tabular-nums; min-height: 1.1em; }
+.voy-credit { margin: 0; font-size: max(12px, 0.78em); opacity: 0.6; line-height: 1.45; }
+.voy-verify { margin: 0; font-size: max(12px, 0.78em); opacity: 0.55; font-variant-numeric: tabular-nums; min-height: 1.1em; }
 .voy-verify--warn { opacity: 0.9; font-weight: 600; }
 
 /* ---- the info card: a bottom sheet clear of the corner buttons ---- */
 .voy-card {
   position: fixed; left: 8.5rem; bottom: 1rem; z-index: 28;
-  width: min(420px, calc(100vw - 10rem));
+  /* a46: and the card ends left of the open panel (300 px wide, 1rem from
+     the right), so between 769 and about 900 px its close button is never
+     under the panel; wider windows keep the 420 px card */
+  width: min(420px, calc(100vw - 10rem), calc(100vw - 10rem - 300px));
   max-height: calc(100vh - 7rem); max-height: calc(100dvh - 7rem);
   overflow: auto; padding: 0.8rem 1rem 1rem;
   border: 1px solid rgba(255,255,255,0.12); border-radius: 10px;
@@ -876,8 +880,9 @@ html[data-theme="light"] #voy-fp-info:focus-visible { background: rgba(52,86,138
   .voy-fpbar { width: 260px; }
   #voy-fp-info { flex: 0 0 44px !important; }
   .voy-tsrow__range { height: 40px; }
-  .voy-collapse { width: 2.3em; height: 2.3em; }
-  .voy-panel .gadget-help { min-width: 36px; min-height: 36px; }
+  /* a119: the older gadgets' touch sizes (36x40 collapse, 40x40 help) */
+  .voy-collapse { width: 2.3em; height: 2.3em; min-width: 36px; min-height: 40px; }
+  .voy-panel .gadget-help { min-width: 40px; min-height: 40px; }
   .voy-details summary { padding: 0.35em 0; }
   .voy-card__close { width: 2em; height: 2em; }
   .voy-chip { min-height: 40px; }

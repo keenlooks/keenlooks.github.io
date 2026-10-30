@@ -2,6 +2,7 @@
 layout: single
 title: "The Observatory"
 permalink: /observatory/
+search_keys: "earthquake satellite aircraft planes flights space weather"
 author_profile: false
 excerpt: "A live Earth drawn from public instruments, where the layers that matter are computed from two feeds at once."
 og_image: /images/og/observatory.png
@@ -84,7 +85,7 @@ description: "A live Earth drawn from public instruments. The interesting layers
       <div class="obs-chips" id="obs-chips" role="group" aria-label="Instrument layers"></div>
 
       <div class="obs-row obs-row--acts">
-        <button id="obs-share" class="obs-btn" type="button">Share link</button>
+        <button id="obs-share" class="obs-btn" type="button" title="Copy a link to this exact view">Share link</button>
         <!-- off until the renderer has painted a frame; the page enables it -->
         <button id="obs-save" class="obs-btn" type="button" disabled
                 title="Waiting for the planet to finish its first frame.">Save image</button>
@@ -407,7 +408,7 @@ description: "A live Earth drawn from public instruments. The interesting layers
 
       <h3 class="obs-card__h">Credits</h3>
       <p class="obs-fact">
-        <a href="https://www.swpc.noaa.gov/">NOAA SWPC</a> and
+        <a href="https://www.spaceweather.gov/">NOAA SWPC</a> and
         <a href="https://www.ncei.noaa.gov/products/world-magnetic-model">NOAA NCEI</a>
         (WMM2025; US Government work, not subject to copyright);
         <a href="https://earthquake.usgs.gov/">USGS</a> and
@@ -423,12 +424,12 @@ description: "A live Earth drawn from public instruments. The interesting layers
         selection rather than every event on Earth);
         <a href="https://thespacedevs.com/">Launch Library 2</a> by The Space Devs for the
         launch schedule and pad coordinates;
-        <a href="https://www.swpc.noaa.gov/products/alerts-watches-and-warnings">NOAA SWPC
+        <a href="https://www.spaceweather.gov/products/alerts-watches-and-warnings">NOAA SWPC
         alerts, watches and warnings</a>;
         <a href="https://www.naturalearthdata.com/">Natural Earth</a> (public domain) for
-        coastlines; the planet's surface and night lights are NASA's <a href="https://earthobservatory.nasa.gov/features/BlueMarble">Blue Marble</a>
-        shaded relief and <a href="https://earthobservatory.nasa.gov/features/NightLights">Black Marble</a> city-lights composites
-        served by <a href="https://earthdata.nasa.gov/gibs">NASA GIBS</a> (public domain; a composite, not tonight's lights),
+        coastlines; the planet's surface and night lights are NASA's <a href="https://science.nasa.gov/earth/earth-observatory/blue-marble-next-generation/">Blue Marble</a>
+        shaded relief and <a href="https://science.nasa.gov/earth/earth-observatory/earth-at-night/">Black Marble</a> city-lights composites
+        served by <a href="https://www.earthdata.nasa.gov/engage/open-data-services-software/earthdata-developer-portal/gibs-api">NASA GIBS</a> (public domain; a composite, not tonight's lights),
         toned into this page's palette; the stars behind the planet are the brightest 8,000 from the
         <a href="https://github.com/astronexus/ATHYG-Database">AT-HYG</a> catalogue (CC BY-SA 4.0), placed for the current sidereal time. Method credits: <a href="https://gpsjam.org/">gpsjam.org</a> (John
         Wiseman), the <a href="https://gps.stanford.edu/">Stanford GPS Lab</a>,
@@ -661,6 +662,7 @@ body.obs-darksky .greedy-nav .visible-links a:before { background: #82a6cc; }
   border-radius: 6px;
   top: 50%; transform: translateY(-50%);
   height: auto; padding: 0.55rem 0.6rem; right: 0.35rem;
+  min-height: 40px; min-width: 44px;   /* a89: was 49x24; the other pages give 44x40 */
   opacity: 0.85;
 }
 .greedy-nav button:hover { opacity: 1; }
@@ -1728,6 +1730,26 @@ html[data-theme="light"] .obs-card__dock::before {
 
 .obs-card--help { width: min(460px, calc(100vw - 10rem)); }
 .obs-card--help a { text-decoration: underline; }
+/* a47: on a short window (a phone in landscape) the help card's sticky dock,
+   with its three buttons stacked, took all but about 22 px of the card and
+   left the text a faded slit. There the dock stays at the end of the text,
+   which scrolls as ordinary prose; the "Scroll for the rest" line and the
+   fade go with the stickiness they belonged to. */
+@media (max-height: 500px) {
+  .obs-card--help .obs-card__dock { position: static; }
+  .obs-card--help .obs-card__dock::before { display: none; }
+  .obs-card--help .obs-card__cut { display: none !important; }
+  /* B12 repair: a static dock at the END sat about 8,600 px down, under the
+     whole credits list. It comes first instead, right under the head, so the
+     buttons are on screen the moment the card opens, and the prose below
+     scrolls as ordinary text with room at its end. */
+  .obs-card--help .obs-card__dock {
+    order: -1; margin-top: -0.6rem; margin-bottom: 0.2rem;
+    padding-top: 0.45rem; padding-bottom: 0.6rem;
+    border-top: 0; border-bottom: 1px solid rgba(127,127,127,0.22);
+  }
+  .obs-card--help .obs-card__body { padding-bottom: 0.85rem; }
+}
 
 /* The reduced-motion event card. It is the arrival: with no flight to watch,
    this plate sliding in from the card's own edge is the whole event, so it
@@ -3641,8 +3663,9 @@ html[data-theme="light"] .obs-chip:hover { background: #ffffff; }
      the target, so it takes the same floor as the chips */
   .obs-check { min-height: 34px; }
   .obs-rack__row { min-height: 44px; }
-  .obs-collapse { width: 2.3em; height: 2.3em; }
-  .obs-panel .gadget-help { min-width: 36px; min-height: 36px; }
+  /* a119: the older gadgets' touch sizes (36x40 collapse, 40x40 help) */
+  .obs-collapse { width: 2.3em; height: 2.3em; min-width: 36px; min-height: 40px; }
+  .obs-panel .gadget-help { min-width: 40px; min-height: 40px; }
   .obs-card__close { width: 2em; height: 2em; }
   .obs-q { min-height: 34px; }
   .obs-num { min-height: 34px; }

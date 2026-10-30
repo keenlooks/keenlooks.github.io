@@ -118,20 +118,46 @@
     }
     range.dispatchEvent(new Event('input', { bubbles: true }));  // gadget re-renders the label
   }
+  /* The words around the value in its label row: "Interest rate (APR): <value>" gives the name
+     "Interest rate (APR)"; "Term: <value> years" gives the unit "years". */
+  function labelParts(el) {
+    var p = el.parentNode, before = '', after = '', seen = false;
+    for (var n = p ? p.firstChild : null; n; n = n.nextSibling) {
+      if (n === el) { seen = true; continue; }
+      if (n.nodeType === 1 && /^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(n.tagName)) continue;
+      if (seen) after += n.textContent; else before += n.textContent;
+    }
+    return { name: before.replace(/\s+/g, ' ').replace(/[\s:]+$/, '').trim(), unit: after.replace(/\s+/g, ' ').trim() };
+  }
+  /* Screen readers: the value is named by its row ("Interest rate (APR), type a value"), and the
+     paired slider speaks the formatted readout ("6.0%") instead of its raw number ("6"). */
+  function syncA11y(el, range) {
+    var parts = labelParts(el);
+    var name = parts.name ? parts.name + ', type a value' : 'Type a value';
+    if (el.getAttribute('aria-label') !== name) el.setAttribute('aria-label', name);
+    if (document.activeElement === el) return;   /* mid-edit: keep the last committed readout */
+    var vt = (el.textContent + (parts.unit ? ' ' + parts.unit : '')).replace(/\s+/g, ' ').trim();
+    if (vt && range.getAttribute('aria-valuetext') !== vt) range.setAttribute('aria-valuetext', vt);
+  }
   function enhance(el) {
     var range = document.getElementById(el.getAttribute('data-range'));
     if (!range) return;
     el.setAttribute('contenteditable', 'true');
     el.setAttribute('role', 'textbox');
     el.setAttribute('inputmode', 'decimal');   /* numeric keypad on phones */
-    el.setAttribute('title', 'Click to type a value');
+    el.setAttribute('title', 'Type a value');
+    syncA11y(el, range);
+    try {
+      new MutationObserver(function () { syncA11y(el, range); })
+        .observe(el.parentNode || el, { childList: true, characterData: true, subtree: true });
+    } catch (e) {}
     el.addEventListener('pointerdown', function (e) { e.preventDefault(); el.focus(); selectAll(el); });
     el.addEventListener('focus', function () { el._evShown = el.textContent; selectAll(el); });
     el.addEventListener('keydown', function (e) {
       if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
       else if (e.key === 'Escape') { e.preventDefault(); range.dispatchEvent(new Event('input', { bubbles: true })); el.blur(); }
     });
-    el.addEventListener('blur', function () { commit(el, range); });
+    el.addEventListener('blur', function () { commit(el, range); syncA11y(el, range); });
   }
   function init() {
     var els = document.querySelectorAll('.editable-val[data-range]');

@@ -23,6 +23,13 @@
   var ctx = canvas.getContext('2d');
   if (!ctx) return;
   function id(x) { return document.getElementById(x); }
+  // "Tap" under a coarse (touch) pointer, "click" otherwise (site copy rule)
+  var COARSE = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+  var hintEl = id('bond-hint');
+  if (COARSE && hintEl) hintEl.innerHTML = 'In coupon mode: <strong>tap a year</strong> to add a payout, tap a payout to edit it (× or 0 deletes), '
+    + 'and <strong>drag</strong> it sideways to a different time. <strong>Tap an x-axis year</strong> to anchor the timeline to a calendar date. '
+    + '&ldquo;Standard bond&rdquo; rebuilds the default, as do the face, coupon, and maturity sliders, so payouts you placed by hand are replaced when you move them. '
+    + 'You can also type payouts and the start year below.';
 
   // Numbers follow the visitor's locale through Intl ("$1,000" and "3.0%" in
   // en-US, "1.000 $" and "3,0 %" in de-DE); the amounts stay in US dollars.
@@ -159,7 +166,11 @@
 
   // ---- single-payout view -----------------------------------------------
   // longest first; drawSingle picks the longest one that fits the plot width
-  var AXIS_HINTS = [
+  var AXIS_HINTS = COARSE ? [
+    'tap a year on the bottom axis to set a calendar date',
+    'tap an axis year to set a date',
+    'tap a year below'
+  ] : [
     'click a year on the bottom axis to set a calendar date',
     'click an axis year to set a date',
     'click a year below'
@@ -204,7 +215,13 @@
 
   // ---- coupon-bond view (one value line, freeform payouts) --------------
   // longest first; drawCoupon picks the longest one that fits the plot width
-  var HINTS = [
+  var HINTS = COARSE ? [
+    'tap a year to add a payout · tap one to edit · drag to move it',
+    'tap to add a payout · tap one to edit · drag to move',
+    'tap to add a payout, drag to move it',
+    'tap to add a payout',
+    'tap to add'
+  ] : [
     'click a year to add a payout · click one to edit · drag to move it',
     'click to add a payout · click one to edit · drag to move',
     'click to add a payout, drag to move it',
@@ -351,6 +368,7 @@
     updateCaption();
   }
   function syncControls() {
+    if (elCal && document.activeElement !== elCal) elCal.value = s.startYearCal != null ? String(s.startYearCal) : '';
     if (rateVal) rateVal.textContent = pct(displayRate * 100);
     if (yearsVal) yearsVal.textContent = num(s.years);
     if (faceVal) faceVal.textContent = fmtUSD(s.face);
@@ -460,6 +478,52 @@
   // a vertical swipe that started on the chart becomes a page scroll (touch-action
   // pan-y): the browser cancels the pointer, so drop the held tap and any half-started drag
   window.addEventListener('pointercancel', function () { tap = null; if (drag) { drag = null; draw(); } });
+
+  // ---- the same chart actions by typing (keyboard / screen-reader path) --
+  // "Payout: $ [amount] at year [t]" adds a payout, or changes the one already at
+  // that time (0 deletes it); "Timeline starts in [year]" sets the calendar anchor
+  // the x-axis tick editor sets (empty = years from today).
+  var formPay = id('bond-pay-form'), elPayAmt = id('bond-pay-amt'), elPayYr = id('bond-pay-yr');
+  var formCal = id('bond-cal-form'), elCal = id('bond-cal'), elTypeSt = id('bond-type-status');
+  function parseNum(t) {
+    t = String(t == null ? '' : t).trim();
+    if (!t) return null;
+    if (window.parseLocaleNumber) { var v = window.parseLocaleNumber(t); return (v == null || !isFinite(v)) ? null : v; }
+    var f = parseFloat(t.replace(/[$,\s]/g, '')); return isFinite(f) ? f : null;
+  }
+  function whenText(t) {
+    var w = s.startYearCal != null ? s.startYearCal + t : t, txt = (Math.abs(w - Math.round(w)) < 1e-9) ? num(w) : dec1(w);
+    return s.startYearCal != null ? 'in ' + txt : 'at year ' + txt;
+  }
+  function typeStatus(t) { if (elTypeSt) elTypeSt.textContent = t; }
+  if (formPay) formPay.addEventListener('submit', function (e) {
+    e.preventDefault();
+    if (s.view !== 'coupon') return;
+    var amt = parseNum(elPayAmt && elPayAmt.value), yr = parseNum(elPayYr && elPayYr.value);
+    if (amt == null || yr == null) { typeStatus('Type an amount and a year, for example 100 and 5.'); return; }
+    if (s.startYearCal != null && yr >= 1000) yr -= s.startYearCal;   // a calendar year once the timeline is anchored
+    var t = Math.round(yr * 10) / 10;
+    if (t < 0.1 || t > s.years) { typeStatus('Pick a time from 0.1 to ' + num(s.years) + ' years, the bond\'s maturity.'); return; }
+    var at = -1, k;
+    for (k = 0; k < s.payouts.length; k++) if (Math.abs(s.payouts[k].t - t) < 0.05) { at = k; break; }
+    if (at >= 0) {
+      if (amt <= 0) { s.payouts.splice(at, 1); draw(); typeStatus('Deleted the payout ' + whenText(t) + '.'); return; }
+      s.payouts[at].amt = amt; draw();
+      typeStatus('Changed the payout ' + whenText(t) + ' to ' + fmtUSD(amt) + '.');
+      return;
+    }
+    if (amt <= 0) { typeStatus('Type an amount above zero (zero deletes a payout already at that time).'); return; }
+    s.payouts.push({ t: t, amt: amt }); draw();
+    typeStatus('Added a payout of ' + fmtUSD(amt) + ' ' + whenText(t) + '.');
+  });
+  if (formCal) formCal.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var v = parseNum(elCal && elCal.value);
+    if (v == null) { s.startYearCal = null; draw(); typeStatus('The timeline shows years from today.'); return; }
+    if (v < 1900 || v > 9999) { typeStatus('Type a four-digit year, or leave it empty for years from today.'); return; }
+    s.startYearCal = Math.round(v); draw();
+    typeStatus('The timeline starts in ' + num(s.startYearCal) + '.');
+  });
 
   // ---- controls ----------------------------------------------------------
   if (rateInput) rateInput.addEventListener('input', function () { setRate(parseFloat(rateInput.value) / 100, false); });

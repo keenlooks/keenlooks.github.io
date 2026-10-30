@@ -29,6 +29,18 @@
   var elPanel = id('epi-panel'), elCollapse = id('epi-collapse');
   var status = id('epi-status');
   if (window.GadgetUI) GadgetUI.liveStatus(status);
+  /* counts grouped in the visitor's locale with Latin digits (right-to-left
+     languages take en-US), the rule bonds.js, loans.js and editable-values.js use */
+  var NUM_LOC = (function () {
+    try {
+      var l = new Intl.NumberFormat().resolvedOptions().locale;
+      if (/^(ar|fa|ur|he|iw|yi|ps|sd|ug|ckb|dv|ks|syr)(-|$)/i.test(l)) return 'en-US';
+      return l.replace(/-u-.*$/i, '') + '-u-nu-latn';
+    } catch (e) { return undefined; }
+  })();
+  var NUM_FMT = null;
+  try { NUM_FMT = new Intl.NumberFormat(NUM_LOC); } catch (e) {}
+  function fmtN(n) { return NUM_FMT ? NUM_FMT.format(n) : String(n); }
 
   var MAX_CELLS = 60000, CELL_FLOOR = 6;
   var STEP_MS = 95;                 // one "day" per step
@@ -240,7 +252,7 @@
       var everPct = (((counts.r + counts.i) / Math.max(1, n - counts.v)) * 100).toFixed(0);
       var msg = over
         ? 'Outbreak over: ' + everPct + '% of the unvaccinated ever infected. ' + CLICK + ' to reignite.'
-        : counts.i + ' infected · ' + counts.r + ' recovered · ' + counts.s + ' susceptible';
+        : fmtN(counts.i) + ' infected · ' + fmtN(counts.r) + ' recovered · ' + fmtN(counts.s) + ' susceptible';
       /* only on a real change: every write re-fires the aria-live mirror */
       if (status.textContent !== msg) status.textContent = msg;
     }

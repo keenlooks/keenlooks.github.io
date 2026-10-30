@@ -10237,6 +10237,23 @@
       var ar = actbar.getBoundingClientRect();
       if (ar.height) bottom = Math.max(bottom, cssH - ar.top + 8);
     }
+    /* a40: on a very short window (400 percent zoom) the bottom-anchored card
+       rose above the viewport and its buttons sat under the masthead. Its top
+       stays below the masthead; the card gives up its clearance of the corner
+       buttons, the act bar and the chat first, and scrolls inside only when
+       even that leaves too little room. */
+    coachEl.style.maxHeight = '';
+    coachEl.style.overflowY = '';
+    var mh = document.querySelector('.masthead');
+    var topMin = (mh ? Math.max(0, mh.getBoundingClientRect().bottom) : 0) + 8;
+    var ch = coachEl.offsetHeight || 0;
+    if (ch && cssH - bottom - ch < topMin) {
+      bottom = Math.max(4, cssH - topMin - ch);
+      if (cssH - bottom - ch < topMin) {
+        coachEl.style.maxHeight = Math.max(60, Math.round(cssH - bottom - topMin)) + 'px';
+        coachEl.style.overflowY = 'auto';
+      }
+    }
     coachEl.style.bottom = Math.round(bottom) + 'px';
     coachH = coachBand();
     syncDoneGate();
@@ -10281,8 +10298,12 @@
     else endTour('done');
   }
 
+  /* a42: the control that started the walkthrough (Replay), so closing it
+     hands keyboard focus back there; the auto-run falls back to the ? */
+  var coachOpener = null;
   function startTour() {
     try { localStorage.setItem(TOUR_KEY, '1'); } catch (e) {}
+    if (!tourOn) coachOpener = openerOf(coachEl);
     tourOn = true;
     showBeat(0);
     if (coachNext) { try { coachNext.focus({ preventScroll: true }); } catch (e) {} }
@@ -10294,10 +10315,18 @@
     if (!tourOn) { placeCoach(); return; }
     tourOn = false;
     if (coachEl) {
-      if (coachEl.contains(document.activeElement)) {
-        try { document.activeElement.blur(); } catch (e) {}
-      }
+      var heldCoach = coachEl.contains(document.activeElement);
       coachEl.hidden = true;
+      if (heldCoach) {
+        var back = coachOpener;
+        if (!back || !back.isConnected || !back.getClientRects().length ||
+            back.closest('[inert]')) back = byId('kit-help');
+        if (back && back.getClientRects().length && !back.closest('[inert]')) {
+          giveBackFocus(back);
+        } else {
+          try { document.activeElement.blur(); } catch (e) {}
+        }
+      }
     }
     coachH = 0;
     /* s7.21 ruling 1: every dismiss path (Got it, the x, an act change) clears
@@ -11696,6 +11725,13 @@
        the act status written a moment ago would swallow it. */
     if (VERIFY.plate) setTimeout(function () { setStatus(VERIFY.plate, true); }, 0);
     rafId = requestAnimationFrame(frame);
+    /* a38: the panel is wired, so its controls are offered from here on, and
+       the static loading line goes once the first frame is up */
+    if (panel) panel.removeAttribute('data-boot');
+    requestAnimationFrame(function () {
+      var ld = byId('kit-loading');
+      if (ld && ld.parentNode) ld.parentNode.removeChild(ld);
+    });
   }
 
   /* ------------------------------------------------------------- test hook */

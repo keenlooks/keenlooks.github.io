@@ -130,10 +130,61 @@
      starts below it, at y 196, instead of under it (all plus TOP_DROP). On a short screen (a
      phone in landscape) that would leave no plot at all, so there the ticker
      is dropped and the plot keeps the old top, and it never inverts. */
-  function tickerRoom() { return resultTop() - 36 - (196 + TOP_DROP) >= 100; }
+  /* Wide and short (a phone in landscape): the result lines would leave the
+     scatter a 14 to 75 px band, so they move to a column right of the plot and
+     the plot runs down to just above the corner buttons. */
+  function sideMode() { return W >= 600 && H < 500; }
+  function plotBottom() { return sideMode() ? H - cornerBand - 14 : resultTop() - 36; }
+  function tickerRoom() { return plotBottom() - (196 + TOP_DROP) >= 100; }
   function plotBounds() {
-    var y1 = resultTop() - 36, y0 = (tickerRoom() ? 196 : 180) + TOP_DROP;
-    return { x0: 24, x1: (W > 700 ? W - 360 : W - 24), y0: y0, y1: Math.max(y0 + 12, y1) };
+    var y1 = plotBottom(), y0 = (tickerRoom() ? 196 : 180) + TOP_DROP;
+    var x1 = sideMode() ? side.x1 : (W > 700 ? W - 360 : W - 24);
+    return { x0: 24, x1: x1, y0: y0, y1: Math.max(y0 + 12, y1) };
+  }
+  /* The side column ends at the right edge, or left of the controls panel
+     when the panel is open and reaches down beside the column (it used to be
+     drawn under the open panel, and on a phone the re-run button lives in that
+     panel). The plot gives up width so the column fits, using a smaller font
+     first. Measured once per frame, not per plotted point. */
+  var side = { x1: 0, r: 0, mono: 16, wrap: false };
+  var SIDE_WIDEST = '=  CRC32("wwwwwwwww")', SIDE_CAP = 'two different inputs, identical checksum';
+  function updateSide() {
+    if (!W || !H) return;
+    var half = Math.round(W * 0.5) - 12;
+    if (!sideMode()) { side.x1 = half; side.r = W; return; }
+    var r = W, y0 = (tickerRoom() ? 196 : 180) + TOP_DROP;
+    if (elPanel) {
+      var pr = elPanel.getBoundingClientRect(), cr = canvas.getBoundingClientRect();
+      if (pr.width && pr.height && pr.bottom - cr.top > y0 + 8 && pr.left - cr.left < W)
+        r = Math.round(pr.left - cr.left) - 12;
+    }
+    var mono = 16, x1 = half, w;
+    for (; mono >= 13; mono--) {
+      ctx.font = mono + 'px ui-monospace, SFMono-Regular, Consolas, monospace';
+      w = ctx.measureText(SIDE_WIDEST).width;
+      x1 = Math.min(half, Math.floor(r - w - 24));
+      if (x1 >= 120) break;
+    }
+    side.mono = Math.max(13, mono);
+    side.x1 = Math.max(120, x1);
+    side.r = r;
+    ctx.font = '13px "Source Sans 3", system-ui, sans-serif';
+    side.wrap = ctx.measureText(SIDE_CAP).width > r - side.x1 - 16;
+  }
+  /* The scatter lives in an offscreen buffer in plot coordinates, so when the
+     plot rectangle changes (the panel opened or closed, the corner buttons
+     measured, a resize after a find) it is redrawn from the inputs seen so far
+     instead of keeping dots at their old places. */
+  var accKey = '';
+  function syncAcc() {
+    var b = plotBounds(), key = [W, H, b.x0, b.x1, b.y0, b.y1].join(',');
+    if (key === accKey) return;
+    accKey = key;
+    if (!acc || !seen) return;
+    ensureAcc();
+    accCtx.clearRect(0, 0, W, H);
+    accCtx.fillStyle = (effectiveTheme() === 'light') ? 'rgba(52,86,138,0.5)' : 'rgba(130,166,204,0.5)';
+    seen.forEach(function (s, c) { accCtx.fillRect(ptX(c) - 1, ptY(c) - 1, 2, 2); });
   }
   function ptX(crc) { var b = plotBounds(); return b.x0 + (crc & 0xffff) / 0xffff * (b.x1 - b.x0); }
   function ptY(crc) { var b = plotBounds(); return b.y0 + ((crc >>> 16) & 0xffff) / 0xffff * (b.y1 - b.y0); }
@@ -213,19 +264,31 @@
     var text = elText ? elText.value : '';
     if (prevText !== null && elPrev) {
       var shown = prevText === '' ? '(empty)' : prevText;
-      if (shown.length > 46) shown = shown.slice(0, 46) + '…';
+      var cps = Array.from(shown);
+      if (cps.length > 46) shown = cps.slice(0, 46).join('') + '…';
       elPrev.textContent = 'previous: ' + shown;
     }
     prevText = text;
     var my = ++seq;
     crypto.subtle.digest('SHA-256', enc.encode(text)).then(function (b) { if (my === seq) setDigest(b); });
   }
+  var MARK_RE = null;
+  try { MARK_RE = new RegExp('^\\p{M}$', 'u'); } catch (e) {}
+  function isMark(ch) { return MARK_RE ? MARK_RE.test(ch) : /^[\u0300-\u036f]$/.test(ch); }
   function flipOneChar() {
     if (!elText) return;
-    var t = elText.value, ab = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    var c = ab[Math.floor(Math.random() * ab.length)];
+    var ab = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    /* whole code points, so an emoji or a rare CJK character is replaced, never split into a
+       lone surrogate; a combining accent is skipped when the message has anything else */
+    var t = Array.from(elText.value), c = ab[Math.floor(Math.random() * ab.length)], picks = [], k;
+    for (k = 0; k < t.length; k++) if (!isMark(t[k])) picks.push(k);
+    if (!picks.length) for (k = 0; k < t.length; k++) picks.push(k);
     if (!t.length) elText.value = c;
-    else { var i = Math.floor(Math.random() * t.length); while (c === t[i]) c = ab[Math.floor(Math.random() * ab.length)]; elText.value = t.slice(0, i) + c + t.slice(i + 1); }
+    else {
+      var i = picks[Math.floor(Math.random() * picks.length)];
+      while (c === t[i]) c = ab[Math.floor(Math.random() * ab.length)];
+      t[i] = c; elText.value = t.join('');
+    }
     rehash();
   }
 
@@ -274,13 +337,24 @@
     var head = found
       ? 'Collision found after ' + found.tries.toLocaleString() + ' inputs'
       : (searching ? 'Searching… ' + tries.toLocaleString() + ' distinct inputs tried' : 'CRC32 collision search');
-    ctx.fillText(head, W / 2, HEAD_Y);              /* clear of the top nav / vignette */
+    /* beside an open panel (phone landscape) the header and ticker centre in
+       the strip left of it, shrinking to fit, instead of running under it */
+    var hx = W / 2, strip = W;
+    if (sideMode() && side.r < W - 12) {
+      strip = side.r; hx = strip / 2 + 6;
+      var hw = ctx.measureText(head).width;
+      if (hw > strip - 16) {
+        headFs = Math.max(12, headFs * (strip - 16) / hw);
+        ctx.font = '600 ' + headFs + 'px "Source Sans 3", system-ui, sans-serif';
+      }
+    }
+    ctx.fillText(head, hx, HEAD_Y);                 /* clear of the top nav / vignette */
 
     /* live ticker: the input being hashed right now and the value it maps to */
     if (searching && lastTried && tickerRoom()) {
       ctx.font = Math.max(12, Math.min(16, W / 60)) + 'px ui-monospace, SFMono-Regular, Consolas, monospace';
       ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.fillStyle = textColor(0.6);
-      ctx.fillText('hashing  "' + lastTried.s + '"  →  0x' + hex32(lastTried.c), W / 2, TICK_Y);
+      ctx.fillText('hashing  "' + lastTried.s + '"  →  0x' + hex32(lastTried.c), hx, TICK_Y);
     }
 
     if (found) {
@@ -294,9 +368,24 @@
       var lbl = '0x' + hex32(found.crc);
       ctx.font = '600 14px ui-monospace, SFMono-Regular, Consolas, monospace';
       var tw = ctx.measureText(lbl).width, bxw = tw + 16, bxh = 24;
-      var bxp = Math.min(W - bxw - 8, px + 14), byp = Math.max(8, py - 34);
+      /* keep the badge off the header line (it goes below the point when the
+         point is near the top) and out of the result column and the panel's
+         column: it never reaches past the plot's right edge */
+      var xLim = plotBounds().x1 + 8;
+      var bxp = px + 14;
+      if (bxp + bxw > xLim) bxp = px - 14 - bxw;
+      bxp = Math.max(8, Math.min(W - bxw - 8, bxp));
+      var byp = py - 34, below = byp < HEAD_Y + headFs + 6, beside = false;
+      if (below) byp = Math.min(H - bxh - 8, py + 16);
+      /* a short plot (phone landscape) leaves no room below the point above
+         the corner buttons: sit the badge beside the point instead */
+      if (below && byp + bxh > H - cornerBand - 6) { byp = py - bxh / 2; beside = true; }
+      byp = Math.max(8, byp);
       ctx.strokeStyle = badColor(); ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(bxp + 8, byp + bxh); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(px, py);
+      if (beside) ctx.lineTo(bxp < px ? bxp + bxw : bxp, byp + bxh / 2);
+      else ctx.lineTo(bxp + 8, below ? byp : byp + bxh);
+      ctx.stroke();
       ctx.fillStyle = badColor(); roundRect(bxp, byp, bxw, bxh, 6); ctx.fill();
       ctx.fillStyle = '#fff'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
       ctx.fillText(lbl, bxp + 8, byp + bxh / 2);
@@ -304,19 +393,50 @@
       ctx.font = Math.max(13, Math.min(18, W / 42)) + 'px ui-monospace, SFMono-Regular, Consolas, monospace';
       ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
       ctx.fillStyle = textColor(0.85);
-      var yb = resultTop();
-      ctx.fillText('CRC32("' + found.a + '")  =  CRC32("' + found.b + '")', W / 2, yb);
-      ctx.fillStyle = badColor();
-      ctx.fillText('=  0x' + hex32(found.crc), W / 2, yb + 24);
-      ctx.font = Math.max(12, W / 70) + 'px "Source Sans 3", system-ui, sans-serif';
-      ctx.fillStyle = textColor(0.5);
-      ctx.fillText('two different inputs, identical checksum', W / 2, yb + 46);
+      if (sideMode()) {
+        /* stacked in the column right of the plot (left of an open panel) */
+        var cx = (side.x1 + 12 + side.r) / 2, ys = plotBounds().y0 + 30, lh = side.mono + 8;
+        ctx.font = side.mono + 'px ui-monospace, SFMono-Regular, Consolas, monospace';
+        ctx.fillText('CRC32("' + found.a + '")', cx, ys);
+        ctx.fillText('=  CRC32("' + found.b + '")', cx, ys + lh);
+        ctx.fillStyle = badColor();
+        ctx.fillText('=  0x' + hex32(found.crc), cx, ys + 2 * lh);
+        ctx.font = '13px "Source Sans 3", system-ui, sans-serif';
+        ctx.fillStyle = textColor(0.5);
+        if (side.wrap) {
+          ctx.fillText('two different inputs,', cx, ys + 2 * lh + 22);
+          ctx.fillText('identical checksum', cx, ys + 2 * lh + 39);
+        } else {
+          ctx.fillText(SIDE_CAP, cx, ys + 2 * lh + 22);
+        }
+      } else {
+        var yb = resultTop();
+        ctx.fillText('CRC32("' + found.a + '")  =  CRC32("' + found.b + '")', W / 2, yb);
+        ctx.fillStyle = badColor();
+        ctx.fillText('=  0x' + hex32(found.crc), W / 2, yb + 24);
+        ctx.font = Math.max(12, W / 70) + 'px "Source Sans 3", system-ui, sans-serif';
+        ctx.fillStyle = textColor(0.5);
+        ctx.fillText('two different inputs, identical checksum', W / 2, yb + 46);
+      }
     } else if (!searching && tries === 0) {
       /* idle landing (reduced-motion visitors see this first): sit the
          instruction fully below the header line, never overlapping it */
-      ctx.font = Math.max(13, W / 64) + 'px "Source Sans 3", system-ui, sans-serif';
+      /* in the strip left of an open panel it shrinks to fit, and splits into
+         two lines when even 11 px would not fit (it never runs off the left) */
+      var idle = ['Press “Find a collision”: each dot is one input’s 32-bit CRC.'];
+      var ifs = Math.max(13, W / 64), room = strip - 16, iw;
+      ctx.font = ifs + 'px "Source Sans 3", system-ui, sans-serif';
+      iw = ctx.measureText(idle[0]).width;
+      if (iw > room) {
+        if (ifs * room / iw < 11) {
+          idle = ['Press “Find a collision”:', 'each dot is one input’s 32-bit CRC.'];
+          iw = Math.max(ctx.measureText(idle[0]).width, ctx.measureText(idle[1]).width);
+        }
+        if (iw > room) ifs = Math.max(11, ifs * room / iw);
+        ctx.font = ifs + 'px "Source Sans 3", system-ui, sans-serif';
+      }
       ctx.fillStyle = textColor(0.55); ctx.textBaseline = 'top';
-      ctx.fillText('Press “Find a collision”: each dot is one input’s 32-bit CRC.', W / 2, HEAD_Y + headFs * 1.6);
+      for (var il = 0; il < idle.length; il++) ctx.fillText(idle[il], hx, HEAD_Y + headFs * 1.6 + il * ifs * 1.3);
     }
   }
 
@@ -324,7 +444,7 @@
     raf = requestAnimationFrame(draw);
     if (now - lastMeasure > 400) { lastMeasure = now; measureChrome(); }
     if (!W || !H) { resize(); if (!W || !H) return; }
-    if (view === 'collide') searchStep();
+    if (view === 'collide') { updateSide(); syncAcc(); searchStep(); }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = bg(); ctx.fillRect(0, 0, W, H);
     if (view === 'collide') drawCollide(now); else drawResult(now);

@@ -1832,7 +1832,13 @@
         if (done) return;
         done = true;
         if (commit) {
-          var txt = inp.value.replace(/\s+/g, '');
+          /* a53: full-width forms (NFKC) and Arabic-Indic or Persian digits
+             read as the ASCII the patterns below expect */
+          var txt = inp.value;
+          try { txt = txt.normalize('NFKC'); } catch (e2) {}
+          txt = txt.replace(/[\u0660-\u0669]/g, function (c) { return String(c.charCodeAt(0) - 0x0660); })
+                   .replace(/[\u06F0-\u06F9]/g, function (c) { return String(c.charCodeAt(0) - 0x06F0); })
+                   .replace(/\s+/g, '');
           var v = null, m;
           if ((m = /^\$([0-9a-fA-F]{1,2})$/.exec(txt))) v = parseInt(m[1], 16);
           else if ((m = /^0x([0-9a-fA-F]{1,2})$/.exec(txt))) v = parseInt(m[1], 16);
@@ -1841,6 +1847,8 @@
             cpu.write(addr, v);
             memFlash[addr] = { t: lastT, w: 1 };
             setStatus('Wrote $' + hx2(v & (addr >= 0x1000 ? 0x0F : 0xFF)) + ' to $' + hx4(addr) + '.');
+          } else {
+            setStatus('Nothing written to $' + hx4(addr) + '. Type a byte as 0-255, $00-$FF or 0x00-0xFF.');
           }
         }
         if (inp.parentNode) inp.parentNode.removeChild(inp);
@@ -1910,8 +1918,11 @@
            '<li><strong>WAIT syncs to the screen, not the clock</strong>: it pauses until the next display ' +
              'frame (about 60 per second), whatever the speed slider says.</li>' +
            '<li>Convention: keep variables and pointers in <code>$E0-$FF</code>; the examples do.</li>' +
-           '<li>Click the screen to give it your keyboard (arrows + space). Esc or clicking elsewhere releases it.</li>' +
-           '<li>Click a byte in the memory inspector while paused to edit it ($ hex or decimal).</li></ul>';
+           (GU && GU.coarse && GU.coarse() ?
+             '<li>Tap the screen to give it your keyboard (arrows + space), or use the arrow pad under it.</li>' +
+             '<li>Tap a byte in the memory inspector while paused to edit it ($ hex or decimal).</li></ul>' :
+             '<li>Click the screen to give it your keyboard (arrows + space). Esc or clicking elsewhere releases it.</li>' +
+             '<li>Click a byte in the memory inspector while paused to edit it ($ hex or decimal).</li></ul>');
       h += '<p class="comp-ref-credit">In the spirit of Ben Eater&#39;s breadboard computer videos. ' +
            'The KL-8 is an original design; all code here is original.</p>';
       refBody.innerHTML = h;
@@ -2130,7 +2141,7 @@
           return rectOf(document.querySelector('.comp-codebar')) ||
             paneOr('pane-code', 'code');
         }, side: 'bottom' }
-    ]);
+    ], { opener: '#comp-ref-btn' });
     var refBody = document.getElementById('comp-ref-body');
     if (t && refBody) {
       var p = document.createElement('p');

@@ -144,6 +144,7 @@ html[data-theme="light"] .hash-panel { background: rgba(255,255,255,0.97); borde
 .hash-view:hover { background: rgba(127,127,127,0.26); }
 /* dark text on the light accent fill (7.26:1; white was 2.53:1), white on the light theme's navy */
 .hash-view--on { background: #82a6cc; border-color: #82a6cc; color: #141414; }
+.hash-view--on:hover { background: #a3c2e0; border-color: #a3c2e0; } /* beats .hash-view:hover in dark; the light rules out-rank it */
 html[data-theme="light"] .hash-view--on { background: #34568a; border-color: #34568a; color: #fff; }
 @media (prefers-color-scheme: light) {
   html:not([data-theme="dark"]) .hash-view--on { background: #34568a; border-color: #34568a; color: #fff; }

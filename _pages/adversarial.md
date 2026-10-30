@@ -34,13 +34,13 @@ description: "An interactive adversarial-example demo by Keane Lucas: a small MN
       <label class="adv-slider"><span>Attack strength &epsilon;: <strong id="adv-eps-val" class="editable-val" data-range="adv-eps">0.10</strong></span>
         <input id="adv-eps" type="range" min="0" max="0.3" step="0.01" value="0.1"></label>
 
-      <label class="adv-check"><input id="adv-robust" type="checkbox"> Use the adversarially-trained model</label>
+      <label class="adv-check"><input id="adv-robust" type="checkbox"> Use the adversarially trained model</label>
 
       <div class="adv-row">
         <button id="adv-prev" class="adv-btn" type="button">Prev digit</button>
         <button id="adv-next" class="adv-btn" type="button">Next digit</button>
         <button id="adv-clear" class="adv-btn" type="button" title="Blank the canvas so you can draw your own digit">Clear &amp; draw</button>
-        <button id="adv-share" class="adv-btn" type="button" title="Copy a link with these exact settings">Share</button>
+        <button id="adv-share" class="adv-btn" type="button" title="Copy a link with these exact settings">Share link</button>
         <button id="adv-snap" class="adv-btn" type="button" title="Download the view as a PNG">Save image</button>
       </div>
 
@@ -48,7 +48,7 @@ description: "An interactive adversarial-example demo by Keane Lucas: a small MN
         <strong data-tap="Tap a confidence bar">Click a confidence bar</strong> to aim the attack at that digit. You can also
         <strong>draw on the left image</strong> (right-drag erases; on a touchscreen, press and hold,
         then drag, to erase); the network reads it live and the attack adapts. The
-        adversarially-trained model has seen attacks during training, so it is much harder to fool
+        adversarially trained model has seen attacks during training, so it is much harder to fool
         (its clean accuracy is a little lower in exchange).
       </p>
 
@@ -71,10 +71,10 @@ description: "An interactive adversarial-example demo by Keane Lucas: a small MN
         <div class="adv-sub">
           <span class="adv-sub__title">Accuracy vs attack strength</span>
           <canvas id="adv-curve" class="adv-curve"
-                  aria-label="Accuracy of the standard and adversarially-trained models as attack strength grows, measured on the 60 demo digits."></canvas>
+                  aria-label="Accuracy of the standard and adversarially trained models as attack strength grows, measured on the 60 demo digits."></canvas>
           <p class="adv-note" id="adv-curve-note"></p>
           <p class="adv-note"><span class="adv-swatch adv-swatch--std"></span> standard &nbsp;
-            <span class="adv-swatch"></span> adversarially-trained &nbsp; dashed line = current &epsilon;</p>
+            <span class="adv-swatch"></span> adversarially trained &nbsp; dashed line = current &epsilon;</p>
         </div>
 
         <div class="adv-sub">
@@ -189,7 +189,7 @@ html[data-theme="light"] .adv-panel { background: rgba(255,255,255,0.97); border
 .adv-sub { display: flex; flex-direction: column; gap: 0.35rem; }
 .adv-sub__title { font-weight: 600; font-size: 0.92em; }
 .adv-curve { width: 100%; height: 150px; display: block; }
-.adv-note { margin: 0; font-size: 0.78em; opacity: 0.65; line-height: 1.45; }
+.adv-note { margin: 0; font-size: max(12px, 0.78em); opacity: 0.65; line-height: 1.45; }
 .adv-swatch {
   display: inline-block; width: 12px; height: 3px; border-radius: 2px;
   vertical-align: middle; background: rgba(127,127,127,0.95);

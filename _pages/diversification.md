@@ -2,6 +2,7 @@
 layout: single
 title: "Diversification, low fees, and time equals free money"
 permalink: /diversification/
+search_keys: "diversification risk portfolio index funds fees investing stocks"
 og_image: /images/og/diversification.png
 author_profile: false
 excerpt: "An interactive look at how holding many investments narrows the range of outcomes, cutting the worst cases while keeping most of the upside, and how fees skim off the top."

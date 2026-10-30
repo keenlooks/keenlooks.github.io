@@ -2,6 +2,7 @@
 layout: single
 title: "Where Your Loan Payments Actually Go"
 permalink: /loans/
+search_keys: "loan calculator amortization mortgage principal payoff"
 og_image: /images/og/loans.png
 author_profile: false
 excerpt: "An interactive look at how loan payments split between interest and principal, and how paying extra toward a loan (especially early) saves you real money over time."
@@ -16,7 +17,20 @@ You borrow a lump sum today and pay it back in fixed monthly chunks. If you pay 
 <div class="loan-explainer tex2jax_ignore">
   <canvas id="loan-canvas" class="loan-canvas"
           aria-label="Chart of a loan's remaining balance over time, comparing standard payments to making extra monthly payments, which pays the loan off sooner."></canvas>
-  <p class="loan-hint">Tip: <strong>click the chart</strong> to drop a one-time payment and type its amount; <strong>drag</strong> it to move it in time; click it again to change the amount (× or 0 removes it). Click a year on the bottom axis to anchor the timeline to a real date.</p>
+  <p class="loan-hint" id="loan-hint">Tip: <strong>click the chart</strong> to drop a one-time payment and type its amount; <strong>drag</strong> it to move it in time; click it again to change the amount (× or 0 removes it). Click a year on the bottom axis to anchor the timeline to a real date. You can also type both below.</p>
+  <div class="loan-type">
+    <form class="loan-type__form" id="loan-place-form" novalidate>
+      <span class="loan-type__lead">One-time payment:</span>
+      <label class="loan-type__field">$ <input id="loan-place-amt" type="text" inputmode="decimal" autocomplete="off" value="1000" aria-label="$ amount of the one-time payment"></label>
+      <label class="loan-type__field">in year <input id="loan-place-yr" type="text" inputmode="decimal" autocomplete="off" value="3" aria-label="in year (of the one-time payment, counted from today)"></label>
+      <button class="loan-btn" type="submit">Add or change</button>
+    </form>
+    <form class="loan-type__form" id="loan-cal-form" novalidate>
+      <label class="loan-type__field">Timeline starts in <input id="loan-cal" type="text" inputmode="numeric" autocomplete="off" placeholder="year" aria-label="Timeline starts in (a calendar year; leave it empty for years from today)"></label>
+      <button class="loan-btn" type="submit">Set</button>
+    </form>
+  </div>
+  <p class="loan-type__status" id="loan-type-status" role="status"></p>
 
   <div class="loan-breakdown">
     <div class="loan-legend">
@@ -91,6 +105,21 @@ You borrow a lump sum today and pay it back in fixed monthly chunks. If you pay 
 @media (max-width: 600px) { .loan-canvas { height: 300px; } }
 .loan-hint { font-size: 0.88rem; opacity: 0.75; margin: 0.4rem 0 0; }
 
+/* the same chart actions by typing (keyboard and screen-reader visitors; also handy on a phone):
+   a one-time payment at a year (same year again changes it, 0 removes it) and the calendar anchor */
+.loan-type { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1.5rem; margin: 0.6rem 0 0; font-size: 0.9rem; }
+.loan-type__form { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.5rem; margin: 0; }
+.loan-type__lead { opacity: 0.85; }
+.loan-type__field { display: inline-flex; align-items: center; gap: 0.45rem; margin: 0; color: inherit; cursor: default; }
+.loan-type__field input {
+  width: 5.2em; margin: 0; padding: 0.35em 0.5em; font: inherit; font-variant-numeric: tabular-nums;
+  border: 1px solid rgba(127,127,127,0.45); border-radius: 6px; box-shadow: none;
+  background: #1d1d1d; color: #e8e8e8;
+}
+.loan-type .loan-btn { padding: 0.45em 0.75em; }
+.loan-type__status { font-size: 0.88rem; opacity: 0.85; min-height: 1.3em; margin: 0.3rem 0 0; }
+@media (pointer: coarse) { .loan-type__field input, .loan-type .loan-btn { min-height: 44px; } .loan-type__field input { font-size: 16px; } }
+
 /* principal vs interest comparison bars */
 .loan-breakdown { display: flex; flex-direction: column; gap: 0.55rem; margin: 1.1rem 0 1.1rem; }
 .loan-legend { display: flex; flex-wrap: wrap; gap: 1.1rem; font-size: 0.85rem; opacity: 0.88; }
@@ -140,6 +169,7 @@ html[data-theme="light"] .loan-key--interest::before,
 html[data-theme="light"] .loan-seg--interest { background: #b4452f; }
 html[data-theme="light"] .loan-good { color: #34568a; }
 html[data-theme="light"] .loan-slider input[type="range"] { accent-color: #34568a; }
+html[data-theme="light"] .loan-type__field input { background: #ffffff; color: #262626; }
 @media (prefers-color-scheme: light) {
   html:not([data-theme="dark"]) .loan-key--principal::before,
   html:not([data-theme="dark"]) .loan-seg--principal { background: #34568a; }
@@ -147,6 +177,7 @@ html[data-theme="light"] .loan-slider input[type="range"] { accent-color: #34568
   html:not([data-theme="dark"]) .loan-seg--interest { background: #b4452f; }
   html:not([data-theme="dark"]) .loan-good { color: #34568a; }
   html:not([data-theme="dark"]) .loan-slider input[type="range"] { accent-color: #34568a; }
+  html:not([data-theme="dark"]) .loan-type__field input { background: #ffffff; color: #262626; }
 }
 </style>
 

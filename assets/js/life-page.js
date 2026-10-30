@@ -351,7 +351,7 @@
   if (shareBtn) {
     shareBtn.addEventListener('click', function () {
       var rle = serializeGrid();
-      var old = 'Share';
+      var old = 'Share link';
       if (!rle) { shareBtn.textContent = 'Board is empty'; }
       else if (rle.length > 8000) { shareBtn.textContent = 'Too big to share'; }
       else {

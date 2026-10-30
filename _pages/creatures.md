@@ -2,6 +2,7 @@
 layout: single
 title: "Evolving Creatures"
 permalink: /creatures/
+search_keys: "evolution genetic algorithm"
 author_profile: false
 excerpt: "Soft-body creatures race to the right, the farthest travelers breed, and within a few minutes wobbling blobs learn to run."
 description: "An interactive evolution sandbox by Keane Lucas: a population of soft-body creatures with spring muscles evolves live in your browser. Every twelve seconds the farthest travelers breed, and generation by generation wobbling blobs turn into creatures that genuinely run. Inspired by Karl Sims' Evolved Virtual Creatures."
@@ -70,8 +71,8 @@ og_image: /images/og/creatures.png
         <button id="cre-replay" class="cre-btn" type="button">Replay champion</button>
       </div>
       <div class="cre-row">
-        <button id="cre-share" class="cre-btn" type="button">Share champion</button>
-        <button id="cre-save" class="cre-btn" type="button">Save image</button>
+        <button id="cre-share" class="cre-btn" type="button" title="Copy a link to this champion">Share champion</button>
+        <button id="cre-save" class="cre-btn" type="button" title="Download the scene as a PNG">Save image</button>
         <button id="cre-edit" class="cre-btn" type="button" hidden>Edit body</button>
       </div>
 
@@ -163,7 +164,7 @@ html[data-theme="light"] .cre-btn--go { border-color: #34568a; }
   html:not([data-theme="dark"]) .cre-btn--go { border-color: #34568a; }
 }
 .cre-buildmsg { font-size: 0.88em; opacity: 0.82; font-variant-numeric: tabular-nums; }
-.cre-buildlegend { margin: 0; font-size: 0.78em; opacity: 0.6; }
+.cre-buildlegend { margin: 0; font-size: max(12px, 0.78em); opacity: 0.6; }
 /* A short window (a landscape phone, a half-height desktop window) leaves the
    bar a narrow lane between the corner buttons and the chat bar, where the
    color key wraps to two more rows. Those rows push the ground line, and with
@@ -284,8 +285,9 @@ html[data-theme="light"] .cre-slider input[type="range"] { accent-color: #34568a
 @media (pointer: coarse) {
   .cre-btn { min-height: 40px; padding: 0.5em 0.85em; }
   .cre-select select { min-height: 40px; }
-  .cre-collapse { width: 2.3em; height: 2.3em; }
-  .cre-panel .gadget-help { min-width: 36px; min-height: 36px; }
+  /* a119: the older gadgets' touch sizes (36x40 collapse, 40x40 help) */
+  .cre-collapse { width: 2.3em; height: 2.3em; min-width: 36px; min-height: 40px; }
+  .cre-panel .gadget-help { min-width: 40px; min-height: 40px; }
   .cre-slider input[type="range"] { height: 32px; }
 }
 </style>

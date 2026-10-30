@@ -2,6 +2,7 @@
 layout: single
 title: "Four in a Row"
 permalink: /fourinarow/
+search_keys: "connect four connect 4"
 author_profile: false
 excerpt: "Play the classic four-in-a-row game against a neural network refined by self-play, and watch it think: the search tree grows in real time as it considers lines."
 description: "Play four in a row against an AlphaZero-style neural network by Keane Lucas. The AI runs entirely in your browser, and its thinking is visible: a live search tree, its raw instinct versus what the search concludes, and a win-probability bar."
@@ -54,8 +55,8 @@ og_image: /images/og/fourinarow.png
       <label class="c4-check"><input id="c4-showthink" type="checkbox" checked> Show thinking</label>
 
       <div class="c4-row">
-        <button id="c4-share" class="c4-btn" type="button">Share link</button>
-        <button id="c4-save" class="c4-btn" type="button">Save image</button>
+        <button id="c4-share" class="c4-btn" type="button" title="Copy a link to this exact game">Share link</button>
+        <button id="c4-save" class="c4-btn" type="button" title="Download the board as a PNG">Save image</button>
       </div>
 
       <p class="c4-status-line"><span id="c4-status"></span></p>
@@ -147,8 +148,8 @@ html[data-theme="light"] .c4-panel { background: rgba(255,255,255,0.97); border-
   padding: 0; border: 0; overflow: hidden; white-space: nowrap;
   clip: rect(0 0 0 0); clip-path: inset(50%);
 }
-.c4-verify-line { margin: 0; font-size: 0.78em; opacity: 0.6; line-height: 1.4; }
-.c4-credit { margin: 0; font-size: 0.78em; opacity: 0.55; line-height: 1.4; }
+.c4-verify-line { margin: 0; font-size: max(12px, 0.78em); opacity: 0.6; line-height: 1.4; }
+.c4-credit { margin: 0; font-size: max(12px, 0.78em); opacity: 0.55; line-height: 1.4; }
 
 /* The blurb runs to a dozen lines and the notes under it to a dozen more, which
    is taller than the panel is ever allowed to be: it pushed New game, the
@@ -161,8 +162,9 @@ html[data-theme="light"] .c4-panel { background: rgba(255,255,255,0.97); border-
 /* touch targets */
 @media (pointer: coarse) {
   .c4-btn { min-height: 40px; padding: 0.5em 0.85em; }
-  .c4-collapse { width: 2.3em; height: 2.3em; }
-  .c4-panel .gadget-help { min-width: 36px; min-height: 36px; }
+  /* a119: the older gadgets' touch sizes (36x40 collapse, 40x40 help) */
+  .c4-collapse { width: 2.3em; height: 2.3em; min-width: 36px; min-height: 40px; }
+  .c4-panel .gadget-help { min-width: 40px; min-height: 40px; }
   .c4-slider input[type="range"] { height: 32px; }
   .c4-check input { width: 20px; height: 20px; }
 }

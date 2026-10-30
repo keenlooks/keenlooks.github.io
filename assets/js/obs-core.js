@@ -613,6 +613,12 @@
     var host = (u.hostname || '').toLowerCase();
     if (isLocalHost(host)) {
       if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+      /* a122: the loopback dev override only on a page that is itself served
+         from this machine, so a crafted link to the public site cannot make
+         a visitor's browser probe their own loopback ports. Outside a browser
+         (the node suites) there is no page to check. */
+      if (typeof location !== 'undefined' && location && location.hostname &&
+          !isLocalHost(String(location.hostname).toLowerCase())) return null;
     } else {
       if (u.protocol !== 'https:') return null;
       if (ANTENNA_ALLOW.indexOf(host) < 0) return null;

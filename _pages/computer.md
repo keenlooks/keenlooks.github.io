@@ -2,6 +2,7 @@
 layout: single
 title: "The Visible Computer"
 permalink: /computer/
+search_keys: "cpu processor emulator 8-bit assembly"
 author_profile: false
 excerpt: "A complete 8-bit computer in your browser: write assembly, then watch every value move between registers, memory, and the ALU while your program draws to a tiny screen."
 description: "The Visible Computer by Keane Lucas: the KL-8 is an original 8-bit machine that runs in the browser. Write assembly in a real editor, assemble it, and watch the datapath animate every fetch, decode, and execute while your program draws on a 32 by 32 pixel screen and reads the keyboard."
@@ -26,7 +27,7 @@ og_image: /images/og/computer.png
       </div>
       <div id="comp-edwrap" class="comp-edwrap">
         <textarea id="comp-src" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" wrap="off" aria-label="KL-8 assembly source"></textarea>
-        <pre id="comp-srcview" class="comp-srcview notranslate" translate="no" hidden tabindex="0" aria-label="Assembly source, read-only while the machine is loaded. Click it to edit and stop the run."></pre>
+        <pre id="comp-srcview" class="comp-srcview notranslate" translate="no" hidden tabindex="0" aria-label="Assembly source, read-only while the machine is loaded. Click it to edit and stop the run." data-tap-label="Assembly source, read-only while the machine is loaded. Tap it to edit and stop the run."></pre>
       </div>
       <div id="comp-errors" class="comp-errors" hidden></div>
       <p class="comp-blurb">Watch a small computer run: every byte that moves between the chips is drawn on the board, in plain words. When you are curious, open the code and change it. Press the <strong>?</strong> button for the instruction set and memory map.</p>
@@ -48,7 +49,7 @@ og_image: /images/og/computer.png
 
     <section class="comp-pane comp-pane--screen" id="pane-screen" aria-label="Screen, run controls, and memory inspector">
       <div class="comp-screenbox">
-        <canvas id="comp-screen" tabindex="0" aria-label="The KL-8 screen, 32 by 32 pixels. Click it to capture the keyboard for the running program."></canvas>
+        <canvas id="comp-screen" tabindex="0" aria-label="The KL-8 screen, 32 by 32 pixels. Click it to capture the keyboard for the running program." data-tap-label="The KL-8 screen, 32 by 32 pixels. Tap it to capture the keyboard for the running program."></canvas>
         <p id="comp-capnote" class="comp-capnote" hidden>keyboard captured. Esc or click outside to release.</p>
         <div id="comp-dpad" class="comp-dpad" aria-label="On-screen arrow pad">
           <button class="comp-dbtn comp-dbtn--up" data-bit="1" type="button" aria-label="Up arrow">&#9650;</button>
@@ -70,8 +71,8 @@ og_image: /images/og/computer.png
         <p id="comp-count" class="comp-count">0 instructions</p>
         <p id="comp-status" class="comp-status"></p>
         <div class="comp-row">
-          <button id="comp-share" class="comp-btn" type="button">Share link</button>
-          <button id="comp-save" class="comp-btn" type="button">Save image</button>
+          <button id="comp-share" class="comp-btn" type="button" title="Copy a link to this program">Share link</button>
+          <button id="comp-save" class="comp-btn" type="button" title="Download the board and the screen as a PNG">Save image</button>
         </div>
       </div>
       <div class="comp-memhead">
@@ -85,9 +86,9 @@ og_image: /images/og/computer.png
           <input id="comp-mempage" type="range" min="0" max="14" step="1" value="0" aria-label="Memory page within the region"></label>
       </div>
       <div id="comp-mem" class="comp-mem">
-        <canvas id="comp-memcanvas" aria-label="Memory inspector showing 256 bytes as a hex dump. Click a byte while paused to edit it."></canvas>
+        <canvas id="comp-memcanvas" aria-label="Memory inspector showing 256 bytes as a hex dump. Click a byte while paused to edit it." data-tap-label="Memory inspector showing 256 bytes as a hex dump. Tap a byte while paused to edit it."></canvas>
       </div>
-      <p class="comp-blurb">Writes flash blue, reads flash gold. Click a byte while paused to edit it.</p>
+      <p class="comp-blurb">Writes flash blue, reads flash gold. <span data-tap="Tap a byte while paused to edit it.">Click a byte while paused to edit it.</span></p>
     </section>
   </div>
 
@@ -187,7 +188,7 @@ html[data-theme="light"] .comp-topfade {
 }
 .comp-chipbtn:hover { background: rgba(130,166,204,0.3); }
 .comp-chipbtn[hidden] { display: none !important; } /* hidden loses to display rules */
-.comp-legend { margin: 0; font-size: 0.78em; opacity: 0.6; }
+.comp-legend { margin: 0; font-size: max(12px, 0.78em); opacity: 0.6; }
 .comp-sr {
   position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
   overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%);
@@ -196,6 +197,12 @@ html[data-theme="light"] .comp-topfade {
 html[data-theme="light"] .comp-chipbtn { border-color: #34568a; background: rgba(52,86,138,0.12); }
 @media (prefers-color-scheme: light) {
   html:not([data-theme="dark"]) .comp-chipbtn { border-color: #34568a; background: rgba(52,86,138,0.12); }
+}
+/* a41: in light mode the 0.6 opacity left these two small lines at 4.2:1 on
+   the pane; a solid muted grey reads about 5:1 (dark passes as it is) */
+html[data-theme="light"] .comp-phase, html[data-theme="light"] .comp-legend { opacity: 1; color: #6b6b6b; }
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .comp-phase, html:not([data-theme="dark"]) .comp-legend { opacity: 1; color: #6b6b6b; }
 }
 
 /* ---- editor (explicit high contrast in BOTH themes) ---- */
@@ -275,7 +282,7 @@ html[data-theme="light"] .comp-screen--cap { outline-color: #34568a; }
 @media (prefers-color-scheme: light) {
   html:not([data-theme="dark"]) .comp-screen--cap { outline-color: #34568a; }
 }
-.comp-capnote { margin: 0; font-size: 0.8em; opacity: 0.8; font-style: italic; }
+.comp-capnote { margin: 0; font-size: max(12px, 0.8em); opacity: 0.8; font-style: italic; }
 .comp-dpad {
   display: grid; grid-template-columns: repeat(3, 46px); grid-auto-rows: 38px;
   gap: 6px; justify-content: center; touch-action: none; user-select: none; -webkit-user-select: none;
@@ -328,6 +335,18 @@ html[data-theme="light"] .comp-memedit { color: #1e2732; background: #ffffff; bo
 .comp-pane--code .comp-blurb:last-child { padding-bottom: 3.4rem; }
 @media (max-width: 768px) { .comp-pane--code .comp-blurb:last-child { padding-bottom: 0; } }
 
+/* a36: above 768 px the chat bar (48 px tall, 20 px from the bottom right)
+   floats over the bottom of the right-hand column. The panes of that column
+   end above it (the pane scrolls, so nothing sits under the bar at any
+   scroll offset), and in the three-column layout the board's two small lines
+   stop short of the bar, which reaches about 72 px into the middle column. */
+@media (min-width: 769px) {
+  #pane-screen,
+  #comp-app[data-cols="2"] .comp-pane--machine { margin-bottom: 58px; }
+  #comp-app[data-cols="3"] .comp-legend,
+  #comp-app[data-cols="3"] .comp-phase { margin-right: 80px; }
+}
+
 /* ---- instruction reference slide-over ---- */
 /* the bottom padding clears the chat widget, which parks a ~48px bar in the
    bottom-right at z-index 1050 (over this panel); on a phone the widget is
@@ -362,7 +381,7 @@ html[data-theme="light"] .comp-ref { background: rgba(252,253,255,0.99); border-
 }
 .comp-ref-body code { font-size: max(12px, 0.75em); }   /* n7: the theme's 0.75em code is 9.9 px here */
 .comp-ref-table code { font-size: 1em; white-space: nowrap; }
-.comp-ref-credit { margin-top: 1.4em; font-size: 0.85em; opacity: 0.75; }
+.comp-ref-body .comp-ref-credit { margin-top: 1.4em; font-size: max(12px, 0.85em); opacity: 0.75; }
 @media (max-width: 768px) { .comp-ref { padding-bottom: 7.5rem; } }
 /* m6: on a phone the slide-over covers the bottom-left corner where the
    site's theme and back circles float; they stand down while it is open

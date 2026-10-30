@@ -63,19 +63,21 @@
                        every data-tap-label becomes its aria-label, so static
                        copy says "Tap" to touch visitors and "Click" otherwise.
 
-   liveStatus(el)    — mirrors el's textContent into a visually-hidden
+   liveStatus(el, filter) — mirrors el's textContent into a visually-hidden
                        role="status" div appended to document.body, so a
                        status line that lives inside a collapsible panel
                        still reaches screen readers when the panel is
                        display:none. Returns the mirror node (or null if el
-                       is falsy).
+                       is falsy). The mirror is written only when its text
+                       changes; an optional filter(text) maps what is shown
+                       to what is announced.
    ========================================================================== */
 (function () {
   if (window.GadgetUI) return;
 
   var css =
     '.gadget-help{font:inherit;line-height:1;cursor:pointer;color:inherit;background:none;border:0;' +
-      'padding:0 0.35em;margin-left:auto;opacity:0.55;transition:opacity 0.15s ease;}' +
+      'padding:0 0.35em;margin-left:auto;opacity:0.7;transition:opacity 0.15s ease;}' +
     '.gadget-help:hover,.gadget-help:focus{opacity:1;}' +
     '.gadget-hint{position:fixed;left:50%;top:38vh;transform:translateX(-50%);z-index:25;text-align:center;' +
       'pointer-events:none;max-width:min(34rem, calc(100vw - 2rem));' +
@@ -514,7 +516,7 @@
     return true;
   }
 
-  function liveStatus(el) {
+  function liveStatus(el, filter) {
     el = byId(el);
     if (!el) return null;
     var mirror = document.createElement('div');
@@ -527,7 +529,13 @@
     mirror.setAttribute('role', 'status');
     mirror.setAttribute('aria-live', 'polite');
     document.body.appendChild(mirror);
-    function sync() { mirror.textContent = el.textContent; }
+    /* filter (optional): maps the visible text to what is announced, so a page
+       can keep a running clock on screen without reading it aloud every tick */
+    function sync() {
+      var t = el.textContent;
+      if (typeof filter === 'function') { try { t = String(filter(t)); } catch (e) {} }
+      if (mirror.textContent !== t) mirror.textContent = t;   /* unchanged: no write */
+    }
     sync();
     var mo = new MutationObserver(sync);
     mo.observe(el, { childList: true, characterData: true, subtree: true });

@@ -103,7 +103,7 @@ html[data-theme="light"] .land-panel { background: rgba(255,255,255,0.97); borde
 .land-btn { font: inherit; color: inherit; cursor: pointer; line-height: 1; border: 1px solid rgba(127,127,127,0.4); background: rgba(127,127,127,0.14); border-radius: 6px; padding: 0.45em 0.7em; transition: background 0.15s ease; }
 .land-btn:hover { background: rgba(127,127,127,0.26); }
 .land-hint { font-size: 0.82em; opacity: 0.72; margin: 0; line-height: 1.5; }
-.land-credit { font-size: 0.78em; opacity: 0.65; margin: 0; line-height: 1.5; }
+.land-credit { font-size: max(12px, 0.78em); opacity: 0.65; margin: 0; line-height: 1.5; }
 
 /* phones: the corner buttons sit higher (bottom: 4rem), so the panel stops higher too */
 @media (max-width: 768px) {

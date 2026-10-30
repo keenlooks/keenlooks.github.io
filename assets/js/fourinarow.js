@@ -481,7 +481,10 @@
     var twRight = CW - Math.max(reserve, CW * 0.02);
     var shortScreen = CH < 560;
     var twWide = Math.min(430, twRight - CW * (shortScreen ? 0.34 : 0.52));
-    var wide = think && twWide >= (shortScreen ? 190 : 260) &&
+    /* a37: 250, not 260: at 1,280 px with the panel open the column is 258
+       px, and the stacked fallback halved the board for 2 px. Below about
+       250 the column's own headings start to run into each other. */
+    var wide = think && twWide >= (shortScreen ? 190 : 250) &&
                ((CW >= 1000 && CW > CH * 0.9) || (shortScreen && CW >= 620));
     geo.wide = wide;
     geo.showTree = think && CW >= 700;
@@ -1852,8 +1855,10 @@
       return b ? b[name] : null;
     } catch (e) { return null; }
   }
+  /* a117: "Click" on a fine pointer */
+  var tapC4 = (window.GadgetUI.coarse && window.GadgetUI.coarse()) ? 'Tap' : 'Click';
   window.GadgetUI.tour('fourinarow', [
-    { text: 'You are blue. Tap a column to drop a disc.',
+    { text: 'You are blue. ' + tapC4 + ' a column to drop a disc.',
       rect: function () { return box('board'); }, side: 'right' },
     { text: 'The gold robot shows what it is thinking while it plays.',
       rect: function () { return box('think') || box('robot') || box('board'); },

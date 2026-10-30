@@ -234,7 +234,7 @@
       var msg = magnets.length + (magnets.length === 1 ? ' magnet' : ' magnets');
       if (statusFlash && performance.now() < statusFlash.until) msg = statusFlash.text;
       else statusFlash = null;
-      status.textContent = msg;
+      if (status.textContent !== msg) status.textContent = msg;   /* same text: no write, no layout */
     }
   }
 

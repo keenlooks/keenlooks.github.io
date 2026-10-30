@@ -128,6 +128,14 @@
     if (!steps || !steps.length) return null;
     var idx = 0, active = false, built = false;
     var ring, card, txtEl, dotEls = [], nextBtn, xBtn, iv = null;
+    /* a42: where keyboard focus goes back to when the tour closes: the
+       element that had it when the tour opened (the ? button), else the
+       page's help button (opts.opener selector, default .gadget-help) */
+    var opener = null;
+    function usable(el) {
+      return !!(el && el.isConnected && el.offsetWidth && el.offsetHeight &&
+                !el.disabled && !el.closest('[inert]'));
+    }
 
     function okToRun() {
       try { return !opts.when || opts.when() !== false; } catch (e) { return true; }
@@ -287,6 +295,9 @@
       build();
       if (active) { show(0); return; }
       active = true;
+      var ae0 = document.activeElement;
+      opener = (ae0 && ae0 !== document.body && ae0 !== document.documentElement &&
+                !card.contains(ae0)) ? ae0 : null;
       card.style.display = 'block';
       document.addEventListener('keydown', keyCap, true);
       window.addEventListener('resize', place);
@@ -303,14 +314,22 @@
     function dismiss() {
       if (!active) return;
       active = false;
+      var hadFocus = card.contains(document.activeElement);
       document.removeEventListener('keydown', keyCap, true);
       window.removeEventListener('resize', place);
       if (iv) { clearInterval(iv); iv = null; }
       card.classList.remove('gtour-card--show');
       ring.classList.remove('gtour-ring--show');
       card.style.display = 'none';
-      if (card.contains(document.activeElement)) {
-        try { document.activeElement.blur(); } catch (e) {}
+      if (hadFocus) {
+        var back = usable(opener) ? opener :
+          document.querySelector(opts.opener || '.gadget-help');
+        opener = null;
+        if (usable(back)) {
+          try { back.focus({ preventScroll: true }); } catch (e) {}
+        } else {
+          try { document.activeElement.blur(); } catch (e) {}
+        }
       }
     }
 

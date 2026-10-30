@@ -26,7 +26,7 @@ Suppose a test catches 99% of the people who have a condition and wrongly flags 
 
   <canvas id="bayes-canvas" class="bayes-canvas" role="img"
           aria-label="A 100 by 100 grid of 10,000 dots, one per person, colored by test outcome: filled blue for true positives, muted red for false positives, hollow blue for missed cases, faint grey for correct negatives."></canvas>
-  <p class="bayes-probe" id="bayes-probe">Hover over a dot to see one person's result.</p>
+  <p class="bayes-probe" id="bayes-probe" data-tap="Tap a dot to see one person's result.">Hover over a dot to see one person's result.</p>
 
   <div class="bayes-legend">
     <span class="bayes-key bayes-key--tp"><span id="bayes-key-tp">Sick and tests positive</span></span>

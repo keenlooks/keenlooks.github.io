@@ -8021,7 +8021,7 @@
           { text: 'EMSC seismic portal', href: 'https://www.seismicportal.eu/' },
           { text: 'Wikimedia EventStreams', href: 'https://stream.wikimedia.org/' },
           { text: 'EMSC LastQuake, which measured human versus instrument latency first',
-            href: 'https://www.emsc-csem.org/lastquake/' }
+            href: 'https://www.emsc-csem.org/lastquake/how_it_works/' }
         ]
       },
       /* PURE: the chain writes its snapshot into the kernel owned state, this only reads it.

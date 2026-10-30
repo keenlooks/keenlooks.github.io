@@ -40,14 +40,14 @@ description: "An interactive epidemic simulator by Keane Lucas: every cell is a 
       <div class="epi-row">
         <button id="epi-pause" class="epi-btn" type="button">Pause</button>
         <button id="epi-restart" class="epi-btn" type="button">Restart</button>
-        <button id="epi-share" class="epi-btn" type="button" title="Copy a link with these exact settings">Share</button>
+        <button id="epi-share" class="epi-btn" type="button" title="Copy a link with these exact settings">Share link</button>
         <button id="epi-snap" class="epi-btn" type="button" title="Download the grid as a PNG">Save image</button>
       </div>
 
       <p class="epi-status-line"><span id="epi-status"></span></p>
 
       <p class="epi-blurb">
-        Every cell is a person. Each day, the <strong style="color:#c4574a">infected</strong> cells pass it
+        Every cell is a person. Each day, the <strong style="color:#c4574a">infected</strong> cells pass the infection
         to nearby susceptible cells with the transmission chance you set, then they recover and become
         immune. <strong data-tap="Tap or drag">Click or drag</strong> to start infections and watch the case curve along the bottom.
         If you vaccinate enough of the grid first, an outbreak often can't spread, which is roughly what
@@ -196,6 +196,7 @@ html[data-theme="light"] .epi-panel::after { background: linear-gradient(to bott
 .epi-mode:hover { background: rgba(127,127,127,0.26); }
 /* dark text on the light accent fill (7.26:1; white was 2.53:1), white on the light theme's navy */
 .epi-mode--on { background: #82a6cc; border-color: #82a6cc; color: #141414; }
+.epi-mode--on:hover { background: #a3c2e0; border-color: #a3c2e0; } /* beats .epi-mode:hover in dark; the light rules out-rank it */
 html[data-theme="light"] .epi-mode--on { background: #34568a; border-color: #34568a; color: #fff; }
 @media (prefers-color-scheme: light) {
   html:not([data-theme="dark"]) .epi-mode--on { background: #34568a; border-color: #34568a; color: #fff; }

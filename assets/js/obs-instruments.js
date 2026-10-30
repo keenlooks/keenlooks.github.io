@@ -8013,7 +8013,7 @@
       recipe: 'Measured from NOAA\'s D-RAP absorption model × live WSPR amateur radio beacons × GOES X-ray flux.',
       honesty: 'The longest path reported is the longest one heard in the most recent poll, which is the longest this page knows about and not the longest on Earth: WSPR only sees the paths its volunteers were listening for. WSPR is a sparse volunteer network. A path can go silent because one radio shut off, so we only count paths heard repeatedly in the last hour, and on a quiet sun we do not claim findings at all. D-RAP is an operational model; when it and the beacons disagree, that disagreement is the instrument.',
       credits: [
-        { text: 'NOAA SWPC', href: 'https://www.swpc.noaa.gov/' },
+        { text: 'NOAA SWPC', href: 'https://www.spaceweather.gov/' },
         { text: 'WSPR.live and the WSPRnet contributors', href: 'https://wspr.live/' },
         { text: 'the per-station predicted-versus-heard idea from the amateur HF dashboard tradition', href: '' }
       ]
@@ -8039,7 +8039,7 @@
         { text: 'the Stanford GPS Lab\'s interference work', href: 'https://gps.stanford.edu/' },
         { text: 'data from adsb.lol', href: 'https://adsb.lol/' },
         { text: 'adsb.fi feeders', href: 'https://adsb.fi/' },
-        { text: 'space weather from NOAA SWPC', href: 'https://www.swpc.noaa.gov/' }
+        { text: 'space weather from NOAA SWPC', href: 'https://www.spaceweather.gov/' }
       ]
     },
     ambient: {
@@ -8049,7 +8049,7 @@
       credits: [
         { text: 'USGS', href: 'https://earthquake.usgs.gov/' },
         { text: 'EMSC', href: 'https://www.seismicportal.eu/' },
-        { text: 'NOAA SWPC OVATION', href: 'https://www.swpc.noaa.gov/products/aurora-30-minute-forecast' },
+        { text: 'NOAA SWPC OVATION', href: 'https://www.spaceweather.gov/products/aurora-30-minute-forecast' },
         { text: 'aircraft data from adsb.lol', href: 'https://adsb.lol/' },
         { text: 'adsb.fi volunteer feeders', href: 'https://adsb.fi/' },
         { text: 'Natural Earth (public domain) for coastlines', href: 'https://www.naturalearthdata.com/' }
@@ -8066,7 +8066,7 @@
         { text: 'SondeHub and the volunteer radiosonde receivers, CC BY-SA 2.0', href: 'https://sondehub.org/' },
         { text: 'wheretheiss.at, which publishes a rate limit and no licence statement', href: 'https://wheretheiss.at/w/developer' },
         { text: 'Launch Library 2 by The Space Devs', href: 'https://thespacedevs.com/llapi' },
-        { text: 'NOAA SWPC', href: 'https://www.swpc.noaa.gov/' },
+        { text: 'NOAA SWPC', href: 'https://www.spaceweather.gov/' },
         { text: 'FAA TFR list', href: 'https://tfr.faa.gov/' },
         { text: 'aircraft data from adsb.lol', href: 'https://adsb.lol/' },
         { text: 'adsb.fi volunteer feeders', href: 'https://adsb.fi/' }

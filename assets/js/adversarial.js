@@ -753,11 +753,13 @@
     if (netBottom - netTop > 70) drawNetwork(L, netTop, netBottom, advH, advP, ai, fooled);
 
     if (status) {
-      var modelName = (net === ROB) ? 'adversarially-trained model' : 'standard model';
+      var modelName = (net === ROB) ? 'adversarially trained model' : 'standard model';
       var aim = (target != null) ? (' (aimed at ' + target + ')') : '';
-      if (fooled) status.textContent = 'Fooled the ' + modelName + aim + ': "' + ci + '" became "' + ai + '" with at most ' + Math.round(eps * 100) + '% per-pixel change.';
-      else if (eps === 0) status.textContent = 'Slide ε up to start attacking the ' + modelName + '.';
-      else status.textContent = 'The ' + modelName + ' is holding at ε = ' + eps.toFixed(2) + aim + '. Keep sliding, or aim at a digit.';
+      var msg;
+      if (fooled) msg = 'Fooled the ' + modelName + aim + ': "' + ci + '" became "' + ai + '" with at most ' + Math.round(eps * 100) + '% per-pixel change.';
+      else if (eps === 0) msg = 'Slide ε up to start attacking the ' + modelName + '.';
+      else msg = 'The ' + modelName + ' is holding at ε = ' + eps.toFixed(2) + aim + '. Keep sliding, or aim at a digit.';
+      if (status.textContent !== msg) status.textContent = msg;   /* same text: no write, no layout */
     }
   }
 

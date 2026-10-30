@@ -26,7 +26,9 @@
   var btnPause = id('pend-pause'), btnReset = id('pend-reset');
   var elPanel = id('pend-panel'), elCollapse = id('pend-collapse');
   var status = id('pend-status');
-  if (window.GadgetUI) GadgetUI.liveStatus(status);
+  /* the running clock stays on screen but is not read aloud ten times a second:
+     the live region gets the line without its "t = 12.3 s" part */
+  if (window.GadgetUI) GadgetUI.liveStatus(status, function (t) { return t.replace(/^t = [\d.,]+ s(, )?/, ''); });
 
   var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   var W = 0, H = 0, dpr = 1, raf = null, lastT = 0;
@@ -214,9 +216,11 @@
     drawPend(main, accent(), false);
     if (showTwin) drawDivergence();
     if (status) {
-      if (!showTwin) status.textContent = 't = ' + runTime.toFixed(1) + ' s';
-      else if (divergedAt < 0) status.textContent = 't = ' + runTime.toFixed(1) + ' s, twins still together (offset 0.001 rad)';
-      else status.textContent = 'twins diverged after ' + divergedAt.toFixed(1) + ' s (angles differ by ~20 degrees)';
+      var msg;
+      if (!showTwin) msg = 't = ' + runTime.toFixed(1) + ' s';
+      else if (divergedAt < 0) msg = 't = ' + runTime.toFixed(1) + ' s, twins still together (offset 0.001 rad)';
+      else msg = 'twins diverged after ' + divergedAt.toFixed(1) + ' s (angles differ by ~20 degrees)';
+      if (status.textContent !== msg) status.textContent = msg;   /* same text: no write, no layout */
     }
   }
 

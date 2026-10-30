@@ -29,7 +29,8 @@ og_image: /images/og/keepittogether.png
        one is aria-hidden and this carries the same rows as sentences. -->
   <div id="kit-sr-ledger" class="kit-sr"></div>
 
-  <div class="kit-panel" id="kit-panel">
+  <p id="kit-loading" class="kit-loading" role="status">Loading the game (under 1 MB)...</p>
+  <div class="kit-panel" id="kit-panel" data-boot>
     <div class="kit-panel__head">
       <span class="kit-panel__title">Keep It Together</span>
       <button id="kit-help" class="gadget-help" type="button" aria-label="How this page works" title="How this page works">?</button>
@@ -70,8 +71,8 @@ og_image: /images/og/keepittogether.png
         <button id="kit-sound" class="kit-btn" type="button" aria-pressed="true" aria-label="Mute sound" title="Mute sound">Sound on</button>
       </div>
       <div class="kit-row" id="kit-row-share">
-        <button id="kit-share" class="kit-btn" type="button">Share link</button>
-        <button id="kit-save" class="kit-btn" type="button">Save image</button>
+        <button id="kit-share" class="kit-btn" type="button" title="Copy a link to this exact view">Share link</button>
+        <button id="kit-save" class="kit-btn" type="button" title="Download the board as a PNG">Save image</button>
       </div>
 
       <div class="kit-group" id="kit-build-controls">
@@ -549,14 +550,47 @@ html[data-theme="light"] .kit-panel--more { box-shadow: 0 6px 24px rgba(0,0,0,0.
 /* s7.32 addendum 3 item 5 (2026-10-10): where there is no phone act bar the sound toggle stands in this
    sticky head, beside "?", so it is reachable in every act; compact, so the head keeps one line */
 .kit-panel__head .kit-sound--head { margin-left: auto; font-size: 0.7em; padding: 0.15rem 0.4rem; white-space: nowrap; line-height: 1.3; }
-.kit-panel__head .kit-panel__title { white-space: nowrap; }
+.kit-panel__head .kit-panel__title { white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .kit-panel__title { font-weight: 700; font-size: 1.05em; }
 .kit-collapse {
   font: inherit; line-height: 1; cursor: pointer; color: inherit;
   width: 1.8em; height: 1.8em; padding: 0;
+  flex: 0 0 auto;   /* a39: the landscape head squeezed it to 17 px */
   border: 1px solid rgba(127,127,127,0.4); border-radius: 6px; background: rgba(127,127,127,0.12);
 }
 .kit-panel--collapsed .kit-panel__body { display: none; }
+/* a38: until keepittogether.js has wired the panel (seconds on a slow phone)
+   its controls do nothing, so they are not offered: small screens show only
+   the head, as the page will once it collapses the panel there, and larger
+   ones show the panel dimmed and unpressable. The script removes data-boot
+   and the static loading line once the game is live. */
+.kit-panel[data-boot] > * { pointer-events: none; }
+.kit-panel[data-boot] .kit-panel__pin, .kit-panel[data-boot] .kit-panel__body,
+.kit-panel[data-boot] .kit-panel__head button { opacity: 0.5; }
+@media (max-width: 599px), (max-height: 499px) {
+  .kit-panel[data-boot] .kit-panel__pin, .kit-panel[data-boot] .kit-panel__body { display: none; }
+}
+/* B12 repair: until the theme's script has folded the masthead links into
+   its menu (seconds on a slow phone), the link row is wider than a phone, and
+   a mobile browser widens its layout viewport to fit it, which carried the
+   fixed panel 33 px past the right edge. The masthead's sideways overflow is
+   clipped on this page (clip, not hidden, so the menu still drops below). */
+.masthead { overflow-x: clip; }
+/* if keepittogether.js never runs, the loading line says so (the inline
+   check after the scripts swaps its text) */
+.kit-loading.kit-loading--failed { white-space: normal; width: max-content; }
+.kit-loading {
+  position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  z-index: 35; margin: 0; pointer-events: none; text-align: center;
+  max-width: calc(100vw - 2rem); white-space: nowrap;
+  font-size: 1.05rem; line-height: 1.45;
+  padding: 0.5rem 0.9rem; border-radius: 8px; border: 1px solid rgba(127,127,127,0.25);
+  background: rgba(18,18,18,0.85); color: #d6d6d6; box-shadow: 0 6px 24px rgba(0,0,0,0.35);
+}
+html[data-theme="light"] .kit-loading { background: rgba(255,255,255,0.92); color: #3a3a3a; }
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .kit-loading { background: rgba(255,255,255,0.92); color: #3a3a3a; }
+}
 .kit-panel__body { display: flex; flex-direction: column; gap: 0.7rem; margin-top: 0.7rem; }
 
 /* Controls first, prose after: the blurb and the credits are a dozen lines
@@ -928,9 +962,17 @@ html[data-theme="light"] .kit-recenter { background: rgba(255,255,255,0.92); }
 .kit-btn[disabled] { opacity: 0.42; cursor: default; }
 .kit-btn[disabled]:hover { background: rgba(127,127,127,0.14); }
 .kit-blurb { margin: 0; font-size: 0.88em; opacity: 0.85; line-height: 1.5; }
-.kit-caveat { margin: 0; font-size: 0.8em; opacity: 0.6; line-height: 1.45; }
-.kit-verify-line { margin: 0; font-size: 0.78em; opacity: 0.6; line-height: 1.4; }
-.kit-credit { margin: 0; font-size: 0.78em; opacity: 0.55; line-height: 1.4; }
+.kit-caveat { margin: 0; font-size: max(12px, 0.8em); opacity: 0.6; line-height: 1.45; }
+.kit-verify-line { margin: 0; font-size: max(12px, 0.78em); opacity: 0.6; line-height: 1.4; }
+.kit-credit { margin: 0; font-size: max(12px, 0.78em); opacity: 0.55; line-height: 1.4; }
+/* a41: in light mode the opacity dimming left these lines at 3.5 to 4.1:1 on
+   the white panel; a solid muted grey reads about 5:1 (dark passes as it is) */
+html[data-theme="light"] .kit-caveat, html[data-theme="light"] .kit-verify-line,
+html[data-theme="light"] .kit-credit { opacity: 1; color: #6b6b6b; }
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) .kit-caveat, html:not([data-theme="dark"]) .kit-verify-line,
+  html:not([data-theme="dark"]) .kit-credit { opacity: 1; color: #6b6b6b; }
+}
 .kit-sr {
   position: absolute; width: 1px; height: 1px; margin: -1px;
   padding: 0; border: 0; overflow: hidden; white-space: nowrap;
@@ -1027,8 +1069,9 @@ html[data-theme="light"] .kit-actbar__fade {
 @media (pointer: coarse) {
   .kit-btn { min-height: 40px; padding: 0.5em 0.85em; }
   .kit-seg { min-height: 44px; }
-  .kit-collapse { width: 2.3em; height: 2.3em; }
-  .kit-panel .gadget-help { min-width: 36px; min-height: 36px; }
+  /* a119: the older gadgets' touch sizes (36x40 collapse, 40x40 help) */
+  .kit-collapse { width: 2.3em; height: 2.3em; min-width: 36px; min-height: 40px; }
+  .kit-panel .gadget-help { min-width: 40px; min-height: 40px; }
   .kit-check input { width: 20px; height: 20px; }
 }
 
@@ -1049,3 +1092,18 @@ html[data-theme="light"] .kit-check input { accent-color: #34568a; }
 <script defer src="{{ '/assets/js/keepittogether-render.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/keepittogether-audio.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
 <script defer src="{{ '/assets/js/keepittogether.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
+<noscript><style>#kit-loading { display: none; }</style><p class="kit-loading kit-loading--failed">This game needs JavaScript, which is turned off in this browser.</p></noscript>
+<script>
+/* B12 repair: keepittogether.js removes data-boot when the game is live. If it
+   failed to load or threw before that, the load event finds data-boot still
+   set, and the static loading line says what happened instead of spinning. */
+window.addEventListener('load', function () {
+  setTimeout(function () {
+    var panel = document.getElementById('kit-panel');
+    var ld = document.getElementById('kit-loading');
+    if (!panel || !ld || !panel.hasAttribute('data-boot')) return;
+    ld.className += ' kit-loading--failed';
+    ld.textContent = 'The game did not load. Reload the page to try again.';
+  }, 0);
+});
+</script>

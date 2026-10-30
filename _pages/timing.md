@@ -123,7 +123,7 @@ can watch it happen in a few seconds.
 @media (max-width: 600px) { .timing-canvas { height: 300px; } }
 
 .timing-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.75rem; margin: 1rem 0 0.9rem; }
-.timing-field { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.9rem; }
+.timing-field { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.9rem; min-width: 0; max-width: 100%; }
 .timing-field > span { opacity: 0.85; }
 
 /* Selects render washed-out under the theme; force high-contrast colors per theme. */
@@ -131,6 +131,7 @@ can watch it happen in a few seconds.
   font: inherit; padding: 0.45em 0.6em; border-radius: 6px;
   border: 1px solid rgba(127,127,127,0.45);
   background: #1d1d1d; color: #e8e8e8;
+  max-width: 100%;   /* a translated option (Italian, Polish, Russian) must not push the page sideways on a phone */
 }
 .timing-btn {
   font: inherit; color: inherit; cursor: pointer; line-height: 1;

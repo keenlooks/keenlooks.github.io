@@ -3893,7 +3893,7 @@
 
   /* ================================================================== manifests */
 
-  var SWPC = { text: 'NOAA SWPC', href: 'https://www.swpc.noaa.gov/' };
+  var SWPC = { text: 'NOAA SWPC', href: 'https://www.spaceweather.gov/' };
   var PD = 'US public domain';
 
   var MANIFESTS = {
@@ -4039,7 +4039,7 @@
     wm_pageviews: {
       id: 'wm_pageviews',
       name: 'Wikipedia pageviews',
-      attribution: { text: 'Wikimedia REST API', href: 'https://wikimedia.org/api/rest_v1/' },
+      attribution: { text: 'Wikimedia REST API', href: 'https://www.mediawiki.org/wiki/Wikimedia_REST_API' },
       license: 'CC0 pageview data',
       kind: 'poll',
       url: WM_PV_BASE,

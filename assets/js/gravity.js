@@ -180,7 +180,10 @@
         ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 2; ctx.stroke();
       }
     }
-    if (status) status.textContent = bodies.length + (bodies.length === 1 ? ' body' : ' bodies');
+    if (status) {
+      var msg = bodies.length + (bodies.length === 1 ? ' body' : ' bodies');
+      if (status.textContent !== msg) status.textContent = msg;   /* same text: no write, no layout */
+    }
   }
 
   // ---- loop --------------------------------------------------------------
@@ -416,7 +419,7 @@
     var enc = SH.encode(1, shareState());
     if (enc.length > 6000) {   // pathological scenes would make a broken/oversized URL
       btnShare.textContent = 'Scene too large to share';
-      setTimeout(function () { btnShare.textContent = 'Share'; }, 1500);
+      setTimeout(function () { btnShare.textContent = 'Share link'; }, 1500);
       return;
     }
     SH.copyLink(btnShare, enc);

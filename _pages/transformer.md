@@ -124,7 +124,7 @@ html[data-theme="light"] .tt-topfade {
 }
 .tt-ch { cursor: pointer; border-radius: 2px; }
 .tt-ch:hover { background: rgba(127,127,127,0.3); }
-.tt-ch--prompt { opacity: 0.55; }
+.tt-ch--prompt { opacity: 0.7; } /* 0.55 was 3.48:1 in light; 0.7 is about 5:1 */
 .tt-ch--sel { background: rgba(130,166,204,0.35); box-shadow: 0 0 0 1px rgba(130,166,204,0.8); }
 @keyframes tt-flash {
   from { background-color: rgba(130,166,204,0.85); }
@@ -229,8 +229,8 @@ html[data-theme="light"] .tt-slider input[type="range"] { accent-color: #34568a;
   html:not([data-theme="dark"]) .tt-slider input[type="range"] { accent-color: #34568a; }
 }
 .tt-hint { margin: 0; font-size: 0.82em; opacity: 0.7; line-height: 1.5; }
-.tt-about { margin: 0; font-size: 0.78em; opacity: 0.65; line-height: 1.5; }
-.tt-status-line { margin: 0; font-size: 0.8em; min-height: 1.2em; }
+.tt-about { margin: 0; font-size: max(12px, 0.78em); opacity: 0.65; line-height: 1.5; }
+.tt-status-line { margin: 0; font-size: max(12px, 0.8em); min-height: 1.2em; }
 .tt-verify { opacity: 0.6; font-variant-numeric: tabular-nums; }
 .tt-verify--bad { color: #c4574a; opacity: 1; font-weight: 600; }
 
@@ -270,6 +270,17 @@ html[data-theme="light"] .tt-slider input[type="range"] { accent-color: #34568a;
      buttons are raised to bottom: 4rem, so keep the stage above them */
   .tt-stage { padding-bottom: 7.2rem; }
   .tt-panel { max-height: calc(100vh - 12.5rem); max-height: calc(100dvh - 12.5rem); }
+}
+/* Short and wide (a phone in landscape): the panel starts collapsed, and the
+   bar row sits low enough that the fixed theme and back buttons (bottom-left,
+   right edge about 127px) landed on the first bars. Start the bars right of
+   those buttons, and while the panel is collapsed let the row run under its
+   column (the collapsed head ends well above it) so the bars keep their width.
+   An open panel reaches down beside the bars, so then they stay left of it.
+   499.98px matches the script, which starts the panel collapsed below 500. */
+@media (min-width: 600px) and (max-height: 499.98px) {
+  .tt-app:has(.tt-panel--collapsed) .tt-bars-wrap { width: auto; max-width: none; margin: 0 calc(-320px - 1.6rem) 0 0; }
+  .tt-bars { padding-left: calc(140px - 1rem); }
 }
 @media (max-width: 480px) {
   .tt-bar__pct { display: none; }

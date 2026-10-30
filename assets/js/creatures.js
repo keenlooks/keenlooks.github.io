@@ -59,6 +59,7 @@
      does NOT destroy `run`: it merely stops stepping, so the champion,
      history and Share button survive an accidental tap. */
   var coarse = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+  var TAPW = coarse ? 'Tap' : 'Click';   /* a117: the verb for the pointer in hand */
   var bm = { morph: null, sel: -1, undo: [] };
   var UNDO_CAP = 60;
   /* one in-flight pointer gesture; a second pointer is ignored */
@@ -264,8 +265,8 @@
   function ensureBuildHint() {
     if (!hintBuild && window.GadgetUI) {
       hintBuild = GadgetUI.firstRunHint('creatures-build',
-        'Drag the dots. Tap one dot, then another, to connect them. ' +
-        'Tap an edge to change it. Then press Evolve.');
+        'Drag the dots. ' + TAPW + ' one dot, then another, to connect them. ' +
+        TAPW + ' an edge to change it. Then press Evolve.');
     }
     return hintBuild;
   }
@@ -355,7 +356,7 @@
         (v.muscles === 1 ? ' muscle' : ' muscles') + '. Ready.';
     } else if (v.reason === 'few-nodes') msg = 'add at least 3 dots';
     else if (v.reason === 'disconnected') msg = 'connect all the dots first';
-    else if (v.reason === 'no-muscle') msg = 'make at least one edge a muscle (tap an edge)';
+    else if (v.reason === 'no-muscle') msg = 'make at least one edge a muscle (' + TAPW.toLowerCase() + ' an edge)';
     else msg = 'this body will not work yet';
     if (buildMsg && !buildMsgFlash && msg !== lastBuildMsg) {
       buildMsg.textContent = msg;
@@ -647,7 +648,7 @@
       ctx.font = '400 16px "Source Sans 3", system-ui, sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillStyle = textColor(0.5);
-      ctx.fillText('tap anywhere to add a dot', W / 2, H * 0.18);
+      ctx.fillText(TAPW.toLowerCase() + ' anywhere to add a dot', W / 2, H * 0.18);
     }
   }
 
@@ -1404,10 +1405,11 @@
     var p = cre.edgePx(0);
     return { x: p[0] - 26, y: p[1] - 26, w: 52, h: 52 };
   }
+  var tapCre = (window.GadgetUI.coarse && window.GadgetUI.coarse()) ? 'Tap' : 'Click';   /* a117 */
   window.GadgetUI.tour('creatures', [
-    { text: 'Tap to add a dot. Tap two dots to connect them.',
+    { text: tapCre + ' to add a dot. ' + tapCre + ' two dots to connect them.',
       rect: bodyBox, side: 'top' },
-    { text: 'Tap a line to cycle it: muscle, bone, gone.',
+    { text: tapCre + ' a line to cycle it: muscle, bone, gone.',
       rect: edgeBox, side: 'top' },
     { text: 'Press Evolve and watch generations learn to walk.',
       rect: '#cre-evolve', side: 'top' }

@@ -27,3 +27,16 @@ id = "PASTE_KV_NAMESPACE_ID_HERE"
 
 # A local dev namespace is created automatically by `npx wrangler dev`, so no preview_id is
 # required for the local loop.
+
+# 2026-10-29 (site audit item 77): a per address request limit in front of the KV reads. worker.js
+# reads it as env.ANTENNA_LIMIT, keys it by CF-Connecting-IP, and answers 429 with Retry-After over it;
+# without the binding (an older wrangler, or the node dev server) every request goes through as
+# before. limit must match RATE_LIMIT_PER_MIN in worker.js; period may only be 10 or 60. The
+# [[ratelimits]] table needs wrangler 4.36.0 or later. namespace_id is any account-unique integer.
+[[ratelimits]]
+name = "ANTENNA_LIMIT"
+namespace_id = "7729"
+
+  [ratelimits.simple]
+  limit = 60
+  period = 60

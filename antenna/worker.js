@@ -18,7 +18,10 @@
  *      rewrites its `checked` time once per cron), and subrequests are counted.
  *   4. No side effects at module scope beyond constant and function declarations. (2026-10-20: one
  *      constant object, ISOLATE_MEMO, is written by the request path at run time, never at load; only
- *      the Workers fetch handler passes it in, so every test and the dev server run without it.)
+ *      the Workers fetch handler passes it in, so every test and the dev server run without it.
+ *      2026-10-29: the same holds for ANSWER_CACHE, the isolate's answer cache; see "politeness".
+ *      Its helper ANSWER_SLOT (the last answer jsonResponse built, emptied by handleRequest) changes
+ *      no answer.)
  *
  * Upstream politeness and licensing (see README.md for the full text):
  *   adsb.lol data is ODbL 1.0, adsb.fi is free for personal non-commercial use and requires a
@@ -1045,7 +1048,15 @@ export function loadingCache(route, refresh) {
 export function jsonResponse(body, opts) {
   const o = opts || {};
   const headers = corsHeaders(Object.assign({ 'Cache-Control': o.cacheControl || 'no-store' }, o.headers || {}));
-  return new Response(JSON.stringify(body), { status: o.status || 200, headers: headers });
+  const text = JSON.stringify(body);
+  const res = new Response(text, { status: o.status || 200, headers: headers });
+  /* 2026-10-29 (audit item 77, repair): the answer cache reads the body and its text from here instead
+     of cloning and re-parsing the Response; handleRequest empties the slot as soon as its answer is
+     back. A slot, not a WeakMap keyed by the Response: a WeakMap key gets an identity hash, which
+     stops V8 from dropping the Response wrapper (and its native copy of the body) in a young
+     collection; measured under workerd, that held about 40 MB more per 64 misses until a full GC. */
+  ANSWER_SLOT.res = res; ANSWER_SLOT.body = body; ANSWER_SLOT.text = text;
+  return res;
 }
 
 export function routeFor(pathname) {
@@ -1253,6 +1264,22 @@ export async function handleRequest(request, deps) {
       routes: ROUTES.map(function (r) { return r.path; }),
     }, { status: 404 });
   }
+  /* 2026-10-29 (site audit item 77): the isolate's answer cache and the per address limit, both only
+     when the Workers fetch handler passes them (deps.answers, deps.limiter); see "Politeness" below. */
+  const ckey = (method === 'GET') ? answerKey(route, url) : null;
+  const hit = cachedAnswer(deps, route, ckey, url);
+  if (hit) return hit;
+  const limited = await rateLimited(deps, request, route);
+  if (limited) return limited;
+  const res = await routeAnswer(route, deps, url);
+  /* the slot is this answer's only when nothing else answered in between (else: simply not kept) */
+  const src = (ANSWER_SLOT.res === res) ? { body: ANSWER_SLOT.body, text: ANSWER_SLOT.text } : null;
+  ANSWER_SLOT.res = null; ANSWER_SLOT.body = null; ANSWER_SLOT.text = null;
+  keepAnswer(deps, route, ckey, res, src);
+  return res;
+}
+
+async function routeAnswer(route, deps, url) {
   try {
     if (route.path === '/planes') return await handlePlanes(deps, url);
     if (route.path === '/jam') return await handleJam(deps);
@@ -1263,6 +1290,145 @@ export async function handleRequest(request, deps) {
     /* A route never 500s on upstream or storage trouble: say what happened and stay up. */
     return jsonResponse({ ok: false, offline: true, route: route.path, reason: String((e && e.message) || e) }, { status: 503 });
   }
+}
+
+/* ------------------------------------------------------------------ politeness (2026-10-29) */
+
+/*
+ * Site audit 2026-10-29, item 77. The routes declare s-maxage, but Cloudflare's Cache API and edge
+ * cache do not apply to a *.workers.dev Worker (the Cache API is documented as functional on custom
+ * domains only, and two GETs of /tfrs came back with no cf-cache-status), and every route was open to
+ * any client at any rate. A request loop could therefore spend the free plan's 100,000 KV reads a day,
+ * which the chat Worker shares (/planes reads up to 3 keys a request, /health 7). Two guards, both
+ * only in the Workers fetch handler (deps.answers, deps.limiter), so the node dev server, the
+ * collector and every test harness that builds its own deps behave exactly as before:
+ *
+ * 1. ANSWER_CACHE: the isolate keeps each cacheable 200 answer (Cache-Control public, so never an
+ *    answer that carries `refresh`, never /health, never a 503) for the route's sMaxAge, keyed by the
+ *    path alone, or for /planes the path plus min_alt, so a junk parameter cannot bust it. An entry is
+ *    the answer's JSON text without its trailing ageMs (and stale), plus the snapshot's t: a hit adds
+ *    ageMs (the kept age plus the time since it was kept) and recomputes `stale`, so the age the page
+ *    reads stays true, with no KV read, no clone and no parse. On /planes, `since` is answered from
+ *    the entry: since equal to its t gets the few-byte `unchanged` answer, since newer than its t (a
+ *    copy another isolate read) goes to KV, anything else gets the kept full answer, exactly as the
+ *    handler would. `since` is never part of the key, so junk values cannot multiply the entries
+ *    (repair of 2026-10-29: keyed on since, 64 junk values held 64 full ~650 KB snapshots, about
+ *    125 MB of heap against the 128 MB isolate limit). The cache is bounded twice: ANSWER_CACHE_MAX
+ *    keys and ANSWER_CACHE_MAX_BYTES characters of kept text in all. When full, a new answer is
+ *    simply not kept (nothing is evicted for it, so junk keys cannot churn kept snapshots into
+ *    old-generation garbage); entries leave when they expire. A /planes poll carrying loading=1 never reads or fills it (it asks whether
+ *    the requested sample has landed). Like the s-maxage the routes always declared, a /planes hit
+ *    records no visit and starts no dispatch: the next request that misses (at most 90 s later while
+ *    others poll; a lone visitor's next poll, 180 s apart) does. Best effort: one copy per isolate.
+ * 2. The Workers Rate Limiting binding ANTENNA_LIMIT (wrangler.toml, RATE_LIMIT_PER_MIN per address
+ *    per minute, counted per Cloudflare location) in front of every route on a cache miss. Over it the
+ *    answer is 429 with Retry-After (exposed to the page, whose fetcher reads it: obs-core.js r19 item
+ *    8). No binding, no address, or a limiter error: the request goes through (fail open).
+ */
+export const RATE_LIMIT_PER_MIN = 60;
+export const RATE_LIMIT_RETRY_S = 60;
+export const ANSWER_CACHE_MAX = 64;
+export const ANSWER_CACHE_MAX_BYTES = 3000000;
+export const ANSWER_CACHE = new Map();
+const ANSWER_SLOT = { res: null, body: null, text: null };
+
+/* The cache key of a GET on a cacheable route, or null: the path, and for /planes min_alt normalised
+   through num() (since is answered from the entry, never keyed). Pure. */
+export function answerKey(route, url) {
+  if (!route || !route.sMaxAge) return null;
+  if (route.path !== '/planes') return route.path;
+  if (isLoadingPoll(url)) return null;
+  const sp = url && url.searchParams;
+  const minAlt = sp ? num(sp.get('min_alt')) : null;
+  return '/planes?min_alt=' + (minAlt === null ? '' : String(minAlt));
+}
+
+/* A kept answer for key as a Response, or null. Drops an expired entry. */
+function cachedAnswer(deps, route, key, url) {
+  const store = deps && deps.answers;
+  if (!key || !store || typeof store.get !== 'function') return null;
+  const e = store.get(key);
+  if (!e) return null;
+  const t = nowOf(deps);
+  if (!(t >= e.at) || t >= e.exp) { store.delete(key); return null; }
+  if (route.path === '/planes') {
+    const since = (url && url.searchParams) ? num(url.searchParams.get('since')) : null;
+    if (since !== null && e.t !== null && since === e.t) {
+      return jsonResponse({ ok: true, t: e.tRaw, unchanged: true, ageMs: Math.max(0, t - e.t) },
+        { cacheControl: e.cc, headers: { 'X-Antenna-Cache': 'hit' } });
+    }
+    /* the page holds a newer snapshot than this copy (another isolate read it): ask KV */
+    if (since !== null && e.t !== null && since > e.t && since <= t) return null;
+  }
+  if (e.head === null) return null;
+  const age = e.ageMs + (t - e.at);
+  const stale = !!(route.staleAfterMs && age > route.staleAfterMs);
+  return new Response(e.head + ',"ageMs":' + age + (stale ? ',"stale":true' : '') + '}',
+    { status: 200, headers: corsHeaders({ 'Cache-Control': e.cc, 'X-Antenna-Cache': 'hit' }) });
+}
+
+/* Keeps a cacheable 200 answer under key for the route's sMaxAge, while the cache has room within
+   ANSWER_CACHE_MAX keys and ANSWER_CACHE_MAX_BYTES characters (entries leave only when they expire or
+   their key gets a newer answer). An answer whose text does not end in its own ageMs (and stale)
+   is not kept, so a hit can never print a wrong age. Never throws. */
+function keepAnswer(deps, route, key, res, src) {
+  const store = deps && deps.answers;
+  if (!key || !store || typeof store.set !== 'function' || !res || res.status !== 200) return;
+  try {
+    const cc = res.headers.get('Cache-Control') || '';
+    if (cc.indexOf('public') !== 0) return;
+    const body = src && src.body;
+    if (!body || typeof body !== 'object' || body.refresh || typeof src.text !== 'string') return;
+    const t = nowOf(deps);
+    const bt = num(body.t);
+    const entry = { t: bt, tRaw: body.t, head: null, ageMs: 0, bytes: 0, cc: cc, at: t, exp: t + route.sMaxAge * 1000 };
+    let tail = null;
+    if (body.unchanged === true) {
+      if (route.path !== '/planes' || bt === null) return;
+    } else {
+      const ks = Object.keys(body);
+      const last = ks[ks.length - 1];
+      const withStale = last === 'stale';
+      if (ks[withStale ? ks.length - 2 : ks.length - 1] !== 'ageMs' || typeof body.ageMs !== 'number') return;
+      if (withStale ? body.stale !== true : ks.indexOf('stale') >= 0) return;
+      tail = ',"ageMs":' + JSON.stringify(body.ageMs) + (withStale ? ',"stale":true' : '') + '}';
+      if (src.text.length <= tail.length || !src.text.endsWith(tail)) return;
+      entry.ageMs = body.ageMs;
+      entry.bytes = src.text.length;
+    }
+    if (entry.bytes > ANSWER_CACHE_MAX_BYTES) return;
+    const old = store.get(key);
+    if (old && t >= old.at && t < old.exp) {
+      if (old.t !== null && entry.t !== null && old.t > entry.t) return;
+      if (old.t === entry.t && old.head !== null && entry.head === null) return;
+    }
+    store.delete(key);
+    let total = 0;
+    store.forEach(function (v, k) { if (!(t >= v.at) || t >= v.exp) store.delete(k); else total += v.bytes; });
+    /* full: the new answer is not kept, and no live entry is pushed out for it. Evicting would turn
+       every kept snapshot (by then in the old generation) into garbage that waits for a full GC, so a
+       stream of junk min_alt values would pile up tens of MB; refusing keeps the cache's footprint at
+       its bound and lets a refused answer die young, as it did before the cache. */
+    if (store.size >= ANSWER_CACHE_MAX || total + entry.bytes > ANSWER_CACHE_MAX_BYTES) return;
+    if (tail !== null) entry.head = src.text.slice(0, src.text.length - tail.length);
+    store.set(key, entry);
+  } catch (e) { /* an answer that cannot be kept is simply not kept */ }
+}
+
+/* The 429 answer when deps.limiter refuses this address, else null. Fails open. */
+async function rateLimited(deps, request, route) {
+  const lim = deps && deps.limiter;
+  if (!lim || typeof lim.limit !== 'function') return null;
+  const ip = request && request.headers && typeof request.headers.get === 'function'
+    ? request.headers.get('CF-Connecting-IP') : null;
+  if (!ip) return null;
+  let ok = true;
+  try { const r = await lim.limit({ key: ip }); ok = !(r && r.success === false); } catch (e) { ok = true; }
+  if (ok) return null;
+  return jsonResponse({
+    ok: false, offline: true, route: route.path, rateLimited: true,
+    reason: 'too many requests from this address; asked again in a minute',
+  }, { status: 429, headers: { 'Retry-After': String(RATE_LIMIT_RETRY_S), 'Access-Control-Expose-Headers': 'Retry-After' } });
 }
 
 /* ------------------------------------------------------------------ cron */
@@ -1859,6 +2025,10 @@ export function makeDeps(env, over) {
     log: o.log || null,
     /* 2026-10-20 (m31): the isolate's dispatch memory; only the fetch handler passes one */
     memo: o.memo || null,
+    /* 2026-10-29 (audit item 77): the isolate's answer cache and the per address limit; only the fetch
+       handler passes them (an env binding is never picked up here, so harnesses stay unlimited) */
+    answers: o.answers || null,
+    limiter: o.limiter || null,
   };
 }
 
@@ -1866,7 +2036,8 @@ export default {
   async fetch(request, env, ctx) {
     /* 2026-10-12 (antenna-ondemand): the dispatch a /planes request may start runs after the answer */
     const bg = (ctx && typeof ctx.waitUntil === 'function') ? function (p) { ctx.waitUntil(p); } : null;
-    return handleRequest(request, makeDeps(env, { waitUntil: bg, log: function (s) { console.log(s); }, memo: ISOLATE_MEMO }));
+    return handleRequest(request, makeDeps(env, { waitUntil: bg, log: function (s) { console.log(s); }, memo: ISOLATE_MEMO,
+      answers: ANSWER_CACHE, limiter: (env && env.ANTENNA_LIMIT) || null }));
   },
   async scheduled(event, env, ctx) {
     const p = runCron(makeDeps(env, null)).then(function (result) {

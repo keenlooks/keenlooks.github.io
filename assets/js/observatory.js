@@ -851,6 +851,8 @@
     var s = o.coarse ? 'Drag to turn the Earth. Pinch to dive.'
                      : 'Drag to turn the Earth. Scroll to dive.';
     if (o.reduced) return s;
+    /* a117: a mouse visitor is told to click, not to touch */
+    if (o.shared && !o.coarse) return s + HINT_SHARED_TAIL.replace('Touch', 'Click');
     if (o.shared) return s + HINT_SHARED_TAIL;
     return s + ' It flies itself until you touch it.';
   }
@@ -24637,7 +24639,8 @@
            touches something: the off state that arrives with it is not news
            to somebody who has never seen this page turned on */
         st.apLandLine = true;
-        setStatus(SHARE_LAND_LINE, true);
+        setStatus(coarsePointer() ? SHARE_LAND_LINE :
+                  SHARE_LAND_LINE.replace('Touch', 'Click'), true);   /* a117 */
       }
       /* The cold-visitor tour is what arms the two default layers. When there
          is no tour (reduced motion, autopilot off, a shared link) or when a

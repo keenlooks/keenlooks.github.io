@@ -22,6 +22,12 @@
   if (!ctx) return;
 
   function id(x) { return document.getElementById(x); }
+  // "Tap" under a coarse (touch) pointer, "click" otherwise (site copy rule)
+  var COARSE = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+  var hintEl = id('loan-hint');
+  if (COARSE && hintEl) hintEl.innerHTML = 'Tip: <strong>tap the chart</strong> to drop a one-time payment and type its amount; '
+    + '<strong>drag</strong> it sideways to move it in time; tap it again to change the amount (× or 0 removes it). '
+    + 'Tap a year on the bottom axis to anchor the timeline to a real date. You can also type both below.';
 
   // sliders + their value labels
   var elP = id('loan-principal'), elPv = id('loan-principal-val');
@@ -319,6 +325,7 @@
 
   // ---- update ------------------------------------------------------------
   function update() {
+    if (elCal && document.activeElement !== elCal) elCal.value = s.startYearCal != null ? String(s.startYearCal) : '';
     var startMonth = Math.round(s.startYear * 12);
     var base = simulate(0, 0, []);
     var scn  = simulate(s.extra, startMonth, s.lumps);
@@ -338,7 +345,7 @@
 
     if (roTiming) {
       if (!hasExtra()) {
-        roTiming.textContent = 'Add an extra monthly payment, or click the chart to drop a one-time payment, to see how much interest you would save.';
+        roTiming.textContent = 'Add an extra monthly payment, or ' + (COARSE ? 'tap' : 'click') + ' the chart to drop a one-time payment, to see how much interest you would save.';
       } else if (s.extra > 0 && startMonth > 0) {
         var deltaInt = scn.totalInterest - now.totalInterest;   // extra interest from delaying the recurring payments
         var deltaMonths = scn.payoffMonths - now.payoffMonths;
@@ -462,6 +469,54 @@
   // a vertical swipe that started on the chart becomes a page scroll (touch-action
   // pan-y): the browser cancels the pointer, so drop the held tap and any half-started drag
   window.addEventListener('pointercancel', function () { tap = null; if (drag) { drag = null; update(); } });
+
+  // ---- the same chart actions by typing (keyboard / screen-reader path) --
+  // "One-time payment: $ [amount] in year [year]" adds a payment, or changes the
+  // one already in that month (0 removes it); "Timeline starts in [year]" sets
+  // the calendar anchor the x-axis tick editor sets (empty = years from today).
+  var formPlace = id('loan-place-form'), elAmt = id('loan-place-amt'), elYr = id('loan-place-yr');
+  var formCal = id('loan-cal-form'), elCal = id('loan-cal'), elTypeSt = id('loan-type-status');
+  function parseNum(t) {
+    t = String(t == null ? '' : t).trim();
+    if (!t) return null;
+    if (window.parseLocaleNumber) { var v = window.parseLocaleNumber(t); return (v == null || !isFinite(v)) ? null : v; }
+    var f = parseFloat(t.replace(/[$,\s]/g, '')); return isFinite(f) ? f : null;
+  }
+  function whenText(month) {
+    var y = month / 12, yt = (month % 12 === 0) ? num(y) : dec1(y);
+    if (s.startYearCal != null) return 'in ' + ((month % 12 === 0) ? num(s.startYearCal + y) : dec1(s.startYearCal + y));
+    return 'in year ' + yt;
+  }
+  function typeStatus(t) { if (elTypeSt) elTypeSt.textContent = t; }
+  if (formPlace) formPlace.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var amt = parseNum(elAmt && elAmt.value), yr = parseNum(elYr && elYr.value);
+    if (amt == null || yr == null) { typeStatus('Type an amount and a year, for example 2000 and 3.'); return; }
+    if (s.startYearCal != null && yr >= 1000) yr -= s.startYearCal;   // a calendar year once the timeline is anchored
+    if (yr < 0 || yr > s.years) { typeStatus('Pick a year from 0 to ' + num(s.years) + ', the length of the loan.'); return; }
+    var month = clampMonth(Math.round(yr * 12)), k, at = -1;
+    for (k = 0; k < s.lumps.length; k++) if (s.lumps[k].month === month) { at = k; break; }
+    if (at >= 0) {
+      if (amt <= 0) { s.lumps.splice(at, 1); update(); typeStatus('Removed the one-time payment ' + whenText(month) + '.'); return; }
+      s.lumps[at].amount = amt; update();
+      typeStatus('Changed the one-time payment ' + whenText(month) + ' to ' + usd(amt) + '.');
+      return;
+    }
+    if (amt <= 0) { typeStatus('Type an amount above zero (zero removes a payment already in that year).'); return; }
+    if (month >= simulate(s.extra, Math.round(s.startYear * 12), s.lumps).payoffMonths) {
+      typeStatus('The loan is already paid off by then, so that payment would do nothing.'); return;
+    }
+    s.lumps.push({ month: month, amount: amt }); update();
+    typeStatus('Added a one-time payment of ' + usd(amt) + ' ' + whenText(month) + '.');
+  });
+  if (formCal) formCal.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var v = parseNum(elCal && elCal.value);
+    if (v == null) { s.startYearCal = null; update(); typeStatus('The timeline shows years from today.'); return; }
+    if (v < 1900 || v > 9999) { typeStatus('Type a four-digit year, or leave it empty for years from today.'); return; }
+    s.startYearCal = Math.round(v); update();
+    typeStatus('The timeline starts in ' + num(s.startYearCal) + '.');
+  });
 
   // ---- controls ----------------------------------------------------------
   function syncStartMax() {
